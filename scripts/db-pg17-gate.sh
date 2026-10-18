@@ -102,6 +102,9 @@ extra_eng=supabase/baseline/main_shape_subset_extra_engagement.sql
 # E7 (develop reconcile): solicitudes_acceso_admin (MAIN-applied 20261013100000) for develop's pending 20261020100000.
 extra_ar=supabase/baseline/main_shape_subset_extra_access_requests.sql
 [ -s "$extra_ar" ] && { psqlc < "$extra_ar" >/dev/null 2>"$err" || { cat "$err"; fail "$extra_ar no carga con ON_ERROR_STOP=1"; }; }
+# V1 NIGHT-A: la vertical de importacion en bloque de MAIN (staging + RPC de importacion), fuera del subconjunto generado.
+extra_imp=supabase/baseline/main_shape_subset_extra_import.sql
+[ -s "$extra_imp" ] && { psqlc < "$extra_imp" >/dev/null 2>"$err" || { cat "$err"; fail "$extra_imp no carga con ON_ERROR_STOP=1"; }; }
 fingerprint "$tmp/f0"
 apply_all
 fingerprint "$tmp/f1"

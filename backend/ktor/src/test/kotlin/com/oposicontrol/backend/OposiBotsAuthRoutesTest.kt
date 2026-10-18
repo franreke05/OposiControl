@@ -45,6 +45,41 @@ class OposiBotsAuthRoutesTest {
         assertFalse(response.bodyAsText().contains("accessToken"))
     }
 
+    // --- FA39: binding of the email-link code (PKCE-style) ---
+
+    @Test
+    fun theCodeChallengeAndVerifierAreValidatedByShapeBeforeAnyWork() = testApplication {
+        val fake = FakeGateway()
+        application { authTestModule(fake) }
+
+        suspend fun post(path: String, body: String) = client.post(path) { contentType(ContentType.Application.Json); setBody(body) }
+        fun issueField(body: String) = Json.parseToJsonElement(body).jsonObject["details"]!!.jsonObject["issues"]!!.jsonArray.single().jsonObject["field"]!!.jsonPrimitive.content
+
+        val badChallenge = post("/v1/auth/recover", """{"email":"a@b.es","codeChallenge":"too-short"}""")
+        assertEquals(HttpStatusCode.BadRequest, badChallenge.status)
+        assertEquals("codeChallenge", issueField(badChallenge.bodyAsText()))
+        val badVerifier = post("/v1/auth/email/exchange", """{"code":"hash","codeVerifier":"short"}""")
+        assertEquals(HttpStatusCode.BadRequest, badVerifier.status)
+        assertEquals("codeVerifier", issueField(badVerifier.bodyAsText()))
+        val badEmail = post("/v1/auth/reset-password", """{"resetToken":"t","newPassword":"safe-password-12","codeVerifier":"vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv","email":"not-an-email"}""")
+        assertEquals(HttpStatusCode.BadRequest, badEmail.status)
+
+        val ok = post("/v1/auth/recover", """{"email":"a@b.es","codeChallenge":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}""")
+        assertEquals(HttpStatusCode.NoContent, ok.status)
+        assertEquals("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", fake.recoverRequest?.codeChallenge)
+    }
+
+    @Test
+    fun theLegacyBodiesWithoutTheNewFieldsStillWork() = testApplication {
+        val fake = FakeGateway()
+        application { authTestModule(fake) }
+
+        val response = client.post("/v1/auth/email/exchange") { contentType(ContentType.Application.Json); setBody("""{"code":"hash"}""") }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals(null, fake.exchangeRequest?.codeVerifier)
+    }
+
     @Test
     fun authRejectsNonJsonAndOversizedBodiesBeforeGateway() = testApplication {
         val fake = FakeGateway()
@@ -731,6 +766,7 @@ private class FakeGateway : OposiBotsAuthGateway {
     var registerRequest: OposiBotsRegisterRequest? = null
     var loginRequest: OposiBotsLoginRequest? = null
     var recoverRequest: OposiBotsRecoverRequest? = null
+    var exchangeRequest: OposiBotsEmailExchangeRequest? = null
     var googleRequest: OposiBotsGoogleRequest? = null
     var appleRequest: OposiBotsAppleRequest? = null
     var loginCalls = 0
@@ -747,6 +783,7 @@ private class FakeGateway : OposiBotsAuthGateway {
     }
 
     override suspend fun exchangeEmail(request: OposiBotsEmailExchangeRequest, context: OposiBotsAuthContext): OposiBotsAuthSessionDto {
+        exchangeRequest = request
         failure?.let { throw it }
         return session()
     }

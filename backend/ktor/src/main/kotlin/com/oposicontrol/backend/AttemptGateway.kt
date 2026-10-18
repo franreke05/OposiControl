@@ -178,8 +178,22 @@ internal data class RevisionContent(
     val etiquetas: List<TagRef> = emptyList(),
 )
 
+/**
+ * FA38: la politica de explicaciones (DEC-025 / DEC-040 abiertas). Por defecto NO se lee `razonamiento` (todo sigue como antes); con `EXPLANATIONS_VISIBLE=true` el
+ * review (D2-65) y el resultado (D2-12) de un intento FINALIZADO devuelven la explicacion de la revision congelada: texto plano en `razonamiento` y, si tiene estilo, la
+ * estructura en `razonamientoRico`. Es una decision del dueno, no de la ingenieria: aqui solo se prepara el campo.
+ */
+internal object ExplanationPolicy {
+    @Volatile var visible: Boolean = System.getenv("EXPLANATIONS_VISIBLE") == "true"
+}
+
 @Serializable
-internal data class RevisionSolution(@SerialName("opcion_correcta_id") val opcionCorrectaId: String? = null)
+internal data class RevisionSolution(
+    @SerialName("opcion_correcta_id") val opcionCorrectaId: String? = null,
+    /** FA38: solo si [ExplanationPolicy.visible]. */
+    val razonamiento: String? = null,
+    @SerialName("razonamiento_rico") val razonamientoRico: JsonObject? = null,
+)
 
 /**
  * `revisiones_pregunta` embebida. [solucion] SOLO se pide con el intento finalizado (D2-12 / D2-65) y solo su opcion
@@ -366,7 +380,7 @@ internal class AttemptGateway(
             wrapSolution(
                 upstream.get(
                     "/rest/v1/preguntas_intento?select=posicion,pregunta_id,estado_final,$ROLE_COLUMNS,revision_pregunta_id," +
-                        "revisiones_pregunta(contenido,solucion:solucion-%3Eopcion_correcta_id)" +
+                        "revisiones_pregunta(contenido,${solutionSelect()})" +
                         "&intento_id=eq.$attemptId&posicion=gt.$afterPosition&order=posicion.asc&limit=$fetchLimit",
                 ),
             ),
@@ -385,7 +399,7 @@ internal class AttemptGateway(
             wrapSolution(
                 upstream.get(
                     "/rest/v1/preguntas_intento?select=posicion,pregunta_id,estado_final,$ROLE_COLUMNS,revision_pregunta_id," +
-                        "revisiones_pregunta(solucion:solucion-%3Eopcion_correcta_id)" +
+                        "revisiones_pregunta(${solutionSelect()})" +
                         "&intento_id=eq.$attemptId&order=posicion.asc&limit=${MAX_ATTEMPT_QUESTIONS + 1}",
                 ),
             ),
@@ -413,6 +427,10 @@ internal class AttemptGateway(
      * PostgREST devuelve `solucion:solucion->opcion_correcta_id` (la flecha va codificada `-%3E` en la URL) como el valor suelto (`"uuid"` o `null`); se envuelve en
      * `{opcion_correcta_id: ...}` para leerlo con [RevisionSolution]. Solo se pide la opcion correcta, nunca `razonamiento`.
      */
+    /** `solucion:solucion->opcion_correcta_id` y, solo con la politica de explicaciones activa, el texto plano y la estructura (alias `razonamiento` / `rico`). */
+    private fun solutionSelect(): String = "solucion:solucion-%3Eopcion_correcta_id" +
+        if (ExplanationPolicy.visible) ",razonamiento:solucion-%3E%3Erazonamiento,rico:solucion-%3Erazonamiento_rico" else ""
+
     private fun wrapSolution(body: String): String {
         val rows = json.parseToJsonElement(body) as? JsonArray ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
         return JsonArray(
@@ -420,7 +438,12 @@ internal class AttemptGateway(
                 val obj = row as? JsonObject ?: return@map row
                 val revision = obj["revisiones_pregunta"] as? JsonObject ?: return@map row
                 val correct = revision["solucion"] ?: JsonNull
-                val wrapped = JsonObject(revision + ("solucion" to JsonObject(mapOf("opcion_correcta_id" to correct))))
+                val solution = buildMap<String, JsonElement> {
+                    put("opcion_correcta_id", correct)
+                    (revision["razonamiento"] as? JsonPrimitive)?.takeIf { it.isString }?.let { put("razonamiento", it) }
+                    (revision["rico"] as? JsonObject)?.let { put("razonamiento_rico", it) }
+                }
+                val wrapped = JsonObject(revision - "razonamiento" - "rico" + ("solucion" to JsonObject(solution)))
                 JsonObject(obj + ("revisiones_pregunta" to wrapped))
             },
         ).toString()

@@ -315,6 +315,35 @@ private val SUPABASE_DOMAIN_ERRORS = mapOf(
         HttpStatusCode.UnprocessableEntity,
         "El tipo del lote no coincide con el del examen.",
     ),
+    // FA37 (reservas / anuladas / lote duplicado en la importacion en bloque)
+    "IMPORT_EXAM_CODE_MISMATCH" to DomainErrorDefinition(
+        HttpStatusCode.UnprocessableEntity,
+        "El CODIGO_EXAMEN del fichero no es el del examen elegido: sube el fichero al examen que indica su cabecera.",
+    ),
+    "IMPORT_LOT_DUPLICATE" to DomainErrorDefinition(
+        HttpStatusCode.Conflict,
+        "Este mismo contenido ya se importo en este examen: no se vuelve a publicar.",
+    ),
+    "IMPORT_RESERVE_REQUIRES_OFFICIAL_EXAM" to DomainErrorDefinition(
+        HttpStatusCode.UnprocessableEntity,
+        "Las reservas solo existen en examenes oficiales: marca el examen como oficial o quita el bloque RESERVA.",
+    ),
+    "IMPORT_MAIN_AFTER_RESERVE" to DomainErrorDefinition(
+        HttpStatusCode.UnprocessableEntity,
+        "El examen ya tiene reservas: las preguntas principales nuevas quedarian detras de ellas. Importa primero las principales.",
+    ),
+    "IMPORT_BLOCK_CONFLICT" to DomainErrorDefinition(
+        HttpStatusCode.UnprocessableEntity,
+        "Una pregunta que ya esta en el examen no se mueve entre el bloque principal y las reservas con una importacion.",
+    ),
+    "IMPORT_DEMO_CONFLICT" to DomainErrorDefinition(
+        HttpStatusCode.UnprocessableEntity,
+        "Una pregunta de la demo no puede ser reserva ni estar anulada.",
+    ),
+    "IMPORT_OFFICIAL_RULES_INVALID" to DomainErrorDefinition(
+        HttpStatusCode.UnprocessableEntity,
+        "Con este lote el examen oficial no queda valido (por ejemplo, mas anuladas que reservas con la regla de reemplazo). No se ha importado nada.",
+    ),
     "IMPORT_EXAM_NOT_FOUND" to DomainErrorDefinition(HttpStatusCode.NotFound, "El examen del lote no existe."),
     "IMPORT_EXAM_TYPE_UNKNOWN" to DomainErrorDefinition(
         HttpStatusCode.UnprocessableEntity,

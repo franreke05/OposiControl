@@ -716,6 +716,60 @@ components:
           description: 'Amendment 2026-10-14: V1 resources of the bound revision; absent when none.'
           items:
             $ref: '#/components/schemas/AttemptResource'
+    RichText:
+      type: object
+      description: 'FA38: styled text of an explanation (razonado), produced by the strict server-side grammar (E1-V1-MARKUP-CONTRACT.md). Render it as TEXT (never as HTML): paragraphs ("p") and bullet items ("li"), optional alignment per block, and spans with a closed set of styles. Sizes are TOKENS (map them to the design system text styles), colors are names or #RRGGBB. The plain text is always in the sibling "razonamiento" string.'
+      required: [v, blocks]
+      additionalProperties: false
+      properties:
+        v:
+          type: integer
+          enum: [1]
+        blocks:
+          type: array
+          maxItems: 200
+          items:
+            type: object
+            required: [k, spans]
+            additionalProperties: false
+            properties:
+              k:
+                type: string
+                enum: [p, li]
+              a:
+                type: string
+                enum: [left, center, right, justify]
+              spans:
+                type: array
+                minItems: 1
+                maxItems: 2000
+                items:
+                  type: object
+                  required: [text]
+                  additionalProperties: false
+                  properties:
+                    text:
+                      type: string
+                      minLength: 1
+                      maxLength: 20000
+                    bold:
+                      type: boolean
+                      enum: [true]
+                    italic:
+                      type: boolean
+                      enum: [true]
+                    underline:
+                      type: boolean
+                      enum: [true]
+                    strike:
+                      type: boolean
+                      enum: [true]
+                    color:
+                      type: string
+                      pattern: '^(black|gray|red|orange|yellow|green|blue|purple|#[0-9A-F]{6})$'
+                    size:
+                      type: string
+                      enum: [xs, sm, md, lg, xl]
     AttemptResource:
       type: object
       description: 'Amendment 2026-10-14. A V1 media resource of the immutable question revision bound to the attempt. Metadata only: bytes via D2-66. Canonical mapping: resourceId = id, type = tipo, access = D2-66.'
@@ -928,6 +982,9 @@ components:
               razonamiento:
                 type: [string, 'null']
                 description: 'Markdown.'
+              razonamientoRico:
+                description: 'FA38 (additive): the styled version of razonamiento; absent when the text has no style or explanations are not served (EXPLANATIONS_VISIBLE).'
+                $ref: '#/components/schemas/RichText'
               tiempoSeg:
                 type: integer
                 minimum: 0
@@ -1081,6 +1138,9 @@ components:
           properties:
             razonamiento:
               $ref: '../common/identifiers.yaml#/components/schemas/Markdown'
+            razonamientoRico:
+              description: 'FA38 (additive): the styled version of razonamiento (the plain text is always in razonamiento); absent when the text has no style.'
+              $ref: '#/components/schemas/RichText'
         resources:
           type: array
           description: 'V1 resources of the bound revision (amendment 2026-10-14); bytes via D2-66. Empty when none.'

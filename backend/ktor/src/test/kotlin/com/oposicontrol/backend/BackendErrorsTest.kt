@@ -584,6 +584,14 @@ class BackendErrorsTest {
             "IMPORT_EXAM_TYPE_UNKNOWN" to HttpStatusCode.UnprocessableEntity,
             "IMPORT_EXAM_PUBLISHED_CONFIRMATION_REQUIRED" to HttpStatusCode.Conflict,
             "STAGING_ROW_ALREADY_IMPORTED" to HttpStatusCode.Conflict,
+            // FA37
+            "IMPORT_EXAM_CODE_MISMATCH" to HttpStatusCode.UnprocessableEntity,
+            "IMPORT_LOT_DUPLICATE" to HttpStatusCode.Conflict,
+            "IMPORT_RESERVE_REQUIRES_OFFICIAL_EXAM" to HttpStatusCode.UnprocessableEntity,
+            "IMPORT_MAIN_AFTER_RESERVE" to HttpStatusCode.UnprocessableEntity,
+            "IMPORT_BLOCK_CONFLICT" to HttpStatusCode.UnprocessableEntity,
+            "IMPORT_DEMO_CONFLICT" to HttpStatusCode.UnprocessableEntity,
+            "IMPORT_OFFICIAL_RULES_INVALID" to HttpStatusCode.UnprocessableEntity,
         )
         esperados.forEach { (codigo, estado) ->
             val cuerpo = "{\"code\":\"P0001\",\"details\":null,\"hint\":null,\"message\":\"$codigo\"}"

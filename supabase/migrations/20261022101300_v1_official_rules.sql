@@ -802,9 +802,11 @@ set search_path = ''
 as $$
 begin
   insert into public.auditoria_log (usuario_id, accion, tabla_afectada, registro_id, antes, despues)
-  values ((select auth.uid()), 'examen_reglas_puntuacion_modificadas', 'examenes', new.id,
+  -- the actor is the JWT user (direct admin PATCH) or, for a service-role call made by admin_set_exam_grading_rules, the transaction-local app.audit_actor it sets (DEBT-159); the optional reason rides the same GUC pair
+  values (coalesce((select auth.uid()), nullif(current_setting('app.audit_actor', true), '')::uuid), 'examen_reglas_puntuacion_modificadas', 'examenes', new.id,
           jsonb_build_object('regla_anuladas', old.regla_anuladas, 'penalizacion_num', old.penalizacion_num, 'penalizacion_den', old.penalizacion_den, 'penalizacion_racional', old.penalizacion_racional),
-          jsonb_build_object('regla_anuladas', new.regla_anuladas, 'penalizacion_num', new.penalizacion_num, 'penalizacion_den', new.penalizacion_den, 'penalizacion_racional', new.penalizacion_racional));
+          jsonb_build_object('regla_anuladas', new.regla_anuladas, 'penalizacion_num', new.penalizacion_num, 'penalizacion_den', new.penalizacion_den, 'penalizacion_racional', new.penalizacion_racional)
+          || case when coalesce(current_setting('app.audit_reason', true), '') <> '' then jsonb_build_object('motivo', current_setting('app.audit_reason', true)) else '{}'::jsonb end);
   return new;
 end $$;
 revoke all on function private.tg_examenes_audit_grading_rules() from public, anon, authenticated;

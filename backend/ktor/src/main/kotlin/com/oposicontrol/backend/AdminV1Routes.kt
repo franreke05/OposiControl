@@ -2532,6 +2532,8 @@ private data class AdminSolucionRow(
     @SerialName("pregunta_id") val preguntaId: String,
     @SerialName("opcion_correcta_id") val opcionCorrectaId: String,
     val razonamiento: String,
+    /** FA38: el texto fuente con marcas (solo si la explicacion tiene estilo). */
+    @SerialName("razonamiento_markup") val razonamientoMarkup: String? = null,
 )
 
 /**
@@ -2779,6 +2781,13 @@ data class AdminStagingItemDto(
      * En el PATCH un `null` (o ausente) BORRA el motivo guardado.
      */
     val motivoAnulacion: String? = null,
+    /**
+     * FA37: `PRINCIPAL` | `RESERVA`. Lectura: siempre presente. Escritura (alta de lote / PATCH): `null` = no se toca
+     * (un cliente antiguo que reemplaza la fila entera no mueve una reserva al bloque principal); cualquier otro valor es un 400.
+     */
+    val bloque: String? = null,
+    /** FA38 (solo lectura): estructura del razonamiento con estilo (`null` = texto sin marcas). `razonamiento` es el texto FUENTE con marcas. */
+    val razonamientoRico: JsonObject? = null,
 )
 
 /**
@@ -2820,6 +2829,12 @@ data class AdminLoteDto(
      * calcular: nunca un 0/0 inventado. Ver [AdminLoteResumenDto].
      */
     val resumen: AdminLoteResumenDto? = null,
+    /** FA37: la cabecera `CODIGO_EXAMEN` del fichero (null = el lote se creo sin cabecera). */
+    val codigoExamen: String? = null,
+    /** FA37: huella del contenido (en `GET /importaciones/preguntas/{loteId}`; null en el listado). */
+    val huella: String? = null,
+    /** FA37: id del lote YA IMPORTADO en el mismo examen con el mismo contenido (null = ninguno): avisar y no publicar. */
+    val duplicadoDe: String? = null,
 )
 
 /**
@@ -2861,6 +2876,14 @@ data class AdminImportResultadoDto(
     val totalImportadas: Int,
     /** Cuantas de las preguntas publicadas quedaron ANULADAS en el examen (M10). */
     @EncodeDefault val anuladas: Int = 0,
+    /** FA37: cuantas de las publicadas quedaron como RESERVA del examen. */
+    @EncodeDefault val reservas: Int = 0,
+    /** FA37: huella sha256 del contenido publicado. */
+    val huella: String? = null,
+    /** FA37: primer problema de reglas oficiales que sigue abierto tras la publicacion (null = ninguno); un borrador sin reservas puede completarse con otro lote. */
+    val problema: String? = null,
+    /** FA37: avisos que no bloquean (`MORE_RESERVES_THAN_MAX`, `ANNULLED_RESERVE_SKIPPED`). */
+    @EncodeDefault val avisos: List<String> = emptyList(),
 )
 
 /** `data` conserva la forma de [AdminLoteResponse]: un cliente que sólo lea `data` no se rompe. */
@@ -2872,6 +2895,8 @@ data class CrearLoteRequest(
     val examenId: String,
     val nombreArchivo: String = "",
     val tipoExamen: String = "rafaga",
+    /** FA37: cabecera `CODIGO_EXAMEN` del fichero; si viene, tiene que ser el codigo del examen del lote (422 IMPORT_EXAM_CODE_MISMATCH). */
+    val codigoExamen: String? = null,
     // El parseo PDF->preguntas es responsabilidad externa; aqui se reciben ya parseadas.
     val preguntas: List<AdminStagingItemDto> = emptyList(),
 )
@@ -3004,6 +3029,9 @@ private data class LoteRow(
     /** Quién subió el PDF (D-11). Nunca se escribía, así que ningún lote tenía autor. */
     @SerialName("subido_por") val subidoPor: String? = null,
     val metadatos: JsonObject = JsonObject(emptyMap()),
+    /** FA37: cabecera del fichero. Nulo = no se manda (el INSERT funciona tambien sin la migracion de reservas). */
+    @SerialName("codigo_examen") val codigoExamen: String? = null,
+    val huella: String? = null,
 )
 
 @Serializable
@@ -3029,6 +3057,11 @@ private data class StagingRow(
     val anulada: Boolean = false,
     @SerialName("motivo_anulacion") val motivoAnulacion: String? = null,
     val metadatos: JsonObject = JsonObject(emptyMap()),
+    /** FA37 (necesita la migracion de reservas aplicada antes que este Ktor). */
+    val bloque: String = "PRINCIPAL",
+    /** FA38: el texto tal como lo escribio el autor (con marcas) y su estructura; `razonamiento` es el texto plano que publica la RPC. */
+    @SerialName("razonamiento_markup") val razonamientoMarkup: String? = null,
+    @SerialName("razonamiento_rico") val razonamientoRico: JsonObject? = null,
 )
 
 /**
@@ -3061,6 +3094,11 @@ private data class StagingPatch(
     val anulada: Boolean? = null,
     /** `JsonNull` = borra el motivo; `null` = no se toca. */
     val motivoAnulacion: JsonElement? = null,
+    /** FA37: `null` = no se toca. */
+    val bloque: String? = null,
+    /** FA38: `JsonNull` = borra; `null` = no se toca. */
+    val razonamientoMarkup: JsonElement? = null,
+    val razonamientoRico: JsonElement? = null,
 ) {
     fun toJson(): JsonObject = buildJsonObject {
         titulo?.let { put("titulo", JsonPrimitive(it)) }
@@ -3077,6 +3115,9 @@ private data class StagingPatch(
         vincularPreguntaId?.let { put("vincular_pregunta_id", it) }
         anulada?.let { put("anulada", JsonPrimitive(it)) }
         motivoAnulacion?.let { put("motivo_anulacion", it) }
+        bloque?.let { put("bloque", JsonPrimitive(it)) }
+        razonamientoMarkup?.let { put("razonamiento_markup", it) }
+        razonamientoRico?.let { put("razonamiento_rico", it) }
     }
 }
 
@@ -3094,6 +3135,25 @@ private fun normalizedAnnulmentReason(anulada: Boolean, motivo: String?): String
     return limpio
 }
 
+/** FA38: lo que una fila de staging guarda de un razonamiento escrito por el autor (texto plano, fuente con marcas y estructura) o por que no es valido. */
+private class StagedRazonamiento(val plain: String, val markup: String?, val rico: JsonObject?, val problema: String?)
+
+private fun stageRazonamiento(source: String): StagedRazonamiento {
+    val (stored, issues) = RichMarkup.storeFor(source)
+    if (stored == null) {
+        val detalle = issues.take(5).joinToString(", ") { "${it.code}@${it.at}" }
+        return StagedRazonamiento(source, null, null, "El marcado del razonamiento no es valido ($detalle): corrigelo antes de aprobar.")
+    }
+    return StagedRazonamiento(stored.plain, source.takeIf { stored.rico != null }, stored.rico, null)
+}
+
+/** FA37: `PRINCIPAL` | `RESERVA` (nulo = PRINCIPAL en un alta); cualquier otra cosa es un 400. */
+private fun requireKnownBloque(value: String?): String {
+    val v = value?.trim()?.takeIf { it.isNotEmpty() } ?: BLOQUE_PRINCIPAL
+    require(v == BLOQUE_PRINCIPAL || v == BLOQUE_RESERVA) { "El bloque tiene que ser PRINCIPAL o RESERVA." }
+    return v
+}
+
 private fun StagingRow.toDto() = AdminStagingItemDto(
     id = id.orEmpty(),
     posicion = posicion,
@@ -3103,7 +3163,7 @@ private fun StagingRow.toDto() = AdminStagingItemDto(
     opcionC = opcionC.orEmpty(),
     opcionD = opcionD.orEmpty(),
     respuestaCorrecta = respuestaCorrecta.orEmpty(),
-    razonamiento = razonamiento.orEmpty(),
+    razonamiento = razonamientoMarkup ?: razonamiento.orEmpty(),
     fuenteTexto = fuenteTexto.orEmpty(),
     etiquetaTexto = etiquetaTexto.orEmpty(),
     bloqueOriginal = bloqueOriginal,
@@ -3113,6 +3173,8 @@ private fun StagingRow.toDto() = AdminStagingItemDto(
     vincularPreguntaId = vincularPreguntaId,
     anulada = anulada,
     motivoAnulacion = motivoAnulacion,
+    bloque = bloque,
+    razonamientoRico = razonamientoRico,
 )
 
 // ----- Feedback de preguntas + Auditoria -----
@@ -3814,7 +3876,16 @@ private data class AdminImportLoteResultRow(
     val omitidas: Int = 0,
     /** M10: filas publicadas con la relacion anulada. Ausente en una RPC anterior a M10. */
     val anuladas: Int = 0,
+    val reservas: Int = 0,
+    val huella: String? = null,
+    val problema: String? = null,
+    val avisos: List<String> = emptyList(),
 )
+
+@Serializable
+private data class AdminLoteHuellaRow(val huella: String? = null, @SerialName("duplicado_de") val duplicadoDe: String? = null)
+
+private class AdminLoteHuellaDto(val huella: String? = null, val duplicadoDe: String? = null)
 
 /** Una fila de `admin_import_lote_duplicados` (IM3, KI3-2). */
 @Serializable
@@ -4659,7 +4730,7 @@ class AdminV1Gateway private constructor(
     ): AdminPreguntaDto {
         val correctaId = solucion?.opcionCorrectaId
         return toDtoSinDetalle().copy(
-            razonamiento = solucion?.razonamiento.orEmpty(),
+            razonamiento = solucion?.razonamientoMarkup ?: solucion?.razonamiento.orEmpty(),
             opciones = opciones.map {
                 AdminOpcionDto(
                     id = it.id.orEmpty(),
@@ -4699,6 +4770,9 @@ class AdminV1Gateway private constructor(
         loteImportacionId: String? = null,
     ): AdminPreguntaCreada {
         val preguntaId = input.id.takeIf { it.isNotBlank() }?.validatedUuid("id") ?: UUID.randomUUID().toString()
+        // FA38: la misma gramatica estricta para todo razonamiento; la columna publica sigue siendo texto plano.
+        val staged = input.razonamiento.takeIf { it.isNotEmpty() }?.let(::stageRazonamiento)
+        require(staged?.problema == null) { staged?.problema.orEmpty() }
         val body = request(
             "POST", "/rest/v1/rpc/admin_create_question",
             sbJson.encodeToString(
@@ -4707,7 +4781,7 @@ class AdminV1Gateway private constructor(
                     tipoPregunta = input.tipoPregunta,
                     titulo = input.titulo,
                     opciones = input.opciones.map { AdminRpcOpcionInput(it.letra, it.texto, it.esCorrecta) },
-                    razonamiento = input.razonamiento.takeIf { it.isNotEmpty() },
+                    razonamiento = staged?.plain,
                     fuenteTexto = input.fuenteTexto?.takeIf { it.isNotBlank() },
                     dificultad = input.dificultad.takeIf { it.isNotBlank() },
                     activa = input.activa,
@@ -4720,6 +4794,7 @@ class AdminV1Gateway private constructor(
         )
         val resultado = json.decodeFromString<AdminCreateQuestionResult>(body)
         // Un reintento que no escribió nada no es otra alta: sin auditoría.
+        if (staged?.rico != null) persistRazonamientoRico(resultado.preguntaId, staged)
         if (resultado.creada) registrarAuditoria("pregunta_creada", "preguntas", resultado.preguntaId)
         val leida = getPregunta(resultado.preguntaId) ?: error("No se pudo leer la pregunta creada.")
         return AdminPreguntaCreada(leida, resultado.creada)
@@ -4739,8 +4814,34 @@ class AdminV1Gateway private constructor(
      *   Exámenes vincula al CREAR (misma transacción que el alta).
      * - Tocar `recursos[]` (KQ0-8), el código (Q1) o la especialidad.
      */
+    /**
+     * FA38: guarda (o borra, con `rico == null`) la estructura del razonamiento y su texto fuente en la solucion de la pregunta.
+     * Se hace DESPUES de la RPC, que ya dejo el texto plano; la base valida la estructura y que coincida con ese texto (MARKUP_*).
+     * Con `rico == null` solo toca filas que tenian estructura (un editor que quita el estilo sin cambiar el texto plano).
+     */
+    private fun persistRazonamientoRico(preguntaId: String, staged: StagedRazonamiento) {
+        val filtro = if (staged.rico == null) "&razonamiento_rico=not.is.null" else ""
+        request(
+            "PATCH",
+            "/rest/v1/soluciones_pregunta?pregunta_id=eq.${preguntaId.validatedUuid("id")}$filtro",
+            buildJsonObject {
+                put("razonamiento_markup", staged.markup?.let { JsonPrimitive(it) } ?: JsonNull)
+                put("razonamiento_rico", staged.rico ?: JsonNull)
+            }.toString(),
+            prefer = "return=minimal",
+        )
+    }
+
     fun updatePregunta(id: String, raw: JsonObject): AdminPreguntaDto {
-        val cambios = preguntaCambiosFrom(raw)
+        val cambiosCrudos = preguntaCambiosFrom(raw)
+        // FA38: el razonamiento se interpreta con la gramatica estricta; el RPC recibe el texto plano y la estructura se guarda aparte.
+        var staged: StagedRazonamiento? = null
+        val cambios = (cambiosCrudos["razonamiento"] as? JsonPrimitive)?.takeIf { it.isString }?.let { prim ->
+            val st = stageRazonamiento(prim.content)
+            require(st.problema == null) { st.problema.orEmpty() }
+            staged = st
+            JsonObject(cambiosCrudos + ("razonamiento" to JsonPrimitive(st.plain)))
+        } ?: cambiosCrudos
         request(
             "POST",
             "/rest/v1/rpc/admin_update_question",
@@ -4751,6 +4852,7 @@ class AdminV1Gateway private constructor(
                 put("p_cambios", cambios)
             }.toString(),
         )
+        staged?.let { persistRazonamientoRico(id, it) }
         registrarAuditoria("pregunta_actualizada", "preguntas", id)
         return getPregunta(id) ?: throw domainError("QUESTION_NOT_FOUND")
     }
@@ -5323,12 +5425,13 @@ class AdminV1Gateway private constructor(
             .decodeList<StagingRow>()
         val duplicados: Map<String, AdminImportDuplicadoDto>? =
             if (lote.estado == "importado") emptyMap() else duplicadosDeLote(loteId)
+        val huella = if (lote.estado == "importado") null else huellaDeLote(loteId)
         return lote.toDto(
             staging = staging.map { row -> row.toDto().copy(duplicado = duplicados?.get(row.id.orEmpty())) },
             duplicadosComprobados = lote.estado == "importado" || duplicados != null,
             // Derivado de las filas leidas; si faltan filas (max-rows), no se afirma nada.
             resumen = resumenDeEstados(staging.map { it.estadoParseo }).takeIf { staging.size >= lote.totalDetectadas },
-        )
+        ).let { dto -> if (huella == null) dto else dto.copy(huella = huella.huella, duplicadoDe = huella.duplicadoDe) }
     }
 
     /**
@@ -5399,6 +5502,8 @@ class AdminV1Gateway private constructor(
         val examenId = req.examenId.validatedUuid("examenId")
         val examen = getExamen(examenId) ?: throw domainError("IMPORT_EXAM_NOT_FOUND")
         val tipo = canonicalExamType(examen.tipoExamen)
+        val cabecera = req.codigoExamen?.trim()?.takeIf { it.isNotEmpty() }
+        if (cabecera != null && cabecera != examen.codigoExamen) throw domainError("IMPORT_EXAM_CODE_MISMATCH")
         if (req.tipoExamen.isNotBlank() && canonicalExamType(req.tipoExamen) != tipo) {
             throw domainError("IMPORT_TYPE_MISMATCH")
         }
@@ -5406,6 +5511,8 @@ class AdminV1Gateway private constructor(
         // Se construyen y VALIDAN todas las filas de staging ANTES de escribir nada: una fila que
         // lanza (motivo sin anulada, estado desconocido...) no puede dejar un lote huérfano ya insertado.
         val rows = req.preguntas.mapIndexed { i, p ->
+            // FA38: Razonadas/Inmersivas publican la explicacion; Rafaga no (se descarta), asi que no se interpreta.
+            val staged = if (tipo == "rafaga") StagedRazonamiento(p.razonamiento, null, null, null) else stageRazonamiento(p.razonamiento)
             StagingRow(
                 id = UUID.randomUUID().toString(),
                 loteId = loteId,
@@ -5420,15 +5527,18 @@ class AdminV1Gateway private constructor(
                 // A–D o NULL, y la fila que trae una respuesta ilegible es justo la
                 // que tiene que llegar a revisión.
                 respuestaCorrecta = p.respuestaCorrecta.trim().uppercase().takeIf { it in RAFAGA_OPTION_LETTERS },
-                razonamiento = p.razonamiento,
+                razonamiento = staged.plain,
+                razonamientoMarkup = staged.markup,
+                razonamientoRico = staged.rico,
                 fuenteTexto = p.fuenteTexto,
                 etiquetaTexto = p.etiquetaTexto,
                 // Ya no es siempre `"ok"`: `crearLoteDesdePdf` manda ahora
                 // filas en `"error"` o `"advertencia"` para que exista la etapa
                 // de revisión. Un estado en blanco sigue significando `"ok"`.
-                estadoParseo = requireKnownStagingState(p.estadoParseo.ifBlank { "ok" }),
-                errorParseo = p.errorParseo?.takeIf { it.isNotBlank() },
+                estadoParseo = if (staged.problema != null && p.estadoParseo.ifBlank { "ok" } in setOf("ok", "advertencia")) "error" else requireKnownStagingState(p.estadoParseo.ifBlank { "ok" }),
+                errorParseo = listOfNotNull(p.errorParseo?.takeIf { it.isNotBlank() }, staged.problema).joinToString(" ").takeIf { it.isNotBlank() },
                 anulada = p.anulada,
+                bloque = requireKnownBloque(p.bloque),
                 // Una fila `error` puede traer un motivo ilegible (sin ESTADO: ANULADA, o de mas de 500):
                 // viaja al staging SIN el, que sigue en `bloque_original` y en `error_parseo`. Romper aqui el
                 // INSERT tiraria el lote entero por la errata de una sola fila. Las demas filas son estrictas.
@@ -5451,6 +5561,7 @@ class AdminV1Gateway private constructor(
                         estado = "parseado",
                         totalDetectadas = req.preguntas.size,
                         subidoPor = actorId,
+                        codigoExamen = req.codigoExamen?.trim()?.takeIf { it.isNotEmpty() },
                     ),
                 ),
             ),
@@ -5519,6 +5630,11 @@ class AdminV1Gateway private constructor(
         // `estado_parseo` es desconocido (0 filas en MAIN) y un valor inventado
         // rompería la inserción del lote entero, que es peor que el defecto.
         val parsed = parseQuestionBlocks(rawText, canonicalQuestionType(examen.tipoExamen))
+        // FA37: la cabecera CODIGO_EXAMEN (una sola, y la del examen elegido) evita importar el PDF de un examen en otro.
+        if (parsed.codigosExamen.distinct().size > 1) {
+            throw PdfImportRejectedException("El PDF declara mas de un CODIGO_EXAMEN: deja una sola cabecera.")
+        }
+        val cabeceraPdf = parsed.codigosExamen.firstOrNull()
         if (parsed.preguntas.isEmpty() && parsed.bloquesConError.isEmpty()) {
             // Lo único que sigue siendo un rechazo total: no se reconoció NI UN
             // bloque. Un lote de cero filas no es revisable, es un PDF que no
@@ -5551,6 +5667,7 @@ class AdminV1Gateway private constructor(
                     // La anulacion es ortogonal al estado de parseo: una anulada valida es `ok`.
                     anulada = p.anulada,
                     motivoAnulacion = p.motivoAnulacion,
+                    bloque = p.bloque,
                 )
             } + parsed.bloquesConError.map { b ->
                 AdminStagingItemDto(
@@ -5569,6 +5686,7 @@ class AdminV1Gateway private constructor(
                     errorParseo = b.detalle,
                     anulada = b.anulada,
                     motivoAnulacion = b.motivoAnulacion,
+                    bloque = b.bloque,
                 )
             }
             ).sortedBy { it.posicion }
@@ -5579,6 +5697,7 @@ class AdminV1Gateway private constructor(
                 // El tipo lo decide `crearLote` leyendo el examen; aquí se manda el que
                 // llegó para que, si no coincide, salga el 422 y no un lote mal tipado.
                 tipoExamen = tipoExamen,
+                codigoExamen = cabeceraPdf,
                 preguntas = filas,
             ),
             actorId = actorId,
@@ -5628,6 +5747,9 @@ class AdminV1Gateway private constructor(
         require(vincular == null || estado == "aprobada") {
             "Para vincular con una pregunta existente, la fila tiene que quedar aprobada."
         }
+        // FA38: el razonamiento se interpreta SIEMPRE con la misma gramatica; aprobar con marcado invalido es un 400.
+        val staged = stageRazonamiento(item.razonamiento)
+        require(staged.problema == null || estado != "aprobada") { staged.problema.orEmpty() }
         val patch = StagingPatch(
             titulo = item.titulo,
             opcionA = item.opcionA,
@@ -5636,11 +5758,17 @@ class AdminV1Gateway private constructor(
             opcionD = item.opcionD,
             // Vacía = NULL, no `""`: el CHECK vivo exige A–D o NULL.
             respuestaCorrecta = respuesta.takeIf { it.isNotEmpty() }?.let { JsonPrimitive(it) } ?: JsonNull,
-            razonamiento = item.razonamiento,
+            razonamiento = staged.plain,
+            razonamientoMarkup = staged.markup?.let { JsonPrimitive(it) } ?: JsonNull,
+            razonamientoRico = staged.rico ?: JsonNull,
             fuenteTexto = item.fuenteTexto,
             etiquetaTexto = item.etiquetaTexto,
-            estadoParseo = estado,
-            errorParseo = if (decidida) JsonNull else null,
+            estadoParseo = if (staged.problema != null && estado != "omitida") "error" else estado,
+            errorParseo = when {
+                staged.problema != null && estado != "omitida" -> JsonPrimitive(staged.problema)
+                decidida -> JsonNull
+                else -> null
+            },
             // Ausente = no se toca; `null` explícito = deshacer el vínculo elegido. Aprobar sin
             // vínculo y OMITIR son decisiones finales: ambas borran el puntero (una fila omitida
             // con el vínculo de cuando estaba aprobada sería la contradicción que el KDoc prohíbe).
@@ -5652,6 +5780,8 @@ class AdminV1Gateway private constructor(
             // La fila se reemplaza entera: anulada siempre viaja, y el motivo con ella (`null` lo borra).
             anulada = item.anulada,
             motivoAnulacion = motivoAnulacion?.let { JsonPrimitive(it) } ?: JsonNull,
+            // FA37: null = no se toca (un cliente antiguo no mueve una reserva al bloque principal).
+            bloque = item.bloque?.let { requireKnownBloque(it) },
         )
         return request(
             "PATCH", "/rest/v1/preguntas_parseadas_staging?id=eq.$id",
@@ -5727,8 +5857,21 @@ class AdminV1Gateway private constructor(
                 omitidas = resultado.omitidas,
                 totalImportadas = resultado.totalImportadas,
                 anuladas = resultado.anuladas,
+                reservas = resultado.reservas,
+                huella = resultado.huella,
+                problema = resultado.problema,
+                avisos = resultado.avisos,
             ),
         )
+    }
+
+    /** FA37: huella del lote y lote ya importado con el mismo contenido; `null` si la RPC no existe todavia (sin la migracion). */
+    private fun huellaDeLote(loteId: String): AdminLoteHuellaDto? = try {
+        val body = request("POST", "/rest/v1/rpc/admin_import_lote_huella", buildJsonObject { put("p_lote_id", JsonPrimitive(loteId)) }.toString())
+        json.decodeFromString<AdminLoteHuellaRow>(body).let { AdminLoteHuellaDto(it.huella, it.duplicadoDe) }
+    } catch (error: Exception) {
+        // informative enrichment of the review screen: never fails the lot read (missing RPC, odd body, upstream hiccup)
+        null
     }
 
     private fun canonicalExamType(value: String): String = when (value.lowercase()) {
@@ -5758,6 +5901,8 @@ class AdminV1Gateway private constructor(
         staging = staging,
         duplicadosComprobados = duplicadosComprobados,
         resumen = resumen,
+        codigoExamen = codigoExamen,
+        huella = huella,
     )
 
     // FEEDBACK + AUDITORIA

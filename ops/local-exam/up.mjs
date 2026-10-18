@@ -217,6 +217,8 @@ psql(fs.readFileSync(path.join(repo, 'supabase/migrations/20261022100200_v1_exam
 // V1 Access v2: beneficios_plan y suscripciones (objetos de MAIN fuera del subconjunto del bootstrap; idempotente).
 psql(fs.readFileSync(path.join(repo, 'supabase/baseline/main_shape_subset_extra_plans.sql'), 'utf8'));
 psql(fs.readFileSync(path.join(repo, 'supabase/baseline/main_shape_subset_extra_engagement.sql'), 'utf8'));
+// NIGHT-A: the bulk-import vertical of MAIN (staging table + import RPCs), absent from the generated subset; idempotent
+psql(fs.readFileSync(path.join(repo, 'supabase/baseline/main_shape_subset_extra_import.sql'), 'utf8'));
 // V1 economia (OposiTickets): libro de cartera, pedidos de pago y canje. Las tres migraciones son idempotentes (create or replace / if not exists /
 // drop-create de triggers y restricciones) salvo los PREFLIGHT, que fallan sin cambiar nada. Despues, lo que SOLO existe en local: el proveedor sandbox
 // en el CHECK de compras_usuario y la cartera vacia de los usuarios antiguos.
