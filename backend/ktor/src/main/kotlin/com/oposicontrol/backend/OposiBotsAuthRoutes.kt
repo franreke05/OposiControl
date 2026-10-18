@@ -66,6 +66,7 @@ internal fun Route.oposiBotsAuthRoutes(runtime: OposiBotsAuthRuntime) {
             call.authEndpoint(runtime, OposiBotsAuthOperation.EMAIL_EXCHANGE) {
                 val request = receiveAuthJson<OposiBotsEmailExchangeRequest>(runtime.json)
                 request.code.requireCredential()
+                validateCodeVerifier(request.codeVerifier, request.email, runtime.configuration)
                 requireSubjectLimit(runtime, request.code)
                 respond(runtime.gateway.exchangeEmail(request, authContext(runtime.configuration)))
             }
@@ -142,7 +143,7 @@ internal fun Route.oposiBotsAuthRoutes(runtime: OposiBotsAuthRuntime) {
         post("/reset-password") {
             call.authEndpoint(runtime, OposiBotsAuthOperation.RESET) {
                 val request = receiveAuthJson<OposiBotsResetPasswordRequest>(runtime.json)
-                request.validate()
+                request.validate(runtime.configuration)
                 requireSubjectLimit(runtime, request.resetToken)
                 runtime.gateway.reset(request, authContext(runtime.configuration))
                 respond(HttpStatusCode.NoContent)
@@ -353,6 +354,7 @@ internal fun resolveTrustedClientIp(
 private fun OposiBotsRegisterRequest.validate(configuration: OposiBotsAuthConfiguration) {
     validateIdentifierAndPassword(resolvedIdentifier(), password, newPassword = true)
     validateCaptcha(captchaToken, configuration)
+    validateCodeChallenge(codeChallenge, configuration)
 }
 
 private fun OposiBotsEmailResendRequest.validate(configuration: OposiBotsAuthConfiguration) {
@@ -361,6 +363,7 @@ private fun OposiBotsEmailResendRequest.validate(configuration: OposiBotsAuthCon
         throw OposiBotsAuthProblem.validation(OposiBotsValidationIssue.INVALID_IDENTIFIER)
     }
     validateCaptcha(captchaToken, configuration)
+    validateCodeChallenge(codeChallenge, configuration)
 }
 
 private fun OposiBotsLoginRequest.validate() {
@@ -374,11 +377,34 @@ private fun OposiBotsRecoverRequest.validate(configuration: OposiBotsAuthConfigu
         throw OposiBotsAuthProblem.validation(OposiBotsValidationIssue.INVALID_IDENTIFIER)
     }
     validateCaptcha(captchaToken, configuration)
+    validateCodeChallenge(codeChallenge, configuration)
 }
 
-private fun OposiBotsResetPasswordRequest.validate() {
+private fun OposiBotsResetPasswordRequest.validate(configuration: OposiBotsAuthConfiguration) {
     resetToken.requireCredential()
     validatePassword(newPassword)
+    validateCodeVerifier(codeVerifier, email, configuration)
+}
+
+/** FA39: shape of the S256 challenge sent with the email request; required only in `required` mode, ignored in `off`. */
+private fun validateCodeChallenge(challenge: String?, configuration: OposiBotsAuthConfiguration) {
+    if (configuration.pkceMode == PkceMode.OFF) return
+    if (challenge == null) {
+        if (configuration.pkceMode == PkceMode.REQUIRED) throw OposiBotsAuthProblem.validation(OposiBotsValidationIssue.INVALID_CODE_CHALLENGE)
+        return
+    }
+    if (!Pkce.CHALLENGE.matches(challenge)) throw OposiBotsAuthProblem.validation(OposiBotsValidationIssue.INVALID_CODE_CHALLENGE)
+}
+
+/** FA39: shape of the verifier (and of the optional email hint) sent with the code. Shape errors never depend on the code. */
+private fun validateCodeVerifier(verifier: String?, email: String?, configuration: OposiBotsAuthConfiguration) {
+    if (configuration.pkceMode == PkceMode.OFF) return
+    if (verifier == null) {
+        if (configuration.pkceMode == PkceMode.REQUIRED) throw OposiBotsAuthProblem.validation(OposiBotsValidationIssue.INVALID_CODE_VERIFIER)
+    } else if (!Pkce.VERIFIER.matches(verifier)) {
+        throw OposiBotsAuthProblem.validation(OposiBotsValidationIssue.INVALID_CODE_VERIFIER)
+    }
+    if (email != null && (email.isBlank() || !email.isValidEmail())) throw OposiBotsAuthProblem.validation(OposiBotsValidationIssue.INVALID_IDENTIFIER)
 }
 
 private fun OposiBotsProfileRequest.validate() {

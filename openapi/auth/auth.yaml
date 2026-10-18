@@ -373,6 +373,10 @@ components:
           $ref: '#/components/schemas/Password'
         captchaToken:
           type: string
+        codeChallenge:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{43}$'
+          description: 'FA39: base64url(SHA-256(codeVerifier)) without padding (RFC 7636 S256). Send the one generated for THIS request and keep the verifier on the device; the code of the email link is only exchangeable with it. Optional unless the server runs AUTH_PKCE_MODE=required (then 400 VALIDATION on field codeChallenge).'
     RegisterAccepted:
       type: object
       required: [verificationRequired]
@@ -390,6 +394,14 @@ components:
           minLength: 1
           maxLength: 16384
           description: 'token_hash from the verification link.'
+        codeVerifier:
+          type: string
+          pattern: '^[A-Za-z0-9._~-]{43,128}$'
+          description: 'FA39: the secret whose SHA-256 was sent as codeChallenge when the email was requested (RFC 7636). Checked BEFORE the one-time code is spent; a missing/unknown verifier answers the same 401 AUTH_CODE_INVALID as an invalid code. Optional unless AUTH_PKCE_MODE=required (400 on field codeVerifier).'
+        email:
+          type: string
+          format: email
+          description: 'FA39 optional hint (the link may carry it): with it a wrong attempt can never spend anybody elses binding.'
     EmailWithCaptchaRequest:
       type: object
       required: [email]
@@ -398,6 +410,10 @@ components:
         email:
           type: string
           format: email
+        codeChallenge:
+          type: string
+          pattern: '^[A-Za-z0-9_-]{43}$'
+          description: 'FA39: base64url(SHA-256(codeVerifier)) without padding (RFC 7636 S256). Send the one generated for THIS request and keep the verifier on the device; the code of the email link is only exchangeable with it. Optional unless the server runs AUTH_PKCE_MODE=required (then 400 VALIDATION on field codeChallenge).'
         captchaToken:
           type: string
     LoginRequest:
@@ -468,6 +484,13 @@ components:
           minLength: 1
         newPassword:
           $ref: '#/components/schemas/Password'
+        codeVerifier:
+          type: string
+          pattern: '^[A-Za-z0-9._~-]{43,128}$'
+          description: 'FA39: as in EmailExchangeRequest, for the recovery link (the challenge was sent with the recover request).'
+        email:
+          type: string
+          format: email
     AuthUser:
       type: object
       required: [id, onboardingCompleted, accountStatus]

@@ -3265,3 +3265,65 @@ begin
   raise notice 'OK FA38 razonado markup';
 end $$;
 rollback;
+
+-- 20261022102200: FA39 binding of the email deep-link code to the requesting device (E1-V1-NIGHT-PKCE.md)
+begin;
+create function pg_temp.expect_e(p_sql text, p_msg text) returns void language plpgsql as $$
+declare v_msg text;
+begin
+  begin execute p_sql; exception when others then get stacked diagnostics v_msg = message_text; end;
+  if v_msg is distinct from p_msg then raise exception 'ASSERT FAILED: % -> expected % got %', p_sql, p_msg, v_msg; end if;
+end $$;
+do $$
+declare
+  e1 constant text := repeat('a', 64);
+  e2 constant text := repeat('b', 64);
+  c1 constant text := repeat('A', 43);
+  c2 constant text := repeat('B', 43);
+  n int;
+begin
+  assert has_function_privilege('service_role', 'public.auth_code_binding_register(text,text,text,integer)', 'execute')
+     and has_function_privilege('service_role', 'public.auth_code_binding_consume(text,text,text)', 'execute')
+     and not has_function_privilege('anon', 'public.auth_code_binding_consume(text,text,text)', 'execute')
+     and not has_function_privilege('authenticated', 'public.auth_code_binding_register(text,text,text,integer)', 'execute')
+     and not has_table_privilege('authenticated', 'private.auth_code_bindings', 'select'), 'service role only';
+
+  perform public.auth_code_binding_register('signup', e1, c1);
+  -- another email (or purpose) cannot spend it, and a wrong attempt does NOT burn it
+  assert public.auth_code_binding_consume('signup', e2, c1) is null, 'a binding of another email is not spent';
+  assert public.auth_code_binding_consume('recovery', e1, c1) is null, 'purposes are separate';
+  assert (select count(*) from private.auth_code_bindings where challenge = c1) = 1, 'the failed attempts did not consume it';
+  assert public.auth_code_binding_consume('signup', null, c2) is null, 'unknown challenge';
+  -- single use, returns the pseudonym of the email it was requested for
+  assert public.auth_code_binding_consume('signup', e1, c1) = e1, 'consumed once with the right email';
+  assert public.auth_code_binding_consume('signup', e1, c1) is null, 'second use fails';
+
+  -- without an email hint any holder of the verifier matches and learns the pseudonym to compare with the session
+  perform public.auth_code_binding_register('recovery', e2, c2);
+  assert public.auth_code_binding_consume('recovery', null, c2) = e2, 'no email hint: matches by challenge, returns the pseudonym';
+
+  -- the first registration of a challenge wins (nobody can re-bind it to another email)
+  perform public.auth_code_binding_register('signup', e1, c1);
+  perform public.auth_code_binding_register('signup', e2, c1);
+  assert (select email_ref from private.auth_code_bindings where purpose = 'signup' and challenge = c1) = e1, 'first registration wins';
+  delete from private.auth_code_bindings;
+
+  -- at most 5 live bindings per (purpose, email): the oldest go
+  for n in 1..8 loop perform public.auth_code_binding_register('signup', e1, repeat(chr(64 + n), 43)); end loop;
+  assert (select count(*) from private.auth_code_bindings where purpose = 'signup' and email_ref = e1) = 5, 'bounded per email';
+  assert public.auth_code_binding_consume('signup', e1, repeat('A', 43)) is null and public.auth_code_binding_consume('signup', e1, repeat('H', 43)) = e1, 'the oldest were dropped, the newest kept';
+
+  -- expiry
+  perform public.auth_code_binding_register('signup', e2, repeat('Z', 43), 60);
+  update private.auth_code_bindings set expires_at = clock_timestamp() - interval '1 second' where challenge = repeat('Z', 43);
+  assert public.auth_code_binding_consume('signup', e2, repeat('Z', 43)) is null, 'expired bindings do not match';
+  perform public.auth_code_binding_register('signup', e2, repeat('Y', 43));
+  assert not exists (select 1 from private.auth_code_bindings where challenge = repeat('Z', 43)), 'expired rows are swept on write';
+
+  -- shapes
+  perform pg_temp.expect_e($q$select public.auth_code_binding_register('other', repeat('a', 64), repeat('A', 43))$q$, 'BINDING_PURPOSE_INVALID');
+  perform pg_temp.expect_e($q$select public.auth_code_binding_register('signup', 'not-hex', repeat('A', 43))$q$, 'new row for relation "auth_code_bindings" violates check constraint "auth_code_bindings_email_ref_check"');
+  perform pg_temp.expect_e($q$select public.auth_code_binding_register('signup', repeat('a', 64), 'short')$q$, 'new row for relation "auth_code_bindings" violates check constraint "auth_code_bindings_challenge_check"');
+  raise notice 'OK FA39 auth code binding';
+end $$;
+rollback;

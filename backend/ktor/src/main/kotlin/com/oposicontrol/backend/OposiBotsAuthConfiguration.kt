@@ -22,6 +22,8 @@ internal data class OposiBotsAuthConfiguration(
      * del de recuperacion. `null` (variable ausente o vacia) = no se envia `redirect_to`, el comportamiento de siempre.
      */
     val emailConfirmRedirectUrl: String? = null,
+    /** FA39 (`AUTH_PKCE_MODE`): off | optional (default) | required. See EmailCodeBinding.kt. */
+    val pkceMode: PkceMode = PkceMode.OPTIONAL,
 ) {
     val development: Boolean
         get() = AppEnvironment.isDevelopment(appEnvironment)
@@ -87,6 +89,7 @@ internal data class OposiBotsAuthConfiguration(
                 rateLimitHmacSecret = hmacSecret,
                 valkeyUrl = optionalEnvironment("VALKEY_URL"),
                 emailConfirmRedirectUrl = optionalEnvironment("OPOSIBOTS_EMAIL_CONFIRM_REDIRECT_URL"),
+                pkceMode = PkceMode.parse(System.getenv("AUTH_PKCE_MODE")),
             )
             configuration.requireDeployable()
             return configuration
@@ -173,7 +176,9 @@ internal class OposiBotsAuthRuntime(
             jwtVerifier: SupabaseJwtVerifier? = null,
         ): OposiBotsAuthRuntime {
             val accessRequests = accessRequestMailGuard(configuration)
-            val gateway = SupabaseOposiBotsAuthGateway(configuration, json, accessRequestSessionGate = accessRequests)
+            val bindingTransport = SupabaseRequestTransport(configuration.supabaseUrl, SupabaseRequestAuthPolicy(configuration.secretKey))
+            val codeBinding = PostgrestEmailCodeBinding(rpc = { function, body -> bindingTransport.send("POST", "/rest/v1/rpc/$function", body) })
+            val gateway = SupabaseOposiBotsAuthGateway(configuration, json, accessRequestSessionGate = accessRequests, codeBinding = codeBinding)
             return OposiBotsAuthRuntime(
                 configuration = configuration,
                 gateway = gateway,
