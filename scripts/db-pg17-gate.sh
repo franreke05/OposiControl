@@ -99,6 +99,9 @@ extra_auth=supabase/baseline/main_shape_auth_users.sql
 
 extra_eng=supabase/baseline/main_shape_subset_extra_engagement.sql
 [ -s "$extra_eng" ] && { psqlc < "$extra_eng" >/dev/null 2>"$err" || { cat "$err"; fail "$extra_eng no carga con ON_ERROR_STOP=1"; }; }
+# E7 (develop reconcile): solicitudes_acceso_admin (MAIN-applied 20261013100000) for develop's pending 20261020100000.
+extra_ar=supabase/baseline/main_shape_subset_extra_access_requests.sql
+[ -s "$extra_ar" ] && { psqlc < "$extra_ar" >/dev/null 2>"$err" || { cat "$err"; fail "$extra_ar no carga con ON_ERROR_STOP=1"; }; }
 fingerprint "$tmp/f0"
 apply_all
 fingerprint "$tmp/f1"

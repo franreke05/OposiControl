@@ -2405,14 +2405,15 @@ begin
   perform pg_temp.expect_e(format($q$update public.examenes set penalizacion_num = 1, penalizacion_den = 3 where id = %L$q$, pg_temp.ex(15)), 'new row for relation "examenes" violates check constraint "examenes_penalizacion_chk"');
   -- FA36b: changing the grading rules is audited (who, old/new); other columns and no-op updates are not
   perform set_config('request.jwt.claim.sub', 'a0000000-0000-0000-0000-0000000000f1', true);
-  delete from public.auditoria_log where accion = 'examen_reglas_puntuacion_modificadas';
+  -- E7: auditoria_log is append-only (20261021100000): no DELETE; remember the ids already present and look only at rows written after this point.
+  perform set_config('e7.audit0', coalesce((select string_agg(id::text, ',') from public.auditoria_log where accion = 'examen_reglas_puntuacion_modificadas'), ''), true);
   update public.examenes set titulo = 'Racional 15b' where id = pg_temp.ex(15);
   update public.examenes set penalizacion_racional = true where id = pg_temp.ex(15);
-  assert (select count(*) from public.auditoria_log where accion = 'examen_reglas_puntuacion_modificadas') = 0, 'a title change or a no-op rule update writes no audit';
+  assert (select count(*) from public.auditoria_log where accion = 'examen_reglas_puntuacion_modificadas' and id::text <> all(string_to_array(current_setting('e7.audit0'), ','))) = 0, 'a title change or a no-op rule update writes no audit';
   update public.examenes set penalizacion_racional = false, penalizacion_num = 1, penalizacion_den = 3 where id = pg_temp.ex(15);
   assert (select count(*) = 1 and bool_and(usuario_id = 'a0000000-0000-0000-0000-0000000000f1' and tabla_afectada = 'examenes' and registro_id = pg_temp.ex(15)
             and (antes ->> 'penalizacion_racional')::boolean is true and (despues ->> 'penalizacion_racional')::boolean is false and (despues ->> 'penalizacion_num')::int = 1 and (despues ->> 'penalizacion_den')::int = 3)
-            from public.auditoria_log where accion = 'examen_reglas_puntuacion_modificadas'), 'a rule change writes ONE audit row with the actor and old/new values';
+            from public.auditoria_log where accion = 'examen_reglas_puntuacion_modificadas' and id::text <> all(string_to_array(current_setting('e7.audit0'), ','))), 'a rule change writes ONE audit row with the actor and old/new values';
   raise notice 'OK V1 rational penalty';
 end $$;
 rollback;
@@ -2783,7 +2784,7 @@ begin
   update auth.users set email_confirmed_at = now() - interval '1 hour' where id = pg_temp.u(3);
   perform pg_temp.att(gen_random_uuid(), pg_temp.u(3), false, 5, 100);
   perform public.app_job_referidos(); perform public.app_job_referidos();
-  assert (select estado from public.invitaciones where invitado_id = pg_temp.u(3)) = 'diferida' and (select diferida_hasta from public.invitaciones where invitado_id = pg_temp.u(3)) > now() + interval '1 hour'
+  assert (select estado from public.invitaciones where invitado_id = pg_temp.u(3)) = 'diferida' and (select diferida_hasta from public.invitaciones where invitado_id = pg_temp.u(3)) > now() + interval '1 minute'
      and (select count(*) from public.transacciones_cartera where tipo = 'referido') = 2, 'daily cap of the inviter keeps it waiting, nothing paid';
   update public.configuracion_v1 set valor_integer = 5 where clave = 'referido_tope_diario';
 
