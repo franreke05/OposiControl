@@ -17,6 +17,8 @@ import com.oposicontrol.admin.domain.model.GradingAuditEntry
 import com.oposicontrol.admin.domain.model.GradingRules
 import com.oposicontrol.admin.domain.model.OrderItem
 import com.oposicontrol.admin.domain.model.OrderPage
+import com.oposicontrol.admin.domain.model.OfficialQuestionDraft
+import com.oposicontrol.admin.domain.model.OfficialQuestions
 import com.oposicontrol.admin.domain.model.ReferralPage
 import com.oposicontrol.admin.domain.model.ReferralRevokeResult
 
@@ -39,6 +41,12 @@ interface ControlV1Repository {
     ): AppResult<GradingRules>
 
     suspend fun getGradingAudit(examId: String): AppResult<List<GradingAuditEntry>>
+
+    /** Marcas (anulada, motivo, reserva, orden) de cada pregunta de un examen oficial. */
+    suspend fun officialQuestions(examId: String): AppResult<OfficialQuestions>
+
+    /** Guarda las marcas de UNA pregunta. El servidor recoloca la posición de una reserva y deja el rastro de auditoría. */
+    suspend fun saveOfficialQuestion(examId: String, questionId: String, draft: OfficialQuestionDraft): AppResult<OfficialQuestions>
 
     // ---- configuración numérica (invitaciones, foro, ranking)
     suspend fun getConfig(group: String): AppResult<List<ConfigEntry>>

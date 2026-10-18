@@ -18,6 +18,7 @@ import com.oposicontrol.admin.domain.model.ForumRestriction
 import com.oposicontrol.admin.domain.model.GradingAuditEntry
 import com.oposicontrol.admin.domain.model.GradingRules
 import com.oposicontrol.admin.domain.model.OrderItem
+import com.oposicontrol.admin.domain.model.OfficialQuestions
 import com.oposicontrol.admin.domain.model.OrderPage
 import com.oposicontrol.admin.domain.model.ReferralItem
 import com.oposicontrol.admin.domain.model.ReferralPage
@@ -70,6 +71,10 @@ class FakeControlV1Repository : ControlV1Repository {
     }
 
     override suspend fun getGradingAudit(examId: String) = result("getGradingAudit") { gradingAudit }
+    var officialQuestions: OfficialQuestions? = null
+    override suspend fun officialQuestions(examId: String) = result("officialQuestions") { requireNotNull(officialQuestions) }
+    override suspend fun saveOfficialQuestion(examId: String, questionId: String, draft: com.oposicontrol.admin.domain.model.OfficialQuestionDraft) =
+        result("saveOfficialQuestion:$questionId:${draft.annulled}:${draft.isReserve}:${draft.order}") { requireNotNull(officialQuestions) }
     override suspend fun getConfig(group: String) = result("getConfig:$group") { config }
 
     override suspend fun setConfig(key: String, value: Int): AppResult<ConfigEntry> = result("setConfig:$key=$value") {

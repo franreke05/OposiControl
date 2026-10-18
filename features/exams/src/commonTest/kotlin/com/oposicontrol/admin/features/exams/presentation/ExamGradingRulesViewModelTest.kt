@@ -48,61 +48,12 @@ class ExamGradingRulesViewModelTest {
         check = GradingCheck(problem = null, warnings = listOf("MORE_RESERVES_THAN_MAX"), effectiveRule = "REEMPLAZO_POR_RESERVA"),
     )
 
-    private class Fake(var rules: GradingRules, var audit: List<GradingAuditEntry> = emptyList()) : ControlV1Repository {
-        val saves = mutableListOf<String>()
-        var failSave = false
-
-        override suspend fun getGradingRules(examId: String) = AppResult.Success(rules)
-
-        override suspend fun saveGradingRules(
-            examId: String,
-            annulledRule: String?,
-            rationalPenalty: Boolean,
-            numerator: Int,
-            denominator: Int,
-            reason: String?,
-        ): AppResult<GradingRules> {
-            saves += "$annulledRule|$rationalPenalty|$numerator/$denominator|$reason"
-            if (failSave) return AppResult.Failure(AppError.Validation("rechazado por el servidor", "OFFICIAL_RULES_INVALID"))
-            rules = rules.copy(annulledRule = annulledRule, rationalPenalty = rationalPenalty, fixedNumerator = numerator, fixedDenominator = denominator)
-            audit = listOf(
-                GradingAuditEntry("a1", "2026-10-18T10:00:00Z", "actor", reason, GradingSnapshot(null, false, 0, 1), GradingSnapshot(annulledRule, rationalPenalty, numerator, denominator)),
-            ) + audit
-            return AppResult.Success(rules)
-        }
-
-        override suspend fun getGradingAudit(examId: String) = AppResult.Success(audit)
-
-        override suspend fun getConfig(group: String): AppResult<List<ConfigEntry>> = TODO()
-        override suspend fun setConfig(key: String, value: Int): AppResult<ConfigEntry> = TODO()
-        override suspend fun listReferrals(state: String?, cursor: String?): AppResult<ReferralPage> = TODO()
-        override suspend fun revokeReferral(id: String, reason: String): AppResult<ReferralRevokeResult> = TODO()
-        override suspend fun forumQueue(type: ForumContentType, state: String, cursor: String?): AppResult<ForumQueuePage> = TODO()
-        override suspend fun moderateForum(type: ForumContentType, id: String, action: ForumAction, reason: String?, days: Int?): AppResult<Unit> = TODO()
-        override suspend fun forumChannels(): AppResult<List<ForumChannel>> = TODO()
-        override suspend fun createForumChannel(draft: ForumChannelDraft): AppResult<ForumChannel> = TODO()
-        override suspend fun updateForumChannel(id: String, draft: ForumChannelDraft): AppResult<ForumChannel> = TODO()
-        override suspend fun forumBlockList(): AppResult<List<String>> = TODO()
-        override suspend fun addForumBlock(pattern: String): AppResult<Unit> = TODO()
-        override suspend fun removeForumBlock(pattern: String): AppResult<Unit> = TODO()
-        override suspend fun forumRestrictions(): AppResult<List<ForumRestriction>> = TODO()
-        override suspend fun liftForumRestriction(userId: String): AppResult<Unit> = TODO()
-        override suspend fun examEconomy(offset: Int, onlyWithoutCommunity: Boolean): AppResult<ExamEconomyPage> = TODO()
-        override suspend fun saveExamEconomy(examId: String, draft: ExamEconomyDraft): AppResult<ExamEconomy> = TODO()
-        override suspend fun orders(state: String?, offset: Int): AppResult<OrderPage> = TODO()
-        override suspend fun ordersInReviewCount(): AppResult<Int> = TODO()
-        override suspend fun order(id: String): AppResult<OrderItem> = TODO()
-        override suspend fun addOrderNote(id: String, note: String): AppResult<Unit> = TODO()
-        override suspend fun fastWindows(offset: Int): AppResult<FastWindowPage> = TODO()
-        override suspend fun forumCounterDrift(): AppResult<List<ForumCounterDrift>> = TODO()
-    }
-
     private fun TestScope.vm(repo: ControlV1Repository) =
         ExamGradingRulesViewModel(TestDispatcherProvider(StandardTestDispatcher(testScheduler)), repo)
 
     @Test
     fun loadingBuildsTheDraftFromTheServerAndShowsTheAudit() = runTest {
-        val vm = vm(Fake(rules(), audit = listOf(GradingAuditEntry("a0", null, null, "x", null, null))))
+        val vm = vm(ExamsFakeControlRepo(rules = rules(), audit = listOf(GradingAuditEntry("a0", null, null, "x", null, null))))
         vm.dispatch(GradingRulesIntent.Load("e1"))
         advanceUntilIdle()
         val s = vm.state.value
@@ -113,7 +64,7 @@ class ExamGradingRulesViewModelTest {
 
     @Test
     fun turningRationalOnClearsTheFractionAndMakesTheFieldsInert() = runTest {
-        val vm = vm(Fake(rules()))
+        val vm = vm(ExamsFakeControlRepo(rules = rules()))
         vm.dispatch(GradingRulesIntent.Load("e1"))
         advanceUntilIdle()
         vm.dispatch(GradingRulesIntent.SetNumerator("1"))
@@ -131,7 +82,7 @@ class ExamGradingRulesViewModelTest {
 
     @Test
     fun anInvalidFractionIsNotSent() = runTest {
-        val repo = Fake(rules())
+        val repo = ExamsFakeControlRepo(rules = rules())
         val vm = vm(repo)
         vm.dispatch(GradingRulesIntent.Load("e1"))
         advanceUntilIdle()
@@ -145,7 +96,7 @@ class ExamGradingRulesViewModelTest {
 
     @Test
     fun aDraftExamSavesInOneStepAndRefreshesTheAudit() = runTest {
-        val repo = Fake(rules())
+        val repo = ExamsFakeControlRepo(rules = rules())
         val vm = vm(repo)
         vm.dispatch(GradingRulesIntent.Load("e1"))
         advanceUntilIdle()
@@ -161,7 +112,7 @@ class ExamGradingRulesViewModelTest {
 
     @Test
     fun aPublishedExamNeedsAReasonThenAnExplicitConfirmation() = runTest {
-        val repo = Fake(rules(published = true))
+        val repo = ExamsFakeControlRepo(rules = rules(published = true))
         val vm = vm(repo)
         vm.dispatch(GradingRulesIntent.Load("e1"))
         advanceUntilIdle()
@@ -191,7 +142,7 @@ class ExamGradingRulesViewModelTest {
 
     @Test
     fun aServerRejectionKeepsTheDraftAndShowsTheError() = runTest {
-        val repo = Fake(rules()).apply { failSave = true }
+        val repo = ExamsFakeControlRepo(rules = rules()).apply { failSave = true }
         val vm = vm(repo)
         vm.dispatch(GradingRulesIntent.Load("e1"))
         advanceUntilIdle()
@@ -205,7 +156,7 @@ class ExamGradingRulesViewModelTest {
 
     @Test
     fun discardingRestoresTheSavedValues() = runTest {
-        val vm = vm(Fake(rules()))
+        val vm = vm(ExamsFakeControlRepo(rules = rules()))
         vm.dispatch(GradingRulesIntent.Load("e1"))
         advanceUntilIdle()
         vm.dispatch(GradingRulesIntent.SetRational(true))
@@ -219,7 +170,7 @@ class ExamGradingRulesViewModelTest {
 
     @Test
     fun reloadingTheSameExamKeepsWhatIsBeingTyped() = runTest {
-        val vm = vm(Fake(rules()))
+        val vm = vm(ExamsFakeControlRepo(rules = rules()))
         vm.dispatch(GradingRulesIntent.Load("e1"))
         advanceUntilIdle()
         vm.dispatch(GradingRulesIntent.SetRational(true))

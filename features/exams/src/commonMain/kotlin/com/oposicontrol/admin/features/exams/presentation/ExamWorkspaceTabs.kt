@@ -248,6 +248,8 @@ private fun ExamWorkspaceTabContent(
             )
             // Reglas de puntuación y su historial: solo con un examen ya guardado y si la app provee el ViewModel.
             if (exam != null && exam.id.isNotBlank()) ExamGradingRulesHost(examId = exam.id, isOfficial = exam.isOfficial)
+            // Anuladas y reservas de las preguntas: solo en un examen oficial ya guardado.
+            if (exam != null && exam.id.isNotBlank() && exam.isOfficial) ExamOfficialQuestionsHost(examId = exam.id)
         }
         ExamWorkspaceTabId.ACCESO -> ExamAccessSection(
             state = state,

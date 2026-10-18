@@ -68,6 +68,7 @@ GET /api/v1/admin/examenes
 GET /api/v1/admin/examenes-economia
 GET /api/v1/admin/examenes/{}
 GET /api/v1/admin/examenes/{}/preguntas
+GET /api/v1/admin/examenes/{}/preguntas-oficiales
 GET /api/v1/admin/examenes/{}/reglas-puntuacion
 GET /api/v1/admin/examenes/{}/reglas-puntuacion/auditoria
 GET /api/v1/admin/feedback/preguntas
@@ -297,6 +298,7 @@ PUT /api/v1/admin/comercial/productos/{}
 PUT /api/v1/admin/comercial/productos/{}/tarifas/{}/{}
 PUT /api/v1/admin/config-v1/{}
 PUT /api/v1/admin/especialidades/{}/capacidades
+PUT /api/v1/admin/examenes/{}/preguntas-oficiales/{}
 PUT /api/v1/admin/examenes/{}/reglas-puntuacion
 PUT /api/v1/admin/planes/{}
 PUT /api/v1/admin/tipos-noticia/{}

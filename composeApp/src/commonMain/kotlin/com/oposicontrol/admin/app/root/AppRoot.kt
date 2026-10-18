@@ -50,6 +50,8 @@ import com.oposicontrol.admin.features.dashboard.presentation.DashboardV2ViewMod
 import com.oposicontrol.admin.features.dashboard.presentation.DashboardViewModel
 import com.oposicontrol.admin.features.dashboard.presentation.MobileDashboardScreen
 import com.oposicontrol.admin.features.exams.presentation.ExamGradingRulesViewModel
+import com.oposicontrol.admin.features.exams.presentation.ExamOfficialQuestionsViewModel
+import com.oposicontrol.admin.features.exams.presentation.LocalOfficialQuestionsViewModel
 import com.oposicontrol.admin.features.exams.presentation.LocalGradingRulesViewModel
 import com.oposicontrol.admin.features.examaccess.presentation.ExamAccessIntent
 import com.oposicontrol.admin.features.examaccess.presentation.ExamAccessScreen
@@ -653,6 +655,7 @@ fun AppRoot(
                     AppContentTarget.EXAM_WORKSPACE -> CompositionLocalProvider(
                         // Reglas de puntuación del examen (Control V1): el editor las pinta solo si alguien las provee.
                         LocalGradingRulesViewModel provides koinInject<ExamGradingRulesViewModel>(),
+                        LocalOfficialQuestionsViewModel provides koinInject<ExamOfficialQuestionsViewModel>(),
                     ) {
                         ExamWorkspaceScreen(
                         // El mismo ViewModel que alimenta «Nuevo examen» en la

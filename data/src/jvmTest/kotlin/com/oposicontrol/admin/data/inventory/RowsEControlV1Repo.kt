@@ -19,6 +19,10 @@ internal val ROWS_E_CONTROL_V1_REPO: List<CallRow> = listOf(
     CallRow(FILE, "getGradingRules", get("$A/examenes/{}/reglas-puntuacion")) { repo().getGradingRules("ID0") },
     CallRow(FILE, "saveGradingRules", put("$A/examenes/{}/reglas-puntuacion")) { repo().saveGradingRules("ID0", null, false, 0, 1, "motivo") },
     CallRow(FILE, "getGradingAudit", get("$A/examenes/{}/reglas-puntuacion/auditoria")) { repo().getGradingAudit("ID0") },
+    CallRow(FILE, "officialQuestions", get("$A/examenes/{}/preguntas-oficiales")) { repo().officialQuestions("ID0") },
+    CallRow(FILE, "saveOfficialQuestion", put("$A/examenes/{}/preguntas-oficiales/{}")) {
+        repo().saveOfficialQuestion("ID0", "ID1", com.oposicontrol.admin.domain.model.OfficialQuestionDraft(false, "", false, ""))
+    },
     CallRow(FILE, "getConfig", get("$A/config-v1?grupo")) { repo().getConfig("referido") },
     CallRow(FILE, "setConfig", put("$A/config-v1/{}")) { repo().setConfig("ID0", 1) },
     CallRow(FILE, "listReferrals", get("$A/referidos/invitaciones?cursor&estado")) { repo().listReferrals("premiada", "c1") },

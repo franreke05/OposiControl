@@ -318,3 +318,5 @@ POST	/api/v1/admin/pedidos/{}/nota	CONTROL	admin	Admin v1 (Control V1): pedidos/
 POST	/api/v1/admin/referidos/invitaciones/{}/revocar	CONTROL	admin	Admin v1 (Control V1): referidos/invitaciones/{}/revocar	OposiControl
 PUT	/api/v1/admin/config-v1/{}	CONTROL	admin	Admin v1 (Control V1): config-v1/{}	OposiControl
 PUT	/api/v1/admin/examenes/{}/reglas-puntuacion	CONTROL	admin	Admin v1 (Control V1): examenes/{}/reglas-puntuacion	OposiControl
+GET	/api/v1/admin/examenes/{}/preguntas-oficiales	CONTROL	admin	Admin v1 (Control V1): examenes/{}/preguntas-oficiales	OposiControl
+PUT	/api/v1/admin/examenes/{}/preguntas-oficiales/{}	CONTROL	admin	Admin v1 (Control V1): examenes/{}/preguntas-oficiales/{}	OposiControl

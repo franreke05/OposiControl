@@ -24,6 +24,9 @@ import com.oposicontrol.admin.domain.model.GradingCheck
 import com.oposicontrol.admin.domain.model.GradingRules
 import com.oposicontrol.admin.domain.model.GradingSnapshot
 import com.oposicontrol.admin.domain.model.OrderItem
+import com.oposicontrol.admin.domain.model.OfficialQuestion
+import com.oposicontrol.admin.domain.model.OfficialQuestionDraft
+import com.oposicontrol.admin.domain.model.OfficialQuestions
 import com.oposicontrol.admin.domain.model.OrderPage
 import com.oposicontrol.admin.domain.model.RefundCase
 import com.oposicontrol.admin.domain.model.ReferralItem
@@ -89,6 +92,27 @@ class KtorControlV1RepositoryImpl(
             .checkedBody<GradingAuditResponseDto>("/api/v1/admin/examenes/$examId/reglas-puntuacion/auditoria")
             .data.map { it.toDomain() }
     }
+
+    override suspend fun officialQuestions(examId: String): AppResult<OfficialQuestions> = adapter.safeCall {
+        client.get(url("/examenes/$examId/preguntas-oficiales")) { auth() }
+            .checkedBody<OfficialQuestionsDto>("/api/v1/admin/examenes/$examId/preguntas-oficiales").toDomain()
+    }
+
+    override suspend fun saveOfficialQuestion(examId: String, questionId: String, draft: OfficialQuestionDraft): AppResult<OfficialQuestions> =
+        adapter.safeCall {
+            client.put(url("/examenes/$examId/preguntas-oficiales/$questionId")) {
+                auth()
+                contentType(ContentType.Application.Json)
+                setBody(
+                    OfficialQuestionPutDto(
+                        anulada = draft.annulled,
+                        motivoAnulacion = draft.reason.trim().takeIf { draft.annulled && it.isNotEmpty() },
+                        esReserva = draft.isReserve,
+                        ordenReserva = draft.order.trim().toIntOrNull()?.takeIf { draft.isReserve },
+                    ),
+                )
+            }.checkedBody<OfficialQuestionsDto>("/api/v1/admin/examenes/$examId/preguntas-oficiales/$questionId").toDomain()
+        }
 
     // ---------------------------------------------------------------- configuración
 
@@ -636,3 +660,36 @@ private data class ForumDriftItemDto(val id: String, val creadoEn: String? = nul
 
 @Serializable
 private data class ForumDriftDto(val data: List<ForumDriftItemDto> = emptyList())
+
+@Serializable
+private data class OfficialQuestionDto(
+    val preguntaId: String,
+    val posicion: Int = 0,
+    val titulo: String = "",
+    val anulada: Boolean = false,
+    val motivoAnulacion: String? = null,
+    val esReserva: Boolean = false,
+    val ordenReserva: Int? = null,
+    val esDemo: Boolean = false,
+) {
+    fun toDomain() = OfficialQuestion(preguntaId, posicion, titulo, anulada, motivoAnulacion, esReserva, ordenReserva, esDemo)
+}
+
+@Serializable
+private data class OfficialQuestionsDto(
+    val examenId: String,
+    val preguntas: List<OfficialQuestionDto> = emptyList(),
+    val reservasDisponibles: Boolean = false,
+    val chequeo: GradingCheckDto? = null,
+) {
+    fun toDomain() = OfficialQuestions(examenId, preguntas.map { it.toDomain() }, reservasDisponibles, chequeo?.let { GradingCheck(it.problema, it.avisos, it.regla) })
+}
+
+/** Cuerpo de `PUT .../preguntas-oficiales/{id}`: sin valores por defecto, así que `anulada` y `esReserva` viajan SIEMPRE. */
+@Serializable
+private data class OfficialQuestionPutDto(
+    val anulada: Boolean,
+    val motivoAnulacion: String?,
+    val esReserva: Boolean,
+    val ordenReserva: Int?,
+)

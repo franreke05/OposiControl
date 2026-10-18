@@ -350,3 +350,65 @@ data class FastWindow(
 data class FastWindowPage(val items: List<FastWindow>, val total: Int, val limit: Int, val offset: Int, val thresholdMs: Int?)
 
 data class ForumCounterDrift(val id: String, val at: String?, val rows: Int?)
+
+// ---------------------------------------------------------------- marcas de las preguntas de un examen oficial
+
+data class OfficialQuestion(
+    val questionId: String,
+    val position: Int,
+    val title: String,
+    val annulled: Boolean,
+    val annulmentReason: String?,
+    val isReserve: Boolean,
+    val reserveOrder: Int?,
+    val isDemo: Boolean,
+)
+
+data class OfficialQuestions(
+    val examId: String,
+    val questions: List<OfficialQuestion>,
+    /** `false` = el servidor conectado aún no tiene las columnas de reserva: solo se pueden leer las anuladas. */
+    val reservesAvailable: Boolean,
+    val check: GradingCheck?,
+) {
+    val reserves: List<OfficialQuestion> get() = questions.filter { it.isReserve }.sortedBy { it.reserveOrder ?: Int.MAX_VALUE }
+    val mainAnnulled: Int get() = questions.count { !it.isReserve && it.annulled }
+}
+
+data class OfficialQuestionDraft(
+    val annulled: Boolean,
+    val reason: String,
+    val isReserve: Boolean,
+    val order: String,
+) {
+    companion object {
+        fun from(q: OfficialQuestion) = OfficialQuestionDraft(q.annulled, q.annulmentReason.orEmpty(), q.isReserve, q.reserveOrder?.toString().orEmpty())
+    }
+}
+
+object OfficialQuestionValidator {
+    const val REASON_MAX = 500
+    const val ORDER_MAX = 10
+
+    /** Mapa campo → mensaje; vacío = válido. Mismas reglas que el servidor (la guarda real es la base de datos). */
+    fun check(draft: OfficialQuestionDraft, question: OfficialQuestion, all: List<OfficialQuestion>): Map<String, String> = buildMap {
+        if (question.isDemo && (draft.annulled || draft.isReserve)) {
+            put("demo", "Una pregunta de demostración no puede estar anulada ni ser reserva.")
+        }
+        if (draft.reason.isNotBlank() && !draft.annulled) put("reason", "El motivo solo se admite si la pregunta está anulada.")
+        if (draft.reason.trim().length > REASON_MAX) put("reason", "El motivo no puede superar $REASON_MAX caracteres.")
+        val order = draft.order.trim().toIntOrNull()
+        if (draft.isReserve) {
+            if (order == null || order < 1 || order > ORDER_MAX) {
+                put("order", "Una reserva necesita un orden de 1 a $ORDER_MAX.")
+            } else if (all.any { it.isReserve && it.questionId != question.questionId && it.reserveOrder == order }) {
+                put("order", "Ya hay otra reserva con el orden $order.")
+            }
+        } else if (draft.order.isNotBlank()) {
+            put("order", "Una pregunta principal no lleva orden de reserva.")
+        }
+    }
+
+    /** El siguiente orden libre para una reserva nueva: el mayor actual + 1 (la base exige 1..R sin huecos). */
+    fun nextOrder(all: List<OfficialQuestion>): Int = (all.filter { it.isReserve }.maxOfOrNull { it.reserveOrder ?: 0 } ?: 0) + 1
+}

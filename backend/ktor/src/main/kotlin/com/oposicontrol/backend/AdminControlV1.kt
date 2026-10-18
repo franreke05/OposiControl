@@ -155,4 +155,5 @@ fun io.ktor.server.routing.Route.adminControlV1Routes(gateway: AdminControlV1Gat
     adminControlForumRoutes(gateway)
     adminControlCommerceRoutes(gateway)
     adminControlAlertsRoutes(gateway)
+    adminControlOfficialQuestionsRoutes(gateway)
 }
