@@ -57,9 +57,13 @@ expect_fail "(d) rollback incompleto" "tras los ROLLBACK el catalogo no vuelve a
 s3=supabase/migrations/20261008100100_slice3_attempt_command_rpcs.sql
 fresh; echo 'grant execute on function public.app_finish_exam_attempt(uuid, uuid) to authenticated;' >> "$w/$s3"; mutated "$w/$s3"
 expect_fail "(e) EXECUTE de cliente sobre una RPC de Slice 3" "20261008100100_slice3_attempt_command_rpcs: VERIFY con contadores distintos de 0"
-fresh; sed -i 's/^    where pe.examen_id = p_examen_id and pe.anulada is not true and p.activa$/    where pe.examen_id = p_examen_id and p.activa/' "$w/$s3"; mutated "$w/$s3"
-expect_fail "(f) el intento congela tambien las preguntas anuladas" "assertions.sql"
-grep -q 'frozen set = active and not annulled' "$tmp/out" || { echo "TEST FAIL: (f) sin la asercion del conjunto congelado"; exit 1; }
+# (f) RB-15: desde 20261010100000 (decision 2026-10-10) congelar las anuladas ES lo correcto, asi que la mutacion antigua
+# ya no es un fallo. Ahora: el congelado (vigente en 20261010100000) pierde el orden del examen; su VERIFY es estatico y no
+# lo ve, solo la asercion de comportamiento.
+fa=supabase/migrations/20261010100000_slice3_attempt_freeze_keeps_annulled.sql
+fresh; sed -i '/^--/!s/(row_number() over (order by q.posicion, q.pregunta_id))::integer/(row_number() over (order by q.posicion desc, q.pregunta_id))::integer/' "$w/$fa"; mutated "$w/$fa"
+expect_fail "(f) el intento congela en un orden distinto al del examen" "assertions.sql"
+grep -q 'frozen set = active (annulled included' "$tmp/out" || { echo "TEST FAIL: (f) sin la asercion del conjunto congelado"; exit 1; }
 # GATE SLICE 3 (20261008100200): (g) los comandos vuelven a servir un intento que el arranque canonico no creo -> su VERIFY;
 # (h) el marcador se puede fabricar con un UPDATE -> la asercion de comportamiento.
 s3h=supabase/migrations/20261008100200_slice3_attempt_hardening.sql

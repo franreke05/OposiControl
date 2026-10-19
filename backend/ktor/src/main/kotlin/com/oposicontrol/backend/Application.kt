@@ -521,6 +521,14 @@ fun Application.module() {
     }
     // MASTER-ARCH-008: cierre ordenado de los recursos del runtime de auth (Valkey, HttpClient) al parar.
     authRuntime?.let { runtime -> monitor.subscribe(ApplicationStopped) { runtime.close() } }
+    // SEC-V1-02: `control` no tiene runtime de auth; su limite de mutaciones admin necesita un limitador propio.
+    val adminMutationLimiter = if (serverProfile.mountsControl) {
+        authRuntime?.rateLimiter ?: adminMutationRateLimiterFromEnvironment()?.also { limiter ->
+            monitor.subscribe(ApplicationStopped) { runCatching { limiter.close() } }
+        }
+    } else {
+        null
+    }
     installBackendPrometheusMetrics()
     if (consumerOnly) {
         configureConsumerAuthOnly(authRuntime ?: error("Auth consumer no configurado."))
@@ -600,6 +608,7 @@ fun Application.module() {
         allowDevUser = allowDevUser,
         appEnv = appEnv,
         authRuntime = authRuntime,
+        adminMutationLimiter = adminMutationLimiter,
         identityResolver = canonicalIdentityResolver,
         catalogRuntime = catalogRuntime,
         walletRuntime = walletRuntime,
@@ -666,6 +675,8 @@ internal class CombinedRoutingDeps(
     val appEnv: String,
     val authRuntime: OposiBotsAuthRuntime?,
     val identityResolver: CanonicalIdentityResolver?,
+    /** SEC-V1-02: limitador del plano admin (en `control` no hay [authRuntime]). `null` = el de [authRuntime], si existe. */
+    internal val adminMutationLimiter: OposiBotsAuthRateLimiter? = null,
     /** Sonda de dependencia critica de `/health/ready` (Supabase). Inyectable para probar el 503; produccion usa la real. */
     val readinessCheck: () -> String = ::checkSupabaseReadiness,
     /** SLICE 2 (D2-01/02/13, D7-02). `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
@@ -774,7 +785,7 @@ internal fun Route.installControlRoutes(deps: CombinedRoutingDeps, includeIntern
             }
             // DEBT-151: limite de mutaciones por administrador (despues de autorizar; las lecturas no cuentan).
             install(AdminMutationRateLimitPlugin) {
-                limiter = deps.authRuntime?.rateLimiter
+                limiter = deps.adminMutationLimiter ?: deps.authRuntime?.rateLimiter
                 limit = adminMutationRateLimit(System.getenv(ADMIN_MUTATION_RATE_LIMIT_ENV))
             }
             // MASTER-OBS-002: el `sub` del JWT como actor de toda auditoría administrativa.

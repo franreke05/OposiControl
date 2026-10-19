@@ -22,6 +22,9 @@ import io.ktor.server.routing.routing
 import io.ktor.server.testing.testApplication
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertFailsWith
+import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 /** DEBT-151: limite de mutaciones por administrador sobre el pipeline real (plugin + sobre canonico de StatusPages). */
@@ -86,5 +89,56 @@ class AdminMutationRateLimitTest {
         assertEquals(120, adminMutationRateLimit("0"))
         assertEquals(120, adminMutationRateLimit("-5"))
         assertEquals(30, adminMutationRateLimit(" 30 "))
+    }
+
+    // ------------------------------------------------------------------ SEC-V1-02: limitador propio del perfil control
+
+    private val secret = "s".repeat(32)
+    private val noValkey: (String, RateLimitKeyHasher) -> OposiBotsAuthRateLimiter = { _, _ -> error("no debe construirse") }
+
+    private fun limiterFor(vararg env: Pair<String, String>, valkey: (String, RateLimitKeyHasher) -> OposiBotsAuthRateLimiter = noValkey) =
+        adminMutationRateLimiterFromEnvironment(environment = mapOf(*env)::get, valkey = valkey)
+
+    @Test
+    fun outsideDevelopmentAMissingModeFailsStartupInsteadOfDisablingTheLimit() {
+        assertFailsWith<IllegalStateException> { limiterFor() } // APP_ENV ausente = production (fail closed)
+        assertFailsWith<IllegalStateException> { limiterFor("APP_ENV" to "production") }
+        assertFailsWith<IllegalStateException> { limiterFor("APP_ENV" to "staging", "ADMIN_RATE_LIMIT_MODE" to " ") }
+    }
+
+    @Test
+    fun outsideDevelopmentMemoryABadSecretOrNoValkeyUrlFailStartup() {
+        assertFailsWith<IllegalStateException> {
+            limiterFor("APP_ENV" to "production", "ADMIN_RATE_LIMIT_MODE" to "memory", "ADMIN_RATE_LIMIT_HMAC_SECRET" to secret)
+        }
+        assertFailsWith<IllegalStateException> {
+            limiterFor("APP_ENV" to "production", "ADMIN_RATE_LIMIT_MODE" to "valkey", "ADMIN_RATE_LIMIT_HMAC_SECRET" to "corto", "ADMIN_RATE_LIMIT_VALKEY_URL" to "redis://v")
+        }
+        assertFailsWith<IllegalStateException> {
+            limiterFor("APP_ENV" to "production", "ADMIN_RATE_LIMIT_MODE" to "valkey", "ADMIN_RATE_LIMIT_HMAC_SECRET" to secret)
+        }
+        assertFailsWith<IllegalStateException> {
+            limiterFor("APP_ENV" to "production", "ADMIN_RATE_LIMIT_MODE" to "otro", "ADMIN_RATE_LIMIT_HMAC_SECRET" to secret)
+        }
+    }
+
+    @Test
+    fun productionWithValkeyBuildsTheValkeyLimiterWithTheConfiguredUrl() {
+        val built = InMemoryOposiBotsAuthRateLimiter()
+        var url: String? = null
+        val limiter = limiterFor(
+            "APP_ENV" to "production", "ADMIN_RATE_LIMIT_MODE" to "Valkey", "ADMIN_RATE_LIMIT_HMAC_SECRET" to secret,
+            "ADMIN_RATE_LIMIT_VALKEY_URL" to " redis://:pw@valkey:6379 ",
+            valkey = { u, _ -> url = u; built },
+        )
+        assertSame(built, limiter)
+        assertEquals("redis://:pw@valkey:6379", url)
+    }
+
+    @Test
+    fun developmentWithoutModeHasNoLimiterAndMemoryIsAllowed() {
+        assertNull(limiterFor("APP_ENV" to "development"))
+        val memory = limiterFor("APP_ENV" to "dev", "ADMIN_RATE_LIMIT_MODE" to "memory", "ADMIN_RATE_LIMIT_HMAC_SECRET" to secret)
+        assertTrue(memory is InMemoryOposiBotsAuthRateLimiter)
     }
 }

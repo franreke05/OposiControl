@@ -186,7 +186,8 @@ services:
       - --storage.tsdb.path=/prometheus
       - --storage.tsdb.retention.time=15d
       - --storage.tsdb.retention.size=4GB
-      - --web.enable-lifecycle
+      # Sin --web.enable-lifecycle (INF-A5): /-/quit y /-/reload no tienen auth y la red `edge` es compartida. Ningun
+      # runbook los usa; recargar configuracion = reiniciar el contenedor.
     volumes:
       - ../monitoring/prometheus/prometheus.production.yml:/etc/prometheus/prometheus.yml:ro
       - ../monitoring/prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro

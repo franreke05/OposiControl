@@ -1,5 +1,19 @@
 # Current State
 
+## Auditoría V1 ciclo 1 — 2026-10-19 (`develop` 7fb9000, v1-server 86f0da9, panel 29a019f)
+
+Estado de salida: **NO APTO PARA PRODUCCIÓN**. Entregables en `docs/audit-v1/` (SECURITY_AUDIT, API_PERFORMANCE_AUDIT,
+CONTROL_PANEL_V1_AUDIT, INTEGRATION_CONFLICTS, CLEANUP_INVENTORY, RELEASE_BLOCKERS). Ciclo estático + catálogo MAIN en
+solo lectura; sin cambios de código, sin escrituras en MAIN. Tests ejecutados en `develop`: `:backend:ktor:test` 2049 y
+`:backend:dbtest:test` 279, 0 fallos. P0: ninguno confirmado. P1 bloqueantes: RB-01…RB-13 (destacan: `authenticated`
+con INSERT/UPDATE/DELETE en 12 tablas de contenido en MAIN — LIVE_VERIFIED; rate limit admin E6 inoperante en perfil
+`control`; E6 ausente en v1-server/integración; reembolso fuera de orden acredita; CI no corre en `develop`).
+La línea «Bloqueantes de release» de 2026-10-15 queda superada por `docs/audit-v1/RELEASE_BLOCKERS.md`.
+Ciclo 2 (mismo día, sin commit, MAIN sin tocar): SEC-V1-01 con migración `20261023100000` lista y probada en local
+(PG16 8/8, PG17 apply/rollback); SEC-V1-02 corregido y verificado con Ktor real `control` + Valkey; Prometheus sin
+`--web.enable-lifecycle`. Nuevos bloqueantes preexistentes: RB-14 (control no arranca en producción con las plantillas)
+y RB-15 (gate PG17 de develop falla en `assertions.sql`).
+
 ## Alpha close — 2026-10-15 (rama `develop`)
 
 `develop` es la Alpha y la base de trabajo: `main` (`cfa2e14`: Sistema rehecho, Usuarios, Catálogo,

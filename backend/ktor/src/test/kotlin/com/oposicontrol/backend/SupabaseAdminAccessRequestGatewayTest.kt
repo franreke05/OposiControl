@@ -25,6 +25,7 @@ import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
+import kotlin.test.assertNotEquals
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
 
@@ -616,6 +617,20 @@ class SupabaseAdminAccessRequestGatewayTest {
         (SupabaseAdminAccessRequestGateway.fromEnvironment(json) { (base + ("AUTH_RATE_LIMIT_HMAC_SECRET" to "x".repeat(32)))[it] } as AutoCloseable).close()
         // Sin URL ni clave sigue siendo null (rutas fallan cerradas), sin exigir nada mas.
         assertNull(SupabaseAdminAccessRequestGateway.fromEnvironment(json) { null })
+    }
+
+    /** RB-14: `control` en produccion arranca con SU secreto (F-09b: no recibe el del consumidor); uno corto no vale. */
+    @Test
+    fun controlInProductionUsesItsOwnAdminSecretForTheEmailPseudonym() {
+        val base = mapOf("SUPABASE_URL" to "https://example.supabase.co", "SUPABASE_SECRET_KEY" to "service-role-key", "APP_ENV" to "production")
+        val json = Json { ignoreUnknownKeys = true }
+        (SupabaseAdminAccessRequestGateway.fromEnvironment(json) { (base + (ADMIN_RATE_LIMIT_HMAC_SECRET_ENV to "a".repeat(32)))[it] } as AutoCloseable).close()
+        val short = assertFailsWith<IllegalStateException> {
+            SupabaseAdminAccessRequestGateway.fromEnvironment(json) { (base + (ADMIN_RATE_LIMIT_HMAC_SECRET_ENV to "corto"))[it] }
+        }
+        assertTrue(ADMIN_RATE_LIMIT_HMAC_SECRET_ENV in short.message.orEmpty())
+        // El seudonimo cambia con la clave: el de control no coincide con el de bot para el mismo correo (documentado).
+        assertNotEquals(authLogEmailRef("a".repeat(32), "ada@example.com"), authLogEmailRef("b".repeat(32), "ada@example.com"))
     }
 
     @Test

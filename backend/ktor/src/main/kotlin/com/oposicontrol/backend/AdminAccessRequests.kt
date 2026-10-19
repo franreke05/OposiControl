@@ -1668,12 +1668,15 @@ internal class SupabaseAdminAccessRequestGateway(
             val url = environment("SUPABASE_URL")?.trimEnd('/').orEmpty()
             val serviceRoleKey = SupabaseRequestAuthPolicy.secretFromEnvironment(environment)
             if (url.isBlank() || serviceRoleKey.isBlank()) return null
-            val logSecret = environment("AUTH_RATE_LIMIT_HMAC_SECRET")?.takeIf { it.length >= 32 }
+            // RB-14: `control` no recibe el secreto del consumidor (F-09b) y usa el suyo, ADMIN_RATE_LIMIT_HMAC_SECRET. El
+            // seudonimo de un mismo correo difiere entonces entre logs de bot y de control (se correlan por requestRowId).
+            val logSecret = (environment("AUTH_RATE_LIMIT_HMAC_SECRET") ?: environment(ADMIN_RATE_LIMIT_HMAC_SECRET_ENV))
+                ?.takeIf { it.length >= 32 }
             // L6: fuera de desarrollo el seudonimo de los logs SIEMPRE lleva clave. Sin el secreto el arranque falla con un
             // mensaje claro; el prefijo SHA-256 sin clave queda solo para desarrollo.
             check(logSecret != null || AppEnvironment.isDevelopment(environment("APP_ENV"))) {
-                "AUTH_RATE_LIMIT_HMAC_SECRET (al menos 32 caracteres) es obligatorio fuera de desarrollo: " +
-                    "es la clave del seudonimo de correo de los logs de las solicitudes de acceso."
+                "AUTH_RATE_LIMIT_HMAC_SECRET (bot) o $ADMIN_RATE_LIMIT_HMAC_SECRET_ENV (control), al menos 32 caracteres, " +
+                    "es obligatorio fuera de desarrollo: es la clave del seudonimo de correo de los logs de las solicitudes de acceso."
             }
             val emailRef: (String) -> String = logSecret?.let { secret -> { email: String -> authLogEmailRef(secret, email) } } ?: ::adminAccessEmailRef
             return SupabaseAdminAccessRequestGateway(url, serviceRoleKey, json, emailRef = emailRef)
