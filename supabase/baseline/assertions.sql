@@ -911,9 +911,13 @@ end $$;
 do $$
 declare o1 record; o2 record; r record; c1 uuid; c2 uuid;
 begin
+  -- SEC-V1-05 (20261022102400): a refund that arrives BEFORE the payment is held (order to review), never consumed as NOOP; the later payment cannot credit.
+  select * into o1 from public.app_create_payment_order('a0000000-0000-0000-0000-0000000000e2','pack-100','google_play','f-0');
+  select * into r from public.app_refund_payment_order('google_play', 'ev-f0-unpaid', o1.orden_id);
+  assert r.outcome = 'EN_REVISION' and r.estado = 'en_revision' and r.saldo = 50, 'refund of an unpaid order is held for review, credits and reverses nothing';
+  select * into r from public.app_credit_payment_order('google_play', 'ev-f0', o1.orden_id, 'tx-f0', 499, 'EUR', 'pack-100');
+  assert r.outcome = 'EN_REVISION' and r.saldo = 50 and r.transaccion_id is null, 'the payment after a held refund credits nothing';
   select * into o1 from public.app_create_payment_order('a0000000-0000-0000-0000-0000000000e2','pack-100','google_play','f-1');
-  select * into r from public.app_refund_payment_order('google_play', 'ev-f1-unpaid', o1.orden_id);
-  assert r.outcome = 'NOOP', 'refund of an unpaid order credits and reverses nothing';
   select * into r from public.app_credit_payment_order('google_play', 'ev-f1', o1.orden_id, 'tx-f1', 499, 'EUR', 'pack-100');
   c1 := r.transaccion_id;
   select * into r from public.app_refund_payment_order('google_play', 'ev-f1-refund', o1.orden_id);
@@ -3528,5 +3532,159 @@ begin
   assert public.admin_payment_order_resolve(adm, oid, 'reembolsar', 'cliente reclama', true) ->> 'outcome' = 'REPLAY' and (select saldo_tickets from public.carteras_usuario where usuario_id = pg_temp.u(5)) = 0, 'refund replay writes nothing';
   assert (select count(*) from public.auditoria_log where accion = 'pedido_resuelto' and registro_id = oid) = 3 and (select bool_and(usuario_id = adm) from public.auditoria_log where accion = 'pedido_resuelto'), 'every resolution audited with the actor';
   raise notice 'OK NIGHT-C control rpcs';
+end $$;
+rollback;
+
+-- 20261022102400: SEC-V1-05 out-of-order refund. A REFUNDED event for an order that is not paid is HELD (order -> en_revision, event row
+-- resultado REFUND_HELD, audit reembolso_retenido) instead of being consumed as NOOP; no later PAID event (nor the admin 'acreditar' / 'confirmar')
+-- can credit it. Event order, idempotency and ledger invariants (ledger sum = balance, never negative). Concurrency: ops/local-exam/refund-order-probe.mjs.
+begin;
+create function pg_temp.expect_e(p_sql text, p_msg text) returns void language plpgsql as $$
+declare v_msg text;
+begin
+  begin execute p_sql; exception when others then get stacked diagnostics v_msg = message_text; end;
+  if v_msg is distinct from p_msg then raise exception 'ASSERT FAILED: % -> expected % got %', p_sql, p_msg, v_msg; end if;
+end $$;
+create function pg_temp.u(n int) returns uuid language sql as $$ select ('a0000000-0000-0000-0000-' || lpad((800 + n)::text, 12, '0'))::uuid $$;
+create function pg_temp.bal(p_user uuid) returns int language sql as $$ select coalesce((select saldo_tickets from public.carteras_usuario where usuario_id = p_user), 0) $$;
+create function pg_temp.credits(p_orden uuid) returns bigint language sql as $$ select count(*) from public.transacciones_cartera where compra_id = p_orden and tipo = 'pack_tickets' $$;
+create function pg_temp.ev(p_evento text) returns text language sql as $$ select resultado from public.eventos_pago where proveedor = 'google_play' and evento_id = p_evento $$;
+create function pg_temp.new_order(p_user uuid, p_key text) returns uuid language sql as $$ select orden_id from public.app_create_payment_order(p_user, 'rf-pack-100', 'google_play', p_key) $$;
+-- ledger invariants of one user: sum of the ledger = snapshot balance, never negative, reconcile clean
+create function pg_temp.invariants(p_user uuid, p_label text) returns void language plpgsql as $$
+begin
+  assert coalesce((select sum(cantidad) from public.transacciones_cartera where usuario_id = p_user), 0) = pg_temp.bal(p_user), p_label || ': ledger sum = balance';
+  assert pg_temp.bal(p_user) >= 0, p_label || ': balance never negative';
+  assert (select count(*) from public.app_wallet_reconcile(p_user)) = 0, p_label || ': reconcile clean';
+end $$;
+insert into auth.users (id, email, aud, role) select pg_temp.u(n), 'rf' || n || '@test.local', 'authenticated', 'authenticated' from generate_series(1, 9) n;
+insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta)
+  select pg_temp.u(n), 'rf' || n, 'rf_user_' || n, true, 'activa' from generate_series(1, 9) n
+  on conflict (usuario_id) do update set username = excluded.username;
+insert into public.roles_app (codigo, nombre) select 'admin', 'Admin' where not exists (select 1 from public.roles_app where codigo = 'admin');
+insert into public.roles_usuario (usuario_id, rol_id) select pg_temp.u(1), id from public.roles_app where codigo = 'admin';
+insert into public.productos_comerciales (id, codigo, tipo_producto, nombre, precio_centimos, moneda, cantidad_tickets, activo, visible)
+  values ('b9800000-0000-0000-0000-000000000001', 'rf-pack-100', 'pack_tickets', 'RF 100', 499, 'EUR', 100, true, true);
+do $$
+declare
+  adm constant uuid := pg_temp.u(1);
+  r record; j jsonb; oid uuid; n_audit bigint; n_ledger bigint;
+begin
+  -- ---- 1. REFUND -> PAID on a pending order (the audit repro): held, the payment credits nothing, both events stay consumed exactly once
+  oid := pg_temp.new_order(pg_temp.u(2), 'rf-1');
+  select * into r from public.app_refund_payment_order('google_play', 'rf-e1', oid);
+  assert r.outcome = 'EN_REVISION' and r.estado = 'en_revision' and r.saldo = 0, 'refund before payment: held for review, not NOOP: ' || r.outcome || '/' || r.estado;
+  assert pg_temp.ev('rf-e1') = 'REFUND_HELD', 'the held refund is recorded on its event row (the refund-pending flag)';
+  assert exists (select 1 from public.auditoria_log where accion = 'reembolso_retenido' and registro_id = oid), 'the held refund is audited';
+  select * into r from public.app_credit_payment_order('google_play', 'rf-e2', oid, 'rf-tx2', 499, 'EUR', 'rf-pack-100');
+  assert r.outcome = 'EN_REVISION' and r.estado = 'en_revision' and r.saldo = 0 and pg_temp.credits(oid) = 0, 'payment after a held refund: no credit: ' || r.outcome;
+  assert exists (select 1 from public.auditoria_log where accion = 'pago_tras_reembolso' and registro_id = oid), 'the blocked payment is audited';
+  n_audit := (select count(*) from public.auditoria_log where registro_id = oid);
+  select * into r from public.app_refund_payment_order('google_play', 'rf-e1', oid);
+  assert r.outcome = 'REPLAY' and r.saldo = 0, 'retry of the refund event: REPLAY';
+  select * into r from public.app_credit_payment_order('google_play', 'rf-e2', oid, 'rf-tx2', 499, 'EUR', 'rf-pack-100');
+  assert r.outcome = 'REPLAY' and r.saldo = 0 and pg_temp.credits(oid) = 0, 'retry of the payment event: REPLAY, still no credit';
+  assert (select count(*) from public.auditoria_log where registro_id = oid) = n_audit and pg_temp.ev('rf-e1') = 'REFUND_HELD' and pg_temp.ev('rf-e2') = 'EN_REVISION', 'replays write nothing';
+  perform pg_temp.invariants(pg_temp.u(2), 'refund->paid');
+
+  -- ---- 2. REFUND -> late PAID on an EXPIRED order (the late-credit path must not credit either)
+  oid := pg_temp.new_order(pg_temp.u(3), 'rf-2');
+  alter table public.compras_usuario disable trigger trg_compras_usuario_order_machine;
+  update public.compras_usuario set expira_en = now() - interval '1 minute' where id = oid;
+  alter table public.compras_usuario enable trigger trg_compras_usuario_order_machine;
+  assert (select estado from public.app_get_payment_order(pg_temp.u(3), oid)) = 'expirada', 'fixture: expired';
+  assert (select outcome from public.app_refund_payment_order('google_play', 'rf-e3', oid)) = 'EN_REVISION', 'refund of an expired order: held';
+  select * into r from public.app_credit_payment_order('google_play', 'rf-e4', oid, 'rf-tx4', 499, 'EUR', 'rf-pack-100');
+  assert r.outcome = 'EN_REVISION' and r.saldo = 0 and pg_temp.credits(oid) = 0, 'late payment after a held refund: no credit';
+  perform pg_temp.invariants(pg_temp.u(3), 'refund->late paid');
+
+  -- ---- 3. PAID -> REFUND (normal order): credited, then refunded (unchanged policy P2 path); refund replay and a second refund event are REPLAY
+  oid := pg_temp.new_order(pg_temp.u(4), 'rf-3');
+  select * into r from public.app_credit_payment_order('google_play', 'rf-e5', oid, 'rf-tx5', 499, 'EUR', 'rf-pack-100');
+  assert r.outcome = 'CREDITED' and r.saldo = 100, 'paid first: credited';
+  select * into r from public.app_refund_payment_order('google_play', 'rf-e6', oid);
+  assert r.outcome = 'REFUNDED' and r.estado = 'reembolsada' and r.saldo = 0, 'then refunded';
+  n_ledger := (select count(*) from public.transacciones_cartera where usuario_id = pg_temp.u(4));
+  assert (select outcome from public.app_refund_payment_order('google_play', 'rf-e6', oid)) = 'REPLAY', 'refund -> refund, same event id: REPLAY';
+  assert (select outcome from public.app_refund_payment_order('google_play', 'rf-e6b', oid)) = 'REPLAY', 'refund with a different event id on a refunded order: REPLAY';
+  assert (select outcome from public.app_credit_payment_order('google_play', 'rf-e5', oid, 'rf-tx5', 499, 'EUR', 'rf-pack-100')) = 'REPLAY', 'old payment event after the refund: REPLAY';
+  assert (select count(*) from public.transacciones_cartera where usuario_id = pg_temp.u(4)) = n_ledger and pg_temp.bal(pg_temp.u(4)) = 0, 'replays wrote no ledger row';
+  perform pg_temp.invariants(pg_temp.u(4), 'paid->refund');
+
+  -- ---- 4. PAID -> PAID: same event id and a different event id on the same order credit exactly once
+  oid := pg_temp.new_order(pg_temp.u(5), 'rf-4');
+  assert (select outcome from public.app_credit_payment_order('google_play', 'rf-e7', oid, 'rf-tx7', 499, 'EUR', 'rf-pack-100')) = 'CREDITED', 'first payment credits';
+  assert (select outcome from public.app_credit_payment_order('google_play', 'rf-e7', oid, 'rf-tx7', 499, 'EUR', 'rf-pack-100')) = 'REPLAY', 'same payment event: REPLAY';
+  assert (select outcome from public.app_credit_payment_order('google_play', 'rf-e7b', oid, 'rf-tx7', 499, 'EUR', 'rf-pack-100')) = 'REPLAY', 'other payment event, same order: REPLAY';
+  assert pg_temp.credits(oid) = 1 and pg_temp.bal(pg_temp.u(5)) = 100, 'credited once';
+  perform pg_temp.invariants(pg_temp.u(5), 'paid->paid');
+
+  -- ---- 5. REFUND -> REFUND on a held order: same id REPLAY; a different event id is held again (recorded, nothing reversed)
+  oid := pg_temp.new_order(pg_temp.u(6), 'rf-5');
+  assert (select outcome from public.app_refund_payment_order('google_play', 'rf-e8', oid)) = 'EN_REVISION', 'held';
+  assert (select outcome from public.app_refund_payment_order('google_play', 'rf-e8', oid)) = 'REPLAY', 'same refund event id: REPLAY';
+  assert (select outcome from public.app_refund_payment_order('google_play', 'rf-e8b', oid)) = 'EN_REVISION' and pg_temp.ev('rf-e8b') = 'REFUND_HELD', 'different refund event id, same order: recorded and held';
+  assert (select count(*) from public.auditoria_log where accion = 'reembolso_retenido' and registro_id = oid) = 2, 'each distinct refund event audited once';
+  perform pg_temp.invariants(pg_temp.u(6), 'refund->refund');
+
+  -- ---- 6. Control "pedidos en revision": a held, never-credited order cannot be credited; reject closes it; a later payment still credits nothing
+  oid := pg_temp.new_order(pg_temp.u(7), 'rf-6');
+  perform public.app_refund_payment_order('google_play', 'rf-e9', oid);
+  assert (select estado from public.compras_usuario where id = oid) = 'en_revision', 'visible in the review queue';
+  perform pg_temp.expect_e(format($q$select public.admin_payment_order_resolve(%L, %L, 'acreditar', 'verificado a mano', false)$q$, adm, oid), 'ORDER_REFUND_PENDING');
+  perform pg_temp.expect_e(format($q$select public.admin_payment_order_resolve(%L, %L, 'reembolsar', 'verificado a mano', true)$q$, adm, oid), 'ORDER_NOT_CREDITED');
+  assert pg_temp.credits(oid) = 0 and (select estado from public.compras_usuario where id = oid) = 'en_revision', 'refused decisions changed nothing';
+  j := public.admin_payment_order_resolve(adm, oid, 'rechazar', 'reembolsado por el proveedor', false);
+  assert j ->> 'outcome' = 'REJECTED' and j ->> 'estado' = 'fallida', 'reject: closed without ledger movement';
+  select * into r from public.app_credit_payment_order('google_play', 'rf-e10', oid, 'rf-tx10', 499, 'EUR', 'rf-pack-100');
+  assert r.outcome = 'EN_REVISION' and pg_temp.credits(oid) = 0 and r.saldo = 0, 'a payment after reject: back to review, no credit';
+  perform pg_temp.expect_e(format($q$select public.admin_payment_order_resolve(%L, %L, 'acreditar', 'verificado a mano', false)$q$, adm, oid), 'ORDER_REFUND_PENDING');
+  perform pg_temp.invariants(pg_temp.u(7), 'admin held');
+
+  -- ---- 7. a CREDITED order that is in review receives a refund: held (nothing reversed silently); confirm is refused; the admin refund applies P2
+  oid := pg_temp.new_order(pg_temp.u(8), 'rf-7');
+  perform public.app_credit_payment_order('google_play', 'rf-e11', oid, 'rf-tx11', 499, 'EUR', 'rf-pack-100');
+  update public.compras_usuario set estado = 'en_revision' where id = oid;
+  select * into r from public.app_refund_payment_order('google_play', 'rf-e12', oid);
+  assert r.outcome = 'EN_REVISION' and r.saldo = 100 and pg_temp.ev('rf-e12') = 'REFUND_HELD', 'refund of a credited order in review: held';
+  perform pg_temp.expect_e(format($q$select public.admin_payment_order_resolve(%L, %L, 'confirmar', 'el pago es correcto', false)$q$, adm, oid), 'ORDER_REFUND_PENDING');
+  j := public.admin_payment_order_resolve(adm, oid, 'reembolsar', 'reembolso del proveedor', true);
+  assert j ->> 'outcome' = 'REFUNDED' and j ->> 'estado' = 'reembolsada' and pg_temp.bal(pg_temp.u(8)) = 0, 'admin refund applies P2: ' || j::text;
+  perform pg_temp.invariants(pg_temp.u(8), 'credited held');
+
+  -- ---- 8. a payment with a mismatch (no refund) still resolves as before: acreditar is allowed (no refund pending)
+  oid := pg_temp.new_order(pg_temp.u(9), 'rf-8');
+  perform public.app_credit_payment_order('google_play', 'rf-e13', oid, 'rf-tx13', 1, 'EUR', 'rf-pack-100');
+  assert public.admin_payment_order_resolve(adm, oid, 'acreditar', 'verificado en el panel', false) ->> 'outcome' = 'CREDITED' and pg_temp.bal(pg_temp.u(9)) = 100, 'no held refund: credit allowed';
+  perform pg_temp.invariants(pg_temp.u(9), 'mismatch credit');
+
+  -- ---- 9. RETRY after a transient failure: the call's transaction aborts AFTER the function ran (lost commit / connection drop); nothing survives,
+  --         so the provider retry with the same event id is processed as new (not REPLAY), for the refund and for the payment
+  oid := pg_temp.new_order(pg_temp.u(9), 'rf-9');
+  begin
+    perform public.app_refund_payment_order('google_play', 'rf-e14', oid);
+    raise exception 'transient';
+  exception when raise_exception then null;
+  end;
+  assert pg_temp.ev('rf-e14') is null and (select estado from public.compras_usuario where id = oid) = 'pendiente', 'aborted refund left nothing';
+  assert (select outcome from public.app_refund_payment_order('google_play', 'rf-e14', oid)) = 'EN_REVISION' and pg_temp.ev('rf-e14') = 'REFUND_HELD', 'refund retry after a transient failure: held';
+  begin
+    perform public.app_credit_payment_order('google_play', 'rf-e15', oid, 'rf-tx15', 499, 'EUR', 'rf-pack-100');
+    raise exception 'transient';
+  exception when raise_exception then null;
+  end;
+  assert pg_temp.ev('rf-e15') is null, 'aborted payment left nothing';
+  assert (select outcome from public.app_credit_payment_order('google_play', 'rf-e15', oid, 'rf-tx15', 499, 'EUR', 'rf-pack-100')) = 'EN_REVISION' and pg_temp.credits(oid) = 0, 'payment retry after a transient failure: still no credit';
+  oid := pg_temp.new_order(pg_temp.u(9), 'rf-10');
+  begin
+    perform public.app_credit_payment_order('google_play', 'rf-e16', oid, 'rf-tx16', 499, 'EUR', 'rf-pack-100');
+    raise exception 'transient';
+  exception when raise_exception then null;
+  end;
+  assert pg_temp.credits(oid) = 0 and pg_temp.bal(pg_temp.u(9)) = 100, 'aborted credit left no ledger row';
+  assert (select outcome from public.app_credit_payment_order('google_play', 'rf-e16', oid, 'rf-tx16', 499, 'EUR', 'rf-pack-100')) = 'CREDITED' and pg_temp.credits(oid) = 1 and pg_temp.bal(pg_temp.u(9)) = 200, 'credit retry: credited exactly once';
+  perform pg_temp.invariants(pg_temp.u(9), 'transient retry');
+  assert (select count(*) from public.app_wallet_reconcile(null)) = 0, 'global reconcile clean';
+  raise notice 'OK SEC-V1-05 refund order';
 end $$;
 rollback;

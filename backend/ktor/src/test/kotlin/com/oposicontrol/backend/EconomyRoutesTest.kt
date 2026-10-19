@@ -465,6 +465,32 @@ class EconomyRoutesTest {
     }
 
     @Test
+    fun anOutOfOrderRefundIsHeldAsInReviewAnsweredWith200AndTheLaterPaymentIsNotCredited() = testApplication {
+        // SEC-V1-05 (20261022102400): the database HOLDS a refund that arrives before the payment (order -> en_revision, answer EN_REVISION).
+        // Ktor must acknowledge it with 200 (the refund IS recorded, the provider must stop retrying) and must not turn it into an error or a retry.
+        application { economyModule() }
+        val client = createClient { }
+        upstream.rpcHandler = { function, _ ->
+            when (function) {
+                "app_refund_payment_order" -> SupabaseRawResponse(200, orderRow("en_revision", if (upstream.rpcs.size == 1) "EN_REVISION" else "REPLAY", 0))
+                else -> SupabaseRawResponse(200, orderRow("en_revision", "EN_REVISION", 0))
+            }
+        }
+        val refund = client.webhook(webhookBody(eventId = "evt-r1", type = "payment.refunded"))
+        assertEquals(HttpStatusCode.OK, refund.status, refund.bodyAsText())
+        assertEquals("EN_REVISION", obj(refund.bodyAsText())["result"]!!.jsonPrimitive.content)
+        val paid = client.webhook(webhookBody(eventId = "evt-p2"))
+        assertEquals(HttpStatusCode.OK, paid.status, paid.bodyAsText())
+        assertEquals("EN_REVISION", obj(paid.bodyAsText())["result"]!!.jsonPrimitive.content, "the payment after a held refund is not credited")
+        val retry = client.webhook(webhookBody(eventId = "evt-r1", type = "payment.refunded"))
+        assertEquals(HttpStatusCode.OK, retry.status)
+        assertEquals("REPLAY", obj(retry.bodyAsText())["result"]!!.jsonPrimitive.content)
+        assertEquals(listOf("app_refund_payment_order", "app_credit_payment_order", "app_refund_payment_order"), upstream.rpcs.map { it.first })
+        assertEquals("evt-r1", rpcArgs(0)["p_evento_id"]!!.jsonPrimitive.content)
+        assertEquals("evt-p2", rpcArgs(1)["p_evento_id"]!!.jsonPrimitive.content)
+    }
+
+    @Test
     fun withTheRefundPathOffARefundEventWritesNothingAndIs503SoTheProviderRetries() = testApplication {
         application {
             install(ContentNegotiation) { json(testJson) }
