@@ -373,6 +373,12 @@ private val SUPABASE_DOMAIN_ERRORS = mapOf(
         HttpStatusCode.Conflict,
         "Esta fila ya se publicó y no se puede modificar.",
     ),
+    // SEC-V1-05 (20261022102400): admin_payment_order_resolve 'acreditar' / 'confirmar' sobre un pedido con un reembolso del proveedor
+    // retenido. Sin esta entrada el P0001 no se reconocia y el panel de Control recibia un 5xx generico.
+    "ORDER_REFUND_PENDING" to DomainErrorDefinition(
+        HttpStatusCode.Conflict,
+        "Este pedido tiene un reembolso retenido; no se puede acreditar ni confirmar",
+    ),
 )
 
 /**

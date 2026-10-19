@@ -26,6 +26,18 @@ class BackendErrorsTest {
         assertEquals("record_answer_option_not_in_question", result?.errorCode?.lowercase())
     }
 
+    /** SEC-V1-05: el P0001 ORDER_REFUND_PENDING de admin_payment_order_resolve es un 409 legible, no un 5xx generico. */
+    @Test
+    fun orderRefundPendingIsAConflictWithItsOwnMessage() {
+        val body = "{\"code\":\"P0001\",\"details\":null,\"hint\":null,\"message\":\"ORDER_REFUND_PENDING\"}"
+
+        val result = mapSupabaseDomainError(400, body)
+
+        assertEquals("ORDER_REFUND_PENDING", result?.errorCode)
+        assertEquals(HttpStatusCode.Conflict, result?.status)
+        assertEquals("Este pedido tiene un reembolso retenido; no se puede acreditar ni confirmar", result?.message)
+    }
+
     @Test
     fun leavesUnknownSupabaseErrorsForInternalHandling() {
         assertNull(mapSupabaseDomainError(500, "unexpected database failure"))
