@@ -174,3 +174,41 @@ create table if not exists public.capacidades_especialidad (
 );
 alter table public.capacidades_especialidad enable row level security;
 grant select on table public.capacidades_especialidad to service_role;
+
+-- MAIN public.admin_dashboard_economy_totals() (Dashboard V2): body VERBATIM from 20260917090229 (MAIN), ACL from 20260917084214 (service_role only).
+-- Created only when absent, so a live DB keeps its version; Control's 20261023100200 redefines it later. NOT a migration.
+do $econ$
+begin
+  if to_regprocedure('public.admin_dashboard_economy_totals()') is null then
+    execute $fn$
+create or replace function public.admin_dashboard_economy_totals()
+returns table (gross_revenue_cents bigint, paid_purchases integer, tickets_in_circulation bigint)
+language sql
+stable
+security invoker
+set search_path = ''
+as $$
+  select
+    (select case
+              when count(*) filter (where c.precio_centimos is null) > 0 then null
+              when count(*) filter (where upper(btrim(c.moneda)) <> 'EUR') > 0 then null
+              else coalesce(sum(c.precio_centimos), 0)::bigint
+            end
+       from public.compras_usuario c
+      where c.estado = 'pagada'),
+    (select count(*)::integer
+       from public.compras_usuario c
+      where c.estado = 'pagada'),
+    (select coalesce(sum(w.saldo_tickets), 0)::bigint
+       from public.carteras_usuario w);
+$$;
+$fn$;
+    execute $c$
+comment on function public.admin_dashboard_economy_totals() is
+  'Dashboard V2: ingresos EUR de compras en estado pagada (NULL si alguna pagada no tiene precio o no es EUR), numero de compras pagadas y OposiTickets en circulacion (suma de saldos). Solo service_role.'
+$c$;
+    revoke all on function public.admin_dashboard_economy_totals() from public, anon, authenticated;
+    grant execute on function public.admin_dashboard_economy_totals() to service_role;
+  end if;
+end
+$econ$;
