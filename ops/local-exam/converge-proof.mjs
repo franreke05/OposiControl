@@ -10,7 +10,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { converge, makePsql, verify } from './converge.mjs';
+import { converge, makePsql, v1Migrations, verify } from './converge.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '..', '..');
@@ -74,7 +74,7 @@ try {
   // OFFICIAL RULES: data from before the migration keeps the legacy path (no rule snapshot, no stored nota, no reserve) and the defaults reproduce today
   assert(psql("select count(*) from public.intentos_examen where regla_anuladas is not null or nota is not null") === '0', 'attempts that predate the official rules carry no snapshot');
   assert(psql("select count(*) from public.preguntas_examen where es_reserva or orden_reserva is not null") === '0' && psql("select count(*) from public.examenes where regla_anuladas is not null or penalizacion_num <> 0") === '0', 'existing exams: no reserve, derived rule, no penalty');
-  assert(psql('select count(*) from private.v1_applied_migrations') === '17', 'seventeen stamps recorded (20261022100300..101900)');
+  assert(psql('select count(*) from private.v1_applied_migrations') === String(v1Migrations(repo).length), `every V1 stamp recorded (${v1Migrations(repo).length}, from 20261022100300)`);
   // W4 RANKING: nothing is ranked or published by the converge; every pre-existing user stays private (opt-in default false); the top table is closed; the job runs on the old data without error
   assert(psql('select count(*) from public.ranking_top') === '0' && psql('select count(*) from public.estado_competitivo_usuario where ranking_liga_posicion is not null or probabilidad_plaza is not null') === '0', 'no ranking invented by the converge');
   assert(psql('select count(*) from public.perfiles_usuario where ranking_publico') === '0', 'every pre-existing user is private (ranking_publico default false)');

@@ -54,6 +54,32 @@ export function functionBodies(sources) {
   return out;
 }
 
+/**
+ * Applies the V1 stamps in order (each file is one begin..commit) and records each one (sha256 of the file) in private.v1_applied_migrations.
+ * Every stamp is re-applied, as before: the idempotent ones re-converge definitions and grants that the MAIN-shape overlays re-open on every run.
+ * Not every V1 file is re-runnable (20261022102200 creates a table without `if not exists`): when a re-apply FAILS and the stamp is already recorded
+ * with the SAME sha256, the failed transaction rolled back and the recorded application stands, so it is kept. Any other failure stops the run.
+ * Used by --converge and by the plain up.mjs path.
+ */
+export function applyV1Stamps({ psql, files }) {
+  psql('create schema if not exists private;\n' +
+    'create table if not exists private.v1_applied_migrations (version text primary key, file_sha256 text not null, applied_at timestamptz not null default clock_timestamp());\n' +
+    'revoke all on table private.v1_applied_migrations from public, anon, authenticated, service_role;');
+  const stored = new Map(psql("select version || '|' || file_sha256 from private.v1_applied_migrations").split('\n').filter(Boolean).map((l) => l.split('|')));
+  for (const f of files) {
+    process.stdout.write(`  apply ${f.v}\n`);
+    try {
+      psql(f.text);
+    } catch (e) {
+      if (stored.get(f.v) !== sha256Lf(f.text)) throw e;
+      process.stdout.write(`  kept  ${f.v} (not re-runnable; already applied from this exact file, the failed re-apply rolled back)\n`);
+      continue;
+    }
+    psql(`insert into private.v1_applied_migrations (version, file_sha256) values ('${f.v}', '${sha256Lf(f.text)}')
+          on conflict (version) do update set file_sha256 = excluded.file_sha256, applied_at = clock_timestamp();`);
+  }
+}
+
 export function converge({ psql, psqlAdmin, root = repo }) {
   // MAIN shape owned by supabase_auth_admin (e.g. auth.users.email_confirmed_at for the referral trigger): applied as supabase_admin when the caller provides it
   if (psqlAdmin) psqlAdmin(fs.readFileSync(path.join(root, 'supabase/baseline/main_shape_auth_users.sql'), 'utf8'));
@@ -69,12 +95,7 @@ export function converge({ psql, psqlAdmin, root = repo }) {
   psql(fs.readFileSync(path.join(root, 'supabase/baseline/main_shape_subset_extra_engagement.sql'), 'utf8'));
   // NIGHT-A: the bulk-import vertical of MAIN (staging table + import RPCs), absent from the generated subset; idempotent
   psql(fs.readFileSync(path.join(root, 'supabase/baseline/main_shape_subset_extra_import.sql'), 'utf8'));
-  for (const f of files) {
-    process.stdout.write(`  apply ${f.v}\n`);
-    psql(f.text);
-    psql(`insert into private.v1_applied_migrations (version, file_sha256) values ('${f.v}', '${sha256Lf(f.text)}')
-          on conflict (version) do update set file_sha256 = excluded.file_sha256, applied_at = clock_timestamp();`);
-  }
+  applyV1Stamps({ psql, files });
   psql(fs.readFileSync(path.join(here, 'sql/97_v1_economy_local.sql'), 'utf8'));
   // E5-V1-S10: feedback_pregunta (MAIN has it, the local bootstrap subset does not)
   psql(fs.readFileSync(path.join(here, 'sql/91_feedback_pregunta_local.sql'), 'utf8'));

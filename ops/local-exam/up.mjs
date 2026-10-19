@@ -178,7 +178,10 @@ if (!loaded) {
   psql(fs.readFileSync(path.join(here, 'sql/00_overlay_main_objects.sql'), 'utf8'));
   const pending = fs.readFileSync(path.join(repo, 'supabase/baseline/PENDING_MIGRATIONS.txt'), 'utf8')
     .split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
+  // V1 stamps (V1_MIGRATIONS.txt) need the overlays (01 wallet, 96 communities ...): applied further down, after them, as on a live stack
+  const v1All = new Set(fs.readFileSync(path.join(repo, 'supabase/V1_MIGRATIONS.txt'), 'utf8').split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#')));
   for (const v of pending) {
+    if (v1All.has(v)) continue;
     process.stdout.write(`  migration ${v}\n`);
     psql(fs.readFileSync(path.join(repo, 'supabase/migrations', `${v}.sql`), 'utf8'));
   }
@@ -233,10 +236,10 @@ end $$;`);
 if (psql("select to_regclass('public.ot_consumos') is not null") === 't') psql(fs.readFileSync(path.join(here, 'sql/89_f01_repair_local.sql'), 'utf8'));
 // the list is V1_MIGRATIONS.txt (single source, same as --converge): a hard-coded list went stale and a plain up.mjs re-applied OLD definitions (e.g. the pre-v2 access verdict of 20261022100500) over the current ones
 psql(fs.readFileSync(path.join(repo, 'supabase/baseline/main_shape_auth_users.sql'), 'utf8'), {}, 'supabase_admin');   // auth.users.email_confirmed_at (MAIN shape, owned by supabase_auth_admin)
-const { v1Migrations } = await import('./converge.mjs');
-for (const v of v1Migrations(repo)) {
-  psql(fs.readFileSync(path.join(repo, 'supabase/migrations', `${v}.sql`), 'utf8'));
-}
+psql(fs.readFileSync(path.join(here, 'sql/03_auth_functions_main_shape.sql'), 'utf8'), {}, 'supabase_admin');   // claims-aware auth.uid()/role()/email() as in MAIN (GoTrue never migrates this stack)
+// recorded in private.v1_applied_migrations; a non-re-runnable stamp already applied from the same file is kept, not a failure. See converge.mjs.
+const { v1Migrations, applyV1Stamps } = await import('./converge.mjs');
+applyV1Stamps({ psql: (sql) => psql(sql), files: v1Migrations(repo).map((v) => ({ v, text: fs.readFileSync(path.join(repo, 'supabase/migrations', `${v}.sql`), 'utf8') })) });
 psql(fs.readFileSync(path.join(here, 'sql/97_v1_economy_local.sql'), 'utf8'));
 // Libro de A y compra: ledger-first, asi que SOLO despues de las migraciones del libro (el libro asigna seq y la cadena).
 psql(fs.readFileSync(path.join(here, 'sql/92_phase_b_wallet_entitlement.sql'), 'utf8'));
