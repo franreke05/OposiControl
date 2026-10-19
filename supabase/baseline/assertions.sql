@@ -3709,4 +3709,6 @@ begin
   raise notice 'OK V1 P3 user tables client write revoke';
 end $$;
 reset role;
+revoke update on table public.perfiles_usuario from authenticated;  -- undo the second-layer grant inside this transaction
+do $$ begin assert not has_table_privilege('authenticated', 'public.perfiles_usuario', 'update'), 'second-layer grant not undone'; end $$;
 rollback;
