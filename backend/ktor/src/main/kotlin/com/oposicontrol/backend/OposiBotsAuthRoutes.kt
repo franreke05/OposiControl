@@ -153,6 +153,7 @@ internal fun Route.oposiBotsAuthRoutes(runtime: OposiBotsAuthRuntime) {
             call.authEndpoint(runtime, OposiBotsAuthOperation.GOOGLE) {
                 val request = receiveAuthJson<OposiBotsGoogleRequest>(runtime.json)
                 request.idToken.requireCredential()
+                validateOAuthNonce(request.nonce, runtime.configuration)
                 requireSubjectLimit(runtime, request.idToken)
                 respond(runtime.gateway.google(request, authContext(runtime.configuration)))
             }
@@ -162,6 +163,7 @@ internal fun Route.oposiBotsAuthRoutes(runtime: OposiBotsAuthRuntime) {
                 val request = receiveAuthJson<OposiBotsAppleRequest>(runtime.json)
                 request.identityToken.requireCredential()
                 request.authorizationCode.requireCredential(maxLength = 4_096)
+                validateOAuthNonce(request.nonce, runtime.configuration)
                 requireSubjectLimit(runtime, request.identityToken)
                 respond(runtime.gateway.apple(request, authContext(runtime.configuration)))
             }
@@ -384,6 +386,12 @@ private fun OposiBotsResetPasswordRequest.validate(configuration: OposiBotsAuthC
     resetToken.requireCredential()
     validatePassword(newPassword)
     validateCodeVerifier(codeVerifier, email, configuration)
+}
+
+/** SEC-V1-11: with AUTH_OAUTH_NONCE_REQUIRED the raw OAuth nonce is mandatory (400 before any upstream call); otherwise legacy. */
+private fun validateOAuthNonce(nonce: String?, configuration: OposiBotsAuthConfiguration) {
+    if (!configuration.oauthNonceRequired) return
+    if (nonce == null || !OAUTH_NONCE.matches(nonce)) throw OposiBotsAuthProblem.validation(OposiBotsValidationIssue.INVALID_CREDENTIAL)
 }
 
 /** FA39: shape of the S256 challenge sent with the email request; required only in `required` mode, ignored in `off`. */

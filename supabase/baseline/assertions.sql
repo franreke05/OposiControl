@@ -3530,3 +3530,85 @@ begin
   raise notice 'OK NIGHT-C control rpcs';
 end $$;
 rollback;
+
+-- 20261022102500: SEC-V1-08 the FA39 binding belongs to ONE email request (pending until GoTrue sent it; only the last sent one is valid)
+begin;
+create function pg_temp.expect_e(p_sql text, p_msg text) returns void language plpgsql as $$
+declare v_msg text;
+begin
+  begin execute p_sql; exception when others then get stacked diagnostics v_msg = message_text; end;
+  if v_msg is distinct from p_msg then raise exception 'ASSERT FAILED: % -> expected % got %', p_sql, p_msg, v_msg; end if;
+end $$;
+do $$
+declare
+  e1 constant text := repeat('c', 64);
+  e2 constant text := repeat('d', 64);
+  cv constant text := repeat('V', 43);  -- victim's challenge
+  ca constant text := repeat('X', 43);  -- attacker's challenge
+  v_id bigint;
+  a_id bigint;
+  n int;
+begin
+  assert has_function_privilege('service_role', 'public.auth_code_binding_begin(text,text,text,integer)', 'execute')
+     and has_function_privilege('service_role', 'public.auth_code_binding_activate(bigint)', 'execute')
+     and not has_function_privilege('anon', 'public.auth_code_binding_begin(text,text,text,integer)', 'execute')
+     and not has_function_privilege('authenticated', 'public.auth_code_binding_activate(bigint)', 'execute')
+     and not has_function_privilege('authenticated', 'public.auth_code_binding_consume(text,text,text)', 'execute'), 'service role only';
+  delete from private.auth_code_bindings;
+
+  -- a pending binding is never consumable
+  a_id := public.auth_code_binding_begin('recovery', e1, ca);
+  assert a_id is not null, 'begin returns the id';
+  assert public.auth_code_binding_consume('recovery', null, ca) is null, 'pending is not consumable';
+  assert public.auth_code_binding_consume('recovery', e1, ca) is null and exists (select 1 from private.auth_code_bindings where id = a_id), 'and a refused attempt keeps it';
+
+  -- ATTACK 1: the attacker's mail (his challenge, the victim's email) was sent first, the victim's later: only the victim's is valid
+  assert public.auth_code_binding_activate(a_id), 'activated';
+  v_id := public.auth_code_binding_begin('recovery', e1, cv);
+  assert public.auth_code_binding_activate(v_id), 'activated';
+  assert not exists (select 1 from private.auth_code_bindings where id = a_id), 'the activation dropped the older binding of that email';
+  assert public.auth_code_binding_consume('recovery', null, ca) is null, 'attacker challenge + victim code: refused';
+  assert public.auth_code_binding_consume('recovery', null, cv) = e1, 'the victim spends hers';
+  assert public.auth_code_binding_consume('recovery', null, cv) is null, 'single use';
+
+  -- ATTACK 2: the victim's mail was sent, the attacker's request was throttled/refused by GoTrue (never activated)
+  v_id := public.auth_code_binding_begin('recovery', e1, cv);
+  perform public.auth_code_binding_activate(v_id);
+  a_id := public.auth_code_binding_begin('recovery', e1, ca);
+  assert public.auth_code_binding_consume('recovery', e1, ca) is null, 'a never-sent binding cannot pair with the valid token';
+  assert public.auth_code_binding_consume('recovery', e1, cv) = e1, 'the pending newer binding did not displace the valid one';
+  delete from private.auth_code_bindings;
+
+  -- re-begin: same challenge + same email = same binding; another email = null (first registration wins); purposes separate
+  v_id := public.auth_code_binding_begin('signup', e1, cv);
+  assert public.auth_code_binding_begin('signup', e1, cv) = v_id, 'idempotent for the same email';
+  assert public.auth_code_binding_begin('signup', e2, cv) is null, 'never re-bound to another email';
+  assert public.auth_code_binding_begin('recovery', e2, cv) is not null, 'purposes are separate';
+  assert (select email_ref from private.auth_code_bindings where purpose = 'signup' and challenge = cv) = e1, 'first registration kept';
+  -- an expired row with that challenge is replaced by a fresh pending one
+  update private.auth_code_bindings set expires_at = clock_timestamp() - interval '1 second' where purpose = 'signup' and challenge = cv;
+  assert public.auth_code_binding_begin('signup', e2, cv) is not null, 'expired: the challenge can be bound again';
+  assert not public.auth_code_binding_activate(-1), 'unknown id';
+  update private.auth_code_bindings set expires_at = clock_timestamp() - interval '1 second' where purpose = 'recovery' and challenge = cv;
+  assert not public.auth_code_binding_activate((select id from private.auth_code_bindings where purpose = 'recovery' and challenge = cv)), 'expired id';
+  delete from private.auth_code_bindings;
+
+  -- at most 5 PENDING per (purpose, email); the activated one is never displaced by a request storm
+  v_id := public.auth_code_binding_begin('signup', e1, cv);
+  perform public.auth_code_binding_activate(v_id);
+  for n in 1..8 loop perform public.auth_code_binding_begin('signup', e1, repeat(chr(64 + n), 43)); end loop;
+  assert (select count(*) from private.auth_code_bindings where email_ref = e1 and activated_at is null) = 5, 'pending bounded';
+  assert public.auth_code_binding_consume('signup', e1, cv) = e1, 'the valid binding survived the storm';
+  delete from private.auth_code_bindings;
+
+  -- legacy register (older Ktor during a rolling deploy) inserts valid rows, and the newest-only rule applies to them too
+  perform public.auth_code_binding_register('signup', e2, ca);
+  perform public.auth_code_binding_register('signup', e2, cv);
+  assert public.auth_code_binding_consume('signup', e2, ca) is null, 'legacy: the older binding is superseded';
+  assert public.auth_code_binding_consume('signup', e2, cv) = e2, 'legacy: the newest is valid';
+
+  perform pg_temp.expect_e($q$select public.auth_code_binding_begin('other', repeat('a', 64), repeat('A', 43))$q$, 'BINDING_PURPOSE_INVALID');
+  perform pg_temp.expect_e($q$select public.auth_code_binding_begin('signup', 'not-hex', repeat('A', 43))$q$, 'new row for relation "auth_code_bindings" violates check constraint "auth_code_bindings_email_ref_check"');
+  raise notice 'OK SEC-V1-08 auth binding hardening';
+end $$;
+rollback;

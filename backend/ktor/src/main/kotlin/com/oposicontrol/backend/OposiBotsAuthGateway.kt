@@ -115,8 +115,10 @@ internal class SupabaseOposiBotsAuthGateway(
         context: OposiBotsAuthContext,
     ): OposiBotsRegisterResponse {
         val body = credentialBody(request.resolvedIdentifier(), request.password, request.captchaToken)
-        bindChallenge("signup", request.resolvedIdentifier(), request.codeChallenge)
+        val pendingBinding = bindChallenge("signup", request.resolvedIdentifier(), request.codeChallenge)
         val response = authRequest(HttpMethod.Post, "/auth/v1/signup${emailConfirmRedirectQuery()}", body, context = context)
+        // SEC-V1-08: only a 2xx (GoTrue sent, or obfuscated a duplicate it will not mail) makes the binding valid; 400/422/429 never.
+        activateBinding(pendingBinding, response)
         // Enumeration-safe (D1-01): con autoconfirm GoTrue contesta 422 user_already_exists en vez del 200 ofuscado;
         // un duplicado se contesta igual que un alta nueva (202) y nunca revela que el email existe.
         // MASTER4-API-003: tambien con 400 (antes solo 422): tras quitar el 401 generico, un duplicado con 400 ya no puede
@@ -136,7 +138,7 @@ internal class SupabaseOposiBotsAuthGateway(
     }
 
     override suspend fun resend(request: OposiBotsEmailResendRequest, context: OposiBotsAuthContext) {
-        bindChallenge("signup", request.email, request.codeChallenge)
+        val pendingBinding = bindChallenge("signup", request.email, request.codeChallenge)
         val response = authRequest(
             HttpMethod.Post,
             "/auth/v1/resend${emailConfirmRedirectQuery()}",
@@ -147,6 +149,7 @@ internal class SupabaseOposiBotsAuthGateway(
             },
             context = context,
         )
+        activateBinding(pendingBinding, response)
         // MASTER-AUTH-007: el 429 de GoTrue (60 s por usuario) solo existe para emails registrados; propagarlo seria un
         // oraculo de existencia. Se registra internamente y se contesta igual que el resto (204).
         if (response.status == HttpStatusCode.TooManyRequests) {
@@ -271,7 +274,7 @@ internal class SupabaseOposiBotsAuthGateway(
     }
 
     override suspend fun recover(request: OposiBotsRecoverRequest, context: OposiBotsAuthContext) {
-        bindChallenge("recovery", request.resolvedIdentifier(), request.codeChallenge)
+        val pendingBinding = bindChallenge("recovery", request.resolvedIdentifier(), request.codeChallenge)
         val redirect = configuration.passwordRecoveryRedirectUrl
             ?.let { "?redirect_to=${it.urlEncode()}" }
             .orEmpty()
@@ -284,6 +287,7 @@ internal class SupabaseOposiBotsAuthGateway(
             },
             context = context,
         )
+        activateBinding(pendingBinding, response)
         // MASTER-AUTH-007: el 429 de GoTrue (60 s por usuario) solo existe para emails registrados; propagarlo seria un
         // oraculo de existencia. Se registra internamente y se contesta igual que el resto (204).
         if (response.status == HttpStatusCode.TooManyRequests) {
@@ -380,6 +384,7 @@ internal class SupabaseOposiBotsAuthGateway(
         context: OposiBotsAuthContext,
         beforeClaim: suspend () -> Unit = {},
     ): OposiBotsOAuthResponse {
+        requireOAuthNonce(idToken, nonce)
         val response = authRequest(
             HttpMethod.Post,
             "/auth/v1/token?grant_type=id_token",
@@ -888,15 +893,30 @@ internal class SupabaseOposiBotsAuthGateway(
 
     // ----- FA39: binding of the email-link code (see EmailCodeBinding.kt) -----
 
-    /** Before GoTrue sends the email: stores the client's challenge for that email. Fail closed: no binding stored, no email sent. */
-    private suspend fun bindChallenge(purpose: String, email: String, challenge: String?) {
-        val binding = codeBinding ?: return
-        if (configuration.pkceMode == PkceMode.OFF) return
+    /**
+     * Before GoTrue sends the email: stores the client's challenge for that email as a PENDING binding and returns its id (`null` =
+     * binding not in force for this call). Fail closed: no binding stored, no email sent. A challenge already bound to another email
+     * is refused (400) before anything is sent: the client generates a new verifier per request, so a reuse is never legitimate.
+     */
+    private suspend fun bindChallenge(purpose: String, email: String, challenge: String?): Long? {
+        val binding = codeBinding ?: return null
+        if (configuration.pkceMode == PkceMode.OFF) return null
         if (challenge == null) {
             if (configuration.pkceMode == PkceMode.REQUIRED) throw OposiBotsAuthProblem.validation(OposiBotsValidationIssue.INVALID_CODE_CHALLENGE)
-            return
+            return null
         }
-        binding.register(purpose, Pkce.emailRef(configuration.rateLimitHmacSecret, email), challenge)
+        return binding.begin(purpose, Pkce.emailRef(configuration.rateLimitHmacSecret, email), challenge)
+            ?: throw OposiBotsAuthProblem.validation(OposiBotsValidationIssue.INVALID_CODE_CHALLENGE)
+    }
+
+    /**
+     * SEC-V1-08: GoTrue ANSWERED 2xx to the email request of binding [pendingId], i.e. it issued (and replaced) the token of that
+     * request: only now the binding becomes valid, and every older binding of the same (purpose, email) stops being valid. Any other
+     * answer (429 throttle, 4xx, 5xx, transport failure) leaves it pending: it can never be paired with an earlier, still valid token.
+     */
+    private suspend fun activateBinding(pendingId: Long?, response: AuthResponse) {
+        if (pendingId == null || !response.status.isSuccessStatus()) return
+        codeBinding?.activate(pendingId)
     }
 
     /** Before GoTrue verifies the token: the pseudonym of the email the spent binding was requested for, or `null` when binding is not in force for this call. */
@@ -909,6 +929,19 @@ internal class SupabaseOposiBotsAuthGateway(
         }
         val emailRef = email?.takeIf(String::isNotBlank)?.let { Pkce.emailRef(configuration.rateLimitHmacSecret, it) }
         return binding.consume(purpose, emailRef, Pkce.challengeOf(verifier)) ?: throw invalid()
+    }
+
+    /**
+     * SEC-V1-11: with `AUTH_OAUTH_NONCE_REQUIRED` the raw nonce is mandatory and the ID token's `nonce` claim must be its SHA-256
+     * (lowercase hex), the value the client handed to Google/Apple. Checked BEFORE GoTrue mints a session: an ID token obtained
+     * outside this sign-in (another app with the same client id, a leak) carries no nonce or another one and is refused (401).
+     * The signature is NOT checked here (GoTrue does it, and re-checks the nonce); this only decides whether to ask GoTrue at all.
+     */
+    private fun requireOAuthNonce(idToken: String, nonce: String?) {
+        if (!configuration.oauthNonceRequired) return
+        val raw = nonce?.takeIf(OAUTH_NONCE::matches) ?: throw OposiBotsAuthProblem.validation(OposiBotsValidationIssue.INVALID_CREDENTIAL)
+        val claim = oauthTokenNonceClaim(idToken, json) ?: throw OposiBotsAuthProblem.authentication()
+        if (!java.security.MessageDigest.isEqual(claim.toByteArray(), oauthNonceHash(raw).toByteArray())) throw OposiBotsAuthProblem.authentication()
     }
 
     private fun String?.matchesBinding(emailRef: String): Boolean =
