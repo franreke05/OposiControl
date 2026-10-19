@@ -221,6 +221,10 @@ internal data class StorePaymentsSettings(
     val catalog: StoreCatalog,
     val sandbox: StoreSandboxPolicy,
     val jobSeconds: Long,
+    /** NEW-4: intentos fallidos tras los que un aviso pasa a `muerto` (0 = nunca, por defecto). */
+    val deadLetterAttempts: Int = 0,
+    /** NEW-4: dias de retencion de la bandeja procesada; null = no se borra nada (decision del propietario / legal). */
+    val retentionDays: Int? = null,
 ) {
     companion object {
         /** Lee y valida. Una plataforma activada con algo que falta lanza [StoreConfigException] (sin valores, solo nombres de variable). */
@@ -255,19 +259,14 @@ internal data class StorePaymentsSettings(
             }
             if ((google != null || apple != null) && catalog.products.isEmpty()) throw StoreConfigException("Pagos de tienda activados sin PAYMENTS_STORE_PRODUCTS")
             google?.let { g -> if (!java.io.File(g.serviceAccountFile).canRead()) throw StoreConfigException("PAYMENTS_GOOGLE_SERVICE_ACCOUNT_FILE no se puede leer") }
-            apple?.let { a -> a.rootCaPaths.forEach { if (!java.io.File(it).canRead()) throw StoreConfigException("PAYMENTS_APPLE_ROOT_CA_PATHS: un certificado no se puede leer") } }
-            // F8 (auditoria Control 2026-10-19): cada raiz configurada tiene que ser Apple Root CA - G3, FIJADA por huella; otra no arranca.
+            // F8 + NEW-7 (auditorias Control 2026-10-19): cada raiz configurada se LEE como certificado X.509 (DER o PEM) y la huella SHA-256 de su
+            // DER tiene que ser la fijada de Apple Root CA - G3; ilegible, no certificado u otra raiz: no arranca.
             apple?.let { a ->
                 a.rootCaPaths.forEach { path ->
-                    if (sha256Hex(java.io.File(path).readBytes()) !in appleRootPins) {
+                    val der = readCertificateDer(path) ?: throw StoreConfigException("PAYMENTS_APPLE_ROOT_CA_PATHS: un certificado no se puede leer")
+                    if (sha256Hex(der) !in appleRootPins) {
                         throw StoreConfigException("PAYMENTS_APPLE_ROOT_CA_PATHS: la huella SHA-256 de un certificado no es la de Apple Root CA - G3")
                     }
-                }
-            }
-            // F8: cada raiz configurada tiene que ser una raiz de Apple FIJADA por huella (Apple Root CA - G3); otra cualquiera no arranca.
-            apple?.let { a ->
-                a.rootCaPaths.forEach { path ->
-                    if (sha256Hex(java.io.File(path).readBytes()) !in appleRootPins) throw StoreConfigException("PAYMENTS_APPLE_ROOT_CA_PATHS: la huella SHA-256 de un certificado no es la de Apple Root CA - G3")
                 }
             }
             val sandbox = try {
@@ -280,7 +279,13 @@ internal data class StorePaymentsSettings(
                 throw StoreConfigException("PAYMENTS_STORE_SANDBOX=accept solo con APP_ENV=local o APP_ENV=test")
             }
             val jobSeconds = environment("PAYMENTS_STORE_JOB_SECONDS")?.trim()?.toLongOrNull() ?: 300L
-            return StorePaymentsSettings(google, apple, catalog, sandbox, jobSeconds)
+            val deadLetter = environment("PAYMENTS_STORE_DEAD_LETTER_ATTEMPTS")?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                it.toIntOrNull()?.takeIf { n -> n >= 0 } ?: throw StoreConfigException("PAYMENTS_STORE_DEAD_LETTER_ATTEMPTS debe ser un entero >= 0")
+            } ?: 0
+            val retention = environment("PAYMENTS_STORE_INBOX_RETENTION_DAYS")?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                it.toIntOrNull()?.takeIf { n -> n >= 30 } ?: throw StoreConfigException("PAYMENTS_STORE_INBOX_RETENTION_DAYS debe ser un entero >= 30")
+            }
+            return StorePaymentsSettings(google, apple, catalog, sandbox, jobSeconds, deadLetter, retention)
         }
     }
 }
@@ -384,6 +389,8 @@ private data class StoreInboxPutRow(
     val estado: String,
     val resultado: String? = null,
     @SerialName("misma_huella") val mismaHuella: Boolean = true,
+    /** NEW-3: reclamo de la fila para ESTA llamada (null = otro trabajador la tiene). */
+    val reclamo: String? = null,
 )
 
 @Serializable
@@ -395,6 +402,8 @@ internal data class StoreInboxRow(
     val entorno: String? = null,
     val datos: JsonObject = JsonObject(emptyMap()),
     val intentos: Int = 0,
+    /** NEW-3: reclamo con el que se marca la fila (lo da app_store_inbox_put o app_store_inbox_pending). */
+    val reclamo: String? = null,
 )
 
 @Serializable
@@ -456,6 +465,8 @@ internal class StorePaymentsService(
     private val clock: () -> Instant = Instant::now,
     private val log: (String) -> Unit = {},
     private val json: Json = Json { ignoreUnknownKeys = true },
+    /** NEW-4: intentos fallidos tras los que un aviso pasa a `muerto` (0 = nunca). */
+    private val deadLetterAttempts: Int = 0,
 ) {
     private fun provider(platform: StorePlatform): StorePaymentProvider =
         providers[platform] ?: throw CanonicalErrorCode.PAYMENT_PROVIDER_UNAVAILABLE.exception()
@@ -613,12 +624,18 @@ internal class StorePaymentsService(
             }.toString(),
         ).singleOrNull() ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
         if (!put.nuevo && !put.mismaHuella) log("store inbox: same event id with a different body (${platform.provider})")
-        if (!put.nuevo && put.estado != "pendiente" && put.estado != "retenido") return "REPLAY"
-        return processInbox(StoreInboxRow(platform.provider, event.eventId, event.type.inbox, event.purchaseKey, event.environment?.db, event.data))
+        return claimedOrNot(put) ?: processInbox(StoreInboxRow(platform.provider, event.eventId, event.type.inbox, event.purchaseKey, event.environment?.db, event.data, reclamo = put.reclamo))
     }
 
     /** Procesa una fila de la bandeja y deja constancia. Nunca lanza por un fallo de proceso: devuelve el resultado guardado. */
-    suspend fun processInbox(row: StoreInboxRow): String {
+    suspend fun processInbox(row: StoreInboxRow, renew: Boolean = false): String {
+        // NEW-3: una fila del trabajo renueva su reclamo antes de procesarla; si lo perdio (otro la tiene), no se toca.
+        if (renew && row.reclamo != null) {
+            val held = runCatching {
+                rpcScalar("app_store_inbox_renew", buildJsonObject { put("p_proveedor", row.proveedor); put("p_evento_id", row.eventoId); put("p_reclamo", row.reclamo) }.toString())
+            }.getOrNull() == "true"
+            if (!held) return "SKIPPED"
+        }
         val (estado, resultado, error) = try {
             val result = process(row)
             Triple(if (result == "DISCARDED") "descartado" else "procesado", result, null)
@@ -639,6 +656,8 @@ internal class StorePaymentsService(
                     put("p_estado", estado)
                     put("p_resultado", resultado)
                     put("p_error", error)
+                    put("p_reclamo", row.reclamo)
+                    put("p_max_intentos", deadLetterAttempts)
                 }.toString(),
             )
         }.onFailure { log("store inbox mark failed: ${it::class.simpleName}") }
@@ -696,7 +715,7 @@ internal class StorePaymentsService(
     suspend fun reprocessPending(limit: Int = 50): Int {
         // F4: los retenidos (reembolsos apagados) solo se vuelven a pedir cuando los reembolsos estan encendidos.
         val rows = rpc<StoreInboxRow>("app_store_inbox_pending", buildJsonObject { put("p_limit", limit); put("p_incluir_retenidos", refundsEnabled) }.toString())
-        rows.forEach { processInbox(it) }
+        rows.forEach { processInbox(it, renew = true) }
         return rows.size
     }
 
@@ -739,8 +758,33 @@ internal class StorePaymentsService(
                 put("p_datos", event.data)
             }.toString(),
         ).singleOrNull() ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
-        if (!put.nuevo && put.estado != "pendiente" && put.estado != "retenido") return "REPLAY"
-        return processInbox(StoreInboxRow(event.platform.provider, event.eventId, event.type.inbox, event.purchaseKey, event.environment?.db, event.data))
+        return claimedOrNot(put) ?: processInbox(StoreInboxRow(event.platform.provider, event.eventId, event.type.inbox, event.purchaseKey, event.environment?.db, event.data, reclamo = put.reclamo))
+    }
+
+    /**
+     * NEW-3: un aviso ya procesado (o descartado / muerto) es REPLAY; uno que espera trabajo pero lo tiene reclamado OTRO trabajador no se procesa
+     * en paralelo (IN_PROGRESS: el que lo tiene lo termina, o el trabajo lo reintenta cuando caduque su reclamo). null = procesar con este reclamo.
+     */
+    private fun claimedOrNot(put: StoreInboxPutRow): String? = when {
+        !put.nuevo && put.estado != "pendiente" && put.estado != "retenido" -> "REPLAY"
+        !put.nuevo && put.reclamo == null -> "IN_PROGRESS"
+        else -> null
+    }
+
+    /**
+     * NEW-1 / NEW-2 / NEW-4 (mantenimiento del trabajo): re-enlaza los huerfanos cuya compra ya existe (los reembolsos solo con reembolsos
+     * encendidos) y, SOLO si se configuro una retencion (decision del propietario / legal), purga la bandeja procesada mas vieja.
+     */
+    suspend fun maintenance(retentionDays: Int?) {
+        rpcScalar("app_store_reconcile_orphans", buildJsonObject { put("p_limit", 50); put("p_reembolsos_habilitados", refundsEnabled) }.toString())
+            ?.toIntOrNull()?.takeIf { it > 0 }?.let { log("store inbox: $it orphan notification(s) re-linked to their order") }
+        retentionDays?.let { days -> rpcScalar("app_store_inbox_purge", buildJsonObject { put("p_dias", days) }.toString()) }
+    }
+
+    private suspend fun rpcScalar(function: String, body: String): String? {
+        val response = canonicalUpstreamIo { upstream.rpc(function, body) }
+        if (!response.ok) throw StoreRpcErrors.failure(function, response)
+        return runCatching { json.parseToJsonElement(response.body).jsonPrimitive.contentOrNull }.getOrNull()
     }
 
     private suspend fun rpcRaw(function: String, body: String) {
@@ -767,3 +811,8 @@ internal class StorePaymentsService(
     }
 }
 
+
+/** NEW-7: lee un certificado X.509 (DER o PEM) y devuelve su DER; null si no se puede leer o no es un certificado. */
+internal fun readCertificateDer(path: String): ByteArray? = runCatching {
+    java.io.FileInputStream(path).use { input -> java.security.cert.CertificateFactory.getInstance("X.509").generateCertificate(input).encoded }
+}.getOrNull()

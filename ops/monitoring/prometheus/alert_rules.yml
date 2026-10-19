@@ -123,3 +123,43 @@ groups:
         annotations:
           summary: "Ninguna replica consigue hablar con Supabase desde hace 3 minutos"
           description: "La API responde /health/live pero toda ruta con datos falla. Mirar el panel de Supabase (cuota, estado del proyecto)."
+
+  # Pagos de tienda (re-auditoria OposiControl 2026-10-19, NEW-5): bandeja de avisos de Google Play / App Store. Gauges de StorePaymentRoutes.kt
+  # (StoreInboxMetrics), publicados por el trabajo de reconciliacion de las replicas bot. max() porque las dos replicas leen la misma base.
+  - name: store-payments
+    rules:
+      - alert: StoreInboxPendingStuck
+        expr: max(store_inbox_oldest_seconds{estado="pendiente"}) > 3600
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Avisos de tienda pendientes de procesar desde hace mas de una hora"
+          description: "La bandeja reintenta con espera creciente; mirar ultimo_error en tienda_bandeja (API de Google caida, credenciales, base)."
+
+      - alert: StoreInboxRefundsRetained
+        expr: max(store_inbox_backlog{estado="retenido"}) > 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Reembolsos de tienda guardados con PAYMENTS_REFUNDS_ENABLED apagado"
+          description: "No se pierden: se aplican al activar los reembolsos. Decidir con el propietario (D2) o activarlos."
+
+      - alert: StoreInboxDeadLetter
+        expr: max(store_inbox_backlog{estado="muerto"}) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Avisos de tienda en dead letter"
+          description: "Superaron PAYMENTS_STORE_DEAD_LETTER_ATTEMPTS. Revisar y reencolar (RPC requeue de la bandeja de tienda)."
+
+      - alert: StoreInboxOrphansOld
+        expr: max(store_inbox_oldest_seconds{estado=~"huerfano_reembolso|huerfano_reversion"}) > 86400
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Reembolsos o reversiones de tienda sin compra desde hace mas de un dia"
+          description: "La compra no ha llegado (o no se verifico). El trabajo los re-enlaza en cuanto exista; si no llega, revision manual."

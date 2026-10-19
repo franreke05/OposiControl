@@ -209,3 +209,21 @@ one batch call (S-04, <= 20 items), optional for the client; (5) a purchase held
   no ledger) and keep the switch for the OT ledger policy (P2) only. It changes who loses access and when, so it is not policy-neutral.
 - Regression tests from Control's audit: `StoreAuditRegressionTest` (A-K1..A-K8; A-K3 and A-K6 inverted) and the `20261022102800` block of
   `supabase/baseline/assertions.sql` (S1, S5, S7, S8 inverted; S2 kept as current D3 behaviour; S3 left to Control's F3 migration).
+
+## Re-audit fixes (OposiControl re-audit of 94a867c + 9e4ecd0, 2026-10-19; migration `20261022102900`)
+
+- NEW-1 / NEW-2: one advisory lock per (provider, store key) in `app_store_credit_purchase`, `app_store_refund_purchase` and
+  `app_store_refund_reversed`, taken before the wallet lock (key -> wallet everywhere): a refund or reversal that arrives while its purchase is
+  being credited waits and is applied to the order. Safety net: the job runs `app_store_reconcile_orphans` (refund orphans only with refunds on).
+  Proven with two real connections: `ops/local-exam/store-concurrency-probe.mjs` (R1..R4 red before, green after).
+- NEW-3: `app_store_inbox_put` claims the row (token + 5-minute lease) like the job; a redelivery while another worker holds it answers
+  `IN_PROGRESS`; the job renews each row's claim before processing it; `app_store_inbox_mark` applies only for the holder and never changes a processed
+  row (its result is never overwritten).
+- NEW-4: dead-letter state `muerto` after `PAYMENTS_STORE_DEAD_LETTER_ATTEMPTS` (default never), `app_store_inbox_requeue`; stats and gauges for
+  `muerto`, `huerfano_reembolso`, `huerfano_reversion`; retention purge only when `PAYMENTS_STORE_INBOX_RETENTION_DAYS` (>= 30) is set (owner /
+  legal input); orphans and held rows are never purged.
+- NEW-5: alert rules `store-payments` in `ops/monitoring/prometheus/alert_rules.yml` (pending > 1 h, retained refunds, dead letters, orphans > 1 day).
+- NEW-6: the `REVERSAL_EARLY` marker is consumed (`REVERSAL_CONSUMED`) by the one refund it reverses; a later genuine refund is applied (P2).
+- NEW-7: Apple roots are read as X.509 (DER or PEM) and the pin is over the certificate DER; the duplicated check is merged.
+- Regression: `StoreReauditRegressionTest` (R-K1..R-K5, R-K3 inverted) and the `20261022102900` block of `supabase/baseline/assertions.sql`
+  (Control's n1_orders.sql scenarios A..E as assertions).

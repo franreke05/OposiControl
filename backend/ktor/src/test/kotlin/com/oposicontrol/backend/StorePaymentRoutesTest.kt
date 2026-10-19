@@ -502,7 +502,7 @@ class StorePaymentRoutesTest {
     /** F4: un aviso ya RETENIDO que la tienda reenvia se vuelve a procesar (no es un REPLAY), y la metrica de atasco se publica. */
     @Test
     fun aRetainedNotificationRedeliveredIsReprocessedAndTheBacklogIsMeasured() = runTest {
-        upstream.handlers["app_store_inbox_put"] = { ok("""[{"nuevo":false,"estado":"retenido","resultado":null,"misma_huella":true}]""") }
+        upstream.handlers["app_store_inbox_put"] = { ok("""[{"nuevo":false,"estado":"retenido","resultado":null,"misma_huella":true,"reclamo":"c-1"}]""") }
         google.event = webhookEvent(StoreEventType.REFUND)
         assertEquals("REFUNDED", service().webhook(StorePlatform.GOOGLE_PLAY, { null }, "{}".toByteArray()))
         assertTrue("app_store_refund_purchase" in upstream.names())
@@ -526,5 +526,56 @@ class StorePaymentRoutesTest {
         refundsEnabled = false
         service().reprocessPending()
         assertEquals("false", upstream.args("app_store_inbox_pending")["p_incluir_retenidos"]!!.jsonPrimitive.content)
+    }
+
+    /** NEW-3 (re-auditoria Control 2026-10-19): un reenvio mientras OTRO trabajador tiene el aviso reclamado no se procesa en paralelo. */
+    @Test
+    fun aRedeliveryWhileAnotherWorkerHoldsTheClaimIsNotProcessedTwice() = runTest {
+        upstream.handlers["app_store_inbox_put"] = { ok("""[{"nuevo":false,"estado":"pendiente","resultado":null,"misma_huella":true,"reclamo":null}]""") }
+        google.event = webhookEvent(StoreEventType.PURCHASE)
+        google.facts = pack(needsFinish = false)
+        assertEquals("IN_PROGRESS", service().webhook(StorePlatform.GOOGLE_PLAY, { null }, "{}".toByteArray()))
+        assertEquals(listOf("app_store_inbox_put"), upstream.names())
+    }
+
+    /** NEW-3: el reclamo de la bandeja viaja hasta el mark; el trabajo renueva el reclamo de cada fila antes de procesarla y salta las perdidas. */
+    @Test
+    fun theClaimTravelsToTheMarkAndTheJobRenewsItPerRow() = runTest {
+        upstream.handlers["app_store_inbox_put"] = { ok("""[{"nuevo":true,"estado":"pendiente","resultado":null,"misma_huella":true,"reclamo":"c-7"}]""") }
+        google.event = webhookEvent(StoreEventType.PURCHASE)
+        google.facts = pack(needsFinish = false)
+        service().webhook(StorePlatform.GOOGLE_PLAY, { null }, "{}".toByteArray())
+        assertEquals("c-7", upstream.args("app_store_inbox_mark")["p_reclamo"]!!.jsonPrimitive.content)
+        upstream.rpcs.clear()
+        upstream.handlers["app_store_inbox_pending"] = {
+            ok("""[{"proveedor":"google_play","evento_id":"rtdn:a","tipo":"COMPRA","clave_compra":"gp-token-1","entorno":null,"datos":{"kind":"CONSUMABLE"},"intentos":0,"reclamo":"c-a"},""" +
+                """{"proveedor":"google_play","evento_id":"rtdn:b","tipo":"COMPRA","clave_compra":"gp-token-1","entorno":null,"datos":{"kind":"CONSUMABLE"},"intentos":0,"reclamo":"c-b"}]""")
+        }
+        upstream.handlers["app_store_inbox_renew"] = { body -> ok(if (body.contains("\"c-a\"")) "true" else "false") }
+        assertEquals(2, service().reprocessPending())
+        assertEquals(1, upstream.names().count { it == "app_store_credit_purchase" }, "the row whose claim was lost is skipped: ${upstream.names()}")
+        assertEquals("c-a", upstream.args("app_store_inbox_mark")["p_reclamo"]!!.jsonPrimitive.content)
+    }
+
+    /** NEW-4 / NEW-1 / NEW-2: dead letter tras N intentos solo si se configura; mantenimiento: re-escaneo de huerfanos siempre, purga solo con retencion. */
+    @Test
+    fun deadLetterThresholdOrphanRescanAndRetentionAreConfiguredNotImplicit() = runTest {
+        upstream.handlers["app_store_inbox_put"] = { ok("""[{"nuevo":true,"estado":"pendiente","resultado":null,"misma_huella":true,"reclamo":"c-1"}]""") }
+        google.event = webhookEvent(StoreEventType.PURCHASE)
+        google.factsFailure = CanonicalErrorCode.UPSTREAM_UNAVAILABLE.exception()
+        StorePaymentsService(upstream, mapOf(StorePlatform.GOOGLE_PLAY to google), catalog, sandbox, true, clock = { now }, deadLetterAttempts = 12)
+            .webhook(StorePlatform.GOOGLE_PLAY, { null }, "{}".toByteArray())
+        assertEquals("12", upstream.args("app_store_inbox_mark")["p_max_intentos"]!!.jsonPrimitive.content)
+        service().webhook(StorePlatform.GOOGLE_PLAY, { null }, "{}".toByteArray())
+        assertEquals("0", upstream.args("app_store_inbox_mark")["p_max_intentos"]!!.jsonPrimitive.content, "default: never dead-letter")
+        upstream.rpcs.clear()
+        upstream.handlers["app_store_reconcile_orphans"] = { ok("0") }
+        upstream.handlers["app_store_inbox_purge"] = { ok("0") }
+        refundsEnabled = false
+        service().maintenance(retentionDays = null)
+        assertEquals(listOf("app_store_reconcile_orphans"), upstream.names(), "no retention configured: nothing is deleted")
+        assertEquals("false", upstream.args("app_store_reconcile_orphans")["p_reembolsos_habilitados"]!!.jsonPrimitive.content)
+        service().maintenance(retentionDays = 400)
+        assertEquals("400", upstream.args("app_store_inbox_purge")["p_dias"]!!.jsonPrimitive.content)
     }
 }

@@ -28,6 +28,8 @@ internal class StorePaymentsRuntime(
     val webhookLimit: suspend (ApplicationCall) -> Unit = {},
     /** Sondeo de Voided Purchases (solo con Google activado). */
     val google: GooglePlayProvider? = null,
+    /** NEW-4: retencion de la bandeja (dias); null = no se purga nada. */
+    val retentionDays: Int? = null,
 ) {
     companion object {
         fun fromEnvironment(
@@ -44,12 +46,12 @@ internal class StorePaymentsRuntime(
                 val account = GoogleServiceAccount.parse(File(g.serviceAccountFile).readText())
                 GooglePlayProvider(g, HttpGooglePlayApi(g.packageName, account), GoogleOidcVerifier(g.pubsubAudience, g.pubsubServiceAccount, JwksGoogleKeySource()))
             }
-            val apple = settings.apple?.let { a -> AppStoreProvider(a, a.rootCaPaths.map { File(it).readBytes() }) }
+            val apple = settings.apple?.let { a -> AppStoreProvider(a, a.rootCaPaths.map { readCertificateDer(it) ?: throw StoreConfigException("PAYMENTS_APPLE_ROOT_CA_PATHS: un certificado no se puede leer") }) }
             val providers = listOfNotNull<StorePaymentProvider>(google, apple).associateBy { it.platform }
             val limiter = auth?.rateLimiter
             return StorePaymentsRuntime(
                 resolver = resolver,
-                service = StorePaymentsService(upstream, providers, settings.catalog, settings.sandbox, refundsEnabledFrom(environment), log = log),
+                service = StorePaymentsService(upstream, providers, settings.catalog, settings.sandbox, refundsEnabledFrom(environment), log = log, deadLetterAttempts = settings.deadLetterAttempts),
                 idempotency = store,
                 limit = { operation, userId ->
                     if (limiter != null) {
@@ -64,6 +66,7 @@ internal class StorePaymentsRuntime(
                     }
                 },
                 google = google,
+                retentionDays = settings.retentionDays,
             )
         }
     }
@@ -181,6 +184,7 @@ internal object StorePaymentsJob {
             while (isActive) {
                 runCatching { runtime.service.reprocessPending() }.onFailure { log("store job reprocess failed: ${it::class.simpleName}") }
                 runCatching { runtime.service.finishPending() }.onFailure { log("store job finish failed: ${it::class.simpleName}") }
+                runCatching { runtime.service.maintenance(runtime.retentionDays) }.onFailure { log("store job maintenance failed: ${it::class.simpleName}") }
                 runCatching { StoreInboxMetrics.update(runtime.service.inboxStats(), log) }.onFailure { log("store job inbox stats failed: ${it::class.simpleName}") }
                 val now = clock()
                 if (runtime.google != null && now.isAfter(lastVoidedPoll.plusSeconds(86_400))) {
@@ -219,14 +223,19 @@ internal object StoreInboxMetrics {
             }
         }
 
+    /** NEW-4: tambien los muertos (dead letter) y los huerfanos (reembolso / reversion sin compra todavia). */
+    val STATES = listOf("pendiente", "retenido", "muerto", "huerfano_reembolso", "huerfano_reversion")
+
     fun update(stats: List<StoreInboxBacklog>, log: (String) -> Unit) {
-        listOf("pendiente", "retenido").forEach { estado ->
+        STATES.forEach { estado ->
             val s = stats.firstOrNull { it.estado == estado }
             gauge(rows, BACKLOG_METRIC, estado).set(s?.rows ?: 0)
             gauge(oldest, OLDEST_METRIC, estado).set(s?.oldestSeconds ?: 0)
         }
         stats.firstOrNull { it.estado == "retenido" && it.rows > 0 }?.let { log("ALERT store inbox: ${it.rows} refund notifications retained while PAYMENTS_REFUNDS_ENABLED is off (oldest ${it.oldestSeconds}s)") }
         stats.firstOrNull { it.estado == "pendiente" && it.oldestSeconds > 3_600 }?.let { log("ALERT store inbox: ${it.rows} pending notifications, oldest ${it.oldestSeconds}s, max attempts ${it.maxAttempts}") }
+        stats.firstOrNull { it.estado == "muerto" && it.rows > 0 }?.let { log("ALERT store inbox: ${it.rows} dead-letter notifications need a manual decision (app_store_inbox_requeue)") }
+        stats.filter { it.estado.startsWith("huerfano") && it.oldestSeconds > 86_400 }.forEach { log("ALERT store inbox: ${it.rows} ${it.estado} older than a day (oldest ${it.oldestSeconds}s)") }
     }
 
     fun value(name: String, estado: String): Long? = (if (name == BACKLOG_METRIC) rows else oldest)[estado]?.get()
