@@ -336,15 +336,6 @@ private val SUPABASE_DOMAIN_ERRORS = mapOf(
     // Control V1 (rama de servidor feature/december-v1-server): los levantan las migraciones de reglas oficiales,
     // comunidad obligatoria, foro e invitaciones. Mensajes constantes: sin ids, sin texto del cliente.
     // ------------------------------------------------------------------
-    "OFFICIAL_RULES_INVALID" to DomainErrorDefinition(
-        HttpStatusCode.UnprocessableEntity,
-        "Las reglas de puntuación no son válidas para este examen (anuladas sin reservas suficientes, reservas desordenadas " +
-            "o reservas antes de la última pregunta principal). Revisa el chequeo del examen.",
-    ),
-    "DEMO_CONFLICT" to DomainErrorDefinition(
-        HttpStatusCode.UnprocessableEntity,
-        "Una pregunta de demostración no puede estar anulada ni ser reserva, ni moverse de sitio.",
-    ),
     "EXAM_COMMUNITY_REQUIRED" to DomainErrorDefinition(
         HttpStatusCode.UnprocessableEntity,
         "Todo examen necesita una comunidad. Elige una antes de guardar o publicar.",
@@ -356,7 +347,7 @@ private val SUPABASE_DOMAIN_ERRORS = mapOf(
     ),
     "REFERRAL_NOT_FOUND" to DomainErrorDefinition(HttpStatusCode.NotFound, "La invitación no existe."),
     // ------------------------------------------------------------------
-    // Control V1, funciones de servicio (migracion 20261022102300) y lote oficial (FA37). Estados sugeridos por E1.
+    // Control V1, funciones de servicio (migracion 20261022102300). Estados sugeridos por E1. Los codigos IMPORT_*, OFFICIAL_RULES_INVALID y DEMO_CONFLICT los define E1 (feature/december-v1-server): no se duplican aqui.
     // ------------------------------------------------------------------
     "ADMIN_ACTOR_INVALID" to DomainErrorDefinition(
         HttpStatusCode.Forbidden,
@@ -392,34 +383,6 @@ private val SUPABASE_DOMAIN_ERRORS = mapOf(
     "ORDER_ALREADY_CREDITED" to DomainErrorDefinition(HttpStatusCode.Conflict, "Este pedido ya tiene los tickets acreditados: no se puede acreditar ni rechazar."),
     "ORDER_NOT_CREDITED" to DomainErrorDefinition(HttpStatusCode.Conflict, "Este pedido nunca se acreditó: no se puede confirmar ni reembolsar."),
     "REFUNDS_DISABLED" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "Los reembolsos están desactivados en este entorno. No se ha cambiado nada."),
-    "IMPORT_EXAM_CODE_MISMATCH" to DomainErrorDefinition(
-        HttpStatusCode.UnprocessableEntity,
-        "El fichero es de otro examen: el código de la cabecera no coincide con el del examen elegido.",
-    ),
-    "IMPORT_LOT_DUPLICATE" to DomainErrorDefinition(
-        HttpStatusCode.Conflict,
-        "Este contenido ya se importó en este examen. Mira el lote anterior en lugar de publicar de nuevo.",
-    ),
-    "IMPORT_RESERVE_REQUIRES_OFFICIAL_EXAM" to DomainErrorDefinition(
-        HttpStatusCode.UnprocessableEntity,
-        "Hay filas de reserva pero el examen no es oficial. Márcalo como oficial o pasa esas filas a principales.",
-    ),
-    "IMPORT_MAIN_AFTER_RESERVE" to DomainErrorDefinition(
-        HttpStatusCode.UnprocessableEntity,
-        "El examen ya tiene reservas y este lote añade principales, que quedarían detrás. Importa primero las principales.",
-    ),
-    "IMPORT_BLOCK_CONFLICT" to DomainErrorDefinition(
-        HttpStatusCode.UnprocessableEntity,
-        "Una pregunta que ya está en el examen figura con el otro bloque (principal o reserva). Corrige el bloque de la fila u omítela.",
-    ),
-    "IMPORT_DEMO_CONFLICT" to DomainErrorDefinition(
-        HttpStatusCode.UnprocessableEntity,
-        "Una pregunta de demostración no puede ser reserva ni estar anulada. Omite esa fila.",
-    ),
-    "IMPORT_OFFICIAL_RULES_INVALID" to DomainErrorDefinition(
-        HttpStatusCode.UnprocessableEntity,
-        "Con este lote el examen quedaría inválido (por ejemplo, más anuladas que reservas). No se ha importado nada; revisa las reglas del examen.",
-    ),
     "CONTROL_RPC_NOT_PROVISIONED" to DomainErrorDefinition(
         HttpStatusCode.NotImplemented,
         "Esta función todavía no está disponible en el servidor de datos conectado. No se ha cambiado nada.",

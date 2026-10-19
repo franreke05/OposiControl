@@ -20,6 +20,7 @@ import com.oposicontrol.admin.domain.model.IMPORT_BLOCK_RESERVE
 import com.oposicontrol.admin.domain.model.isReserve
 import com.oposicontrol.admin.domain.model.ContentImportDuplicate
 import com.oposicontrol.admin.domain.model.ContentImportStagingItem
+import com.oposicontrol.admin.domain.model.RazonadoMarkup
 import com.oposicontrol.admin.domain.model.ContentImportSummary
 import com.oposicontrol.admin.domain.model.canonicalExamType
 import com.oposicontrol.admin.domain.model.ExamQuestion
@@ -1213,6 +1214,11 @@ private data class AdminStagingItemDto(
     val motivoAnulacion: String? = null,
     /** `PRINCIPAL` o `RESERVA` (FA37). Un backend anterior no lo manda: PRINCIPAL. */
     val bloque: String = "PRINCIPAL",
+    /**
+     * FA38 (SOLO LECTURA): la estructura que el servidor derivó del razonamiento (`null` = texto sin estilo). `razonamiento`
+     * trae el texto FUENTE con marcas y es lo único que se escribe; este campo NUNCA se reenvía.
+     */
+    val razonamientoRico: JsonObject? = null,
 )
 
 @Serializable
@@ -1287,6 +1293,7 @@ private fun AdminStagingItemDto.toDomain() = ContentImportStagingItem(
     annulled = anulada,
     annulmentReason = motivoAnulacion,
     block = if (bloque.equals(IMPORT_BLOCK_RESERVE, ignoreCase = true)) IMPORT_BLOCK_RESERVE else IMPORT_BLOCK_MAIN,
+    reasoningRich = razonamientoRico?.toRichDoc(),
 )
 
 /**
@@ -1695,3 +1702,40 @@ internal const val ADMIN_V1_BATCH_PUBLISH_TIMEOUT_MILLIS: Long = 300_000
 
 /** Portada de hasta 10 MB: subida a Storage + actualización del examen. */
 internal const val ADMIN_V1_COVER_UPLOAD_TIMEOUT_MILLIS: Long = 60_000
+
+private val RICH_HEX = Regex("^#[0-9A-Fa-f]{6}$")
+
+/**
+ * `razonamientoRico` (FA38, `{"v":1,"blocks":[{"k":"p|li","a":..,"spans":[{"text":..,"bold":true,..}]}]}`) como ÁRBOL TIPADO.
+ * Lector tolerante con lo que no entiende, tal como pide el contrato del renderizador: una versión desconocida devuelve
+ * `null` (se cae al texto fuente), y un color, tamaño o alineación fuera de las listas cerradas pierde ESE estilo pero
+ * conserva el texto. Nunca produce HTML ni interpreta el texto.
+ */
+private fun JsonObject.toRichDoc(): RazonadoMarkup.Doc? {
+    if ((this["v"] as? JsonPrimitive)?.content?.toIntOrNull() != RazonadoMarkup.VERSION) return null
+    val blocks = (this["blocks"] as? kotlinx.serialization.json.JsonArray)?.mapNotNull { element ->
+        val block = element as? JsonObject ?: return@mapNotNull null
+        val spans = (block["spans"] as? kotlinx.serialization.json.JsonArray)?.mapNotNull { s ->
+            val span = s as? JsonObject ?: return@mapNotNull null
+            val text = (span["text"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+            fun flag(key: String) = (span[key] as? JsonPrimitive)?.content == "true"
+            val color = (span["color"] as? JsonPrimitive)?.content?.takeIf { it in RazonadoMarkup.COLORS || RICH_HEX.matches(it) }
+            RazonadoMarkup.Span(
+                text = text,
+                bold = flag("bold"),
+                italic = flag("italic"),
+                underline = flag("underline"),
+                strike = flag("strike"),
+                color = color,
+                size = (span["size"] as? JsonPrimitive)?.content?.takeIf { it in RazonadoMarkup.SIZES },
+            )
+        }.orEmpty()
+        if (spans.isEmpty()) return@mapNotNull null
+        RazonadoMarkup.Block(
+            kind = if ((block["k"] as? JsonPrimitive)?.content == "li") RazonadoMarkup.Kind.BULLET else RazonadoMarkup.Kind.PARAGRAPH,
+            align = (block["a"] as? JsonPrimitive)?.content?.takeIf { it in RazonadoMarkup.ALIGNS },
+            spans = spans,
+        )
+    }.orEmpty()
+    return blocks.takeIf { it.isNotEmpty() }?.let(RazonadoMarkup::Doc)
+}

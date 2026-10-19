@@ -48,6 +48,7 @@ import com.oposicontrol.admin.domain.model.ContentImportStagingItem
 import com.oposicontrol.admin.domain.model.IMPORT_BLOCK_MAIN
 import com.oposicontrol.admin.domain.model.RazonadoMarkup
 import com.oposicontrol.admin.domain.model.RazonadoMarkupMessages
+import com.oposicontrol.admin.features.controlv1.presentation.MarkupPreview
 import com.oposicontrol.admin.domain.model.IMPORT_BLOCK_RESERVE
 import com.oposicontrol.admin.domain.model.isReserve
 import com.oposicontrol.admin.domain.model.reserveOrderOf
@@ -433,6 +434,11 @@ private fun ImportStagingDetail(
                     style = MaterialTheme.typography.bodySmall,
                     color = tokens.dangerInk,
                 )
+            }
+            // Vista previa EXACTA con el analizador saneador (arbol tipado, nunca HTML) cuando el texto lleva estilo.
+            (RazonadoMarkup.parse(draft.reasoning) as? RazonadoMarkup.Result.Ok)?.doc?.takeUnless { RazonadoMarkup.isPlain(it) }?.let { doc ->
+                Text(text = "Así se verá", style = MaterialTheme.typography.labelMedium, color = tokens.textSecondary)
+                MarkupPreview(doc)
             }
             ImportTextField(
                 value = draft.sourceText,

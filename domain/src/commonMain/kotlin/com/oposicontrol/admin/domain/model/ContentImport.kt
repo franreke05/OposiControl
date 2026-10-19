@@ -84,6 +84,8 @@ data class ContentImportStagingItem(
     val annulmentReason: String? = null,
     /** Bloque del examen oficial: [IMPORT_BLOCK_MAIN] o [IMPORT_BLOCK_RESERVE]. Editable hasta que el lote se importa. */
     val block: String = IMPORT_BLOCK_MAIN,
+    /** FA38, solo lectura: la estructura con estilo que derivó el servidor del texto fuente (`reasoning`); `null` = sin estilo. Nunca se reenvía. */
+    val reasoningRich: RazonadoMarkup.Doc? = null,
 )
 
 val ContentImportStagingItem.isReserve: Boolean get() = block.equals(IMPORT_BLOCK_RESERVE, ignoreCase = true)

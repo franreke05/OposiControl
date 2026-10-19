@@ -243,7 +243,7 @@ class AdminControlGradingTest {
             when {
                 uri.contains("/rpc/") -> V1StubResponse(404, """{"code":"PGRST202"}""")
                 uri.contains("/rest/v1/preguntas_examen") -> V1StubResponse(200, "[]")
-                method == "PATCH" -> V1StubResponse(400, """{"code":"P0001","message":"OFFICIAL_RULES_INVALID","hint":"REEMPLAZO_NOT_ENOUGH_RESERVES","details":"examen secreto"}""")
+                method == "PATCH" -> V1StubResponse(400, """{"code":"P0001","message":"GRADING_PENALTY_CONFLICT","hint":"pista-interna","details":"examen secreto"}""")
                 else -> V1StubResponse(200, examJson())
             }
         }
@@ -251,8 +251,8 @@ class AdminControlGradingTest {
         val response = sendJson(HttpMethod.Put, "/api/v1/admin/examenes/${ControlFake.EXAM}/reglas-puntuacion",
             """{"reglaAnuladas":"REEMPLAZO_POR_RESERVA","penalizacionRacional":false,"penalizacionNum":0,"penalizacionDen":1}""")
         assertEquals(HttpStatusCode.UnprocessableEntity, response.status, response.bodyAsText())
-        assertTrue(response.bodyAsText().contains("OFFICIAL_RULES_INVALID"), response.bodyAsText())
-        assertTrue(!response.bodyAsText().contains("secreto") && !response.bodyAsText().contains("REEMPLAZO_NOT_ENOUGH"), response.bodyAsText())
+        assertTrue(response.bodyAsText().contains("GRADING_PENALTY_CONFLICT"), response.bodyAsText())
+        assertTrue(!response.bodyAsText().contains("secreto") && !response.bodyAsText().contains("pista-interna"), response.bodyAsText())
     }
 
     @Test

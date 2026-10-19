@@ -10,6 +10,8 @@ kotlin {
             implementation(projects.core.common)
             implementation(projects.core.ui)
             implementation(projects.domain)
+            // El mismo pintor del marcado (arbol tipado a AnnotatedString) que usa Control: una sola vista previa para todo.
+            implementation(projects.features.controlV1)
             implementation(libs.compose.foundation)
             implementation(libs.compose.material3)
             implementation(libs.compose.runtime)
