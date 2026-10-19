@@ -3688,3 +3688,177 @@ begin
   raise notice 'OK SEC-V1-05 refund order';
 end $$;
 rollback;
+
+-- 20261022102600: store payments (Google Play / App Store). Credit by SKU exactly once per store key, binding to one user (account token), orphan
+-- refund before purchase held (SEC-V1-05), refund after credit (P2), REFUND_REVERSED to review (D3), ECO-04 event of another order -> review,
+-- subscriptions (create / stale / grace / hold / recovery / cancel / expire / revoke / bound to other / linked token), inbox idempotency, Play
+-- finish list, ECO-11 (service_role cannot write orders or subscriptions), account deletion then void (orphan). Ledger invariants after each case.
+begin;
+create function pg_temp.expect_e(p_sql text, p_msg text) returns void language plpgsql as $$
+declare v_msg text;
+begin
+  begin execute p_sql; exception when others then get stacked diagnostics v_msg = message_text; end;
+  if v_msg is distinct from p_msg then raise exception 'ASSERT FAILED: % -> expected % got %', p_sql, p_msg, v_msg; end if;
+end $$;
+create function pg_temp.u(n int) returns uuid language sql as $$ select ('a0000000-0000-0000-0000-' || lpad((900 + n)::text, 12, '0'))::uuid $$;
+create function pg_temp.bal(p_user uuid) returns int language sql as $$ select coalesce((select saldo_tickets from public.carteras_usuario where usuario_id = p_user), 0) $$;
+create function pg_temp.credits(p_user uuid) returns bigint language sql as $$ select count(*) from public.transacciones_cartera where usuario_id = p_user and tipo = 'pack_tickets' $$;
+create function pg_temp.tok(p_user uuid) returns uuid language sql as $$ select public.app_store_account_token(p_user) $$;
+create function pg_temp.h(p text) returns text language sql as $$ select encode(sha256(convert_to(p, 'utf8')), 'hex') $$;
+create function pg_temp.buy(p_user uuid, p_clave text, p_prov text default 'google_play', out outcome text, out estado text, out saldo int) language sql as $$
+  select c.outcome, c.estado, c.saldo from public.app_store_credit_purchase(p_user, pg_temp.tok(p_user), p_prov, 'produccion', 'st-pack-100', 'ot_100', p_clave, '{"precio":"0.99"}'::jsonb) c $$;
+create function pg_temp.invariants(p_user uuid, p_label text) returns void language plpgsql as $$
+begin
+  assert coalesce((select sum(cantidad) from public.transacciones_cartera where usuario_id = p_user), 0) = pg_temp.bal(p_user), p_label || ': ledger sum = balance';
+  assert pg_temp.bal(p_user) >= 0, p_label || ': balance never negative';
+  assert (select count(*) from public.app_wallet_reconcile(p_user)) = 0, p_label || ': reconcile clean';
+end $$;
+insert into auth.users (id, email, aud, role) select pg_temp.u(n), 'st' || n || '@test.local', 'authenticated', 'authenticated' from generate_series(1, 9) n;
+insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta)
+  select pg_temp.u(n), 'st' || n, 'st_user_' || n, true, 'activa' from generate_series(1, 9) n
+  on conflict (usuario_id) do update set username = excluded.username;
+insert into public.productos_comerciales (id, codigo, tipo_producto, nombre, precio_centimos, moneda, cantidad_tickets, activo, visible)
+  values ('b9900000-0000-0000-0000-000000000001', 'st-pack-100', 'pack_tickets', 'ST 100', 99, 'EUR', 100, false, false),
+         ('b9900000-0000-0000-0000-000000000002', 'st-premium', 'suscripcion', 'ST Premium', 999, 'EUR', null, true, true);
+do $$
+declare
+  r record; t1 uuid; n_ledger bigint;
+begin
+  -- ---- account token: stable, one per user, unknown user refused
+  t1 := pg_temp.tok(pg_temp.u(1));
+  assert t1 is not null and pg_temp.tok(pg_temp.u(1)) = t1 and pg_temp.tok(pg_temp.u(2)) <> t1, 'one stable opaque token per user';
+  perform pg_temp.expect_e($q$select public.app_store_account_token(gen_random_uuid())$q$, 'WALLET_INVALID_USER');
+
+  -- ---- 1. verified purchase credits by SKU exactly once (inactive product still credits: the store already charged); retry is REPLAY
+  select * into r from pg_temp.buy(pg_temp.u(1), 'gp-token-1');
+  assert r.outcome = 'CREDITED' and r.estado = 'pagada' and r.saldo = 100, 'first verify credits: ' || r.outcome;
+  select * into r from pg_temp.buy(pg_temp.u(1), 'gp-token-1');
+  assert r.outcome = 'REPLAY' and r.saldo = 100 and pg_temp.credits(pg_temp.u(1)) = 1, 'second verify of the same token: REPLAY, no second credit';
+  assert (select entorno from public.compras_usuario where identificador_transaccion = 'gp-token-1') = 'produccion', 'environment recorded';
+  assert (select payload_validacion -> 'tienda' ->> 'precio' from public.compras_usuario where identificador_transaccion = 'gp-token-1') = '0.99', 'store price kept for audit only';
+  perform pg_temp.invariants(pg_temp.u(1), 'store credit');
+
+  -- ---- 2. token of another user / account token mismatch / unknown SKU / wrong product kind: refused, nothing written
+  n_ledger := (select count(*) from public.transacciones_cartera);
+  perform pg_temp.expect_e(format($q$select * from public.app_store_credit_purchase(%L, %L, 'google_play', 'produccion', 'st-pack-100', 'ot_100', 'gp-token-1', null)$q$,
+                                  pg_temp.u(2), pg_temp.tok(pg_temp.u(2))), 'STORE_PURCHASE_BOUND_TO_OTHER');
+  perform pg_temp.expect_e(format($q$select * from public.app_store_credit_purchase(%L, %L, 'google_play', 'produccion', 'st-pack-100', 'ot_100', 'gp-token-9', null)$q$,
+                                  pg_temp.u(2), pg_temp.tok(pg_temp.u(1))), 'STORE_ACCOUNT_MISMATCH');
+  perform pg_temp.expect_e(format($q$select * from public.app_store_credit_purchase(%L, gen_random_uuid(), 'google_play', 'produccion', 'st-pack-100', 'ot_100', 'gp-token-9', null)$q$,
+                                  pg_temp.u(2)), 'STORE_ACCOUNT_MISMATCH');
+  perform pg_temp.expect_e($q$select * from public.app_store_credit_purchase(null, null, 'google_play', 'produccion', 'st-pack-100', 'ot_100', 'gp-token-9', null)$q$, 'STORE_ACCOUNT_MISMATCH');
+  perform pg_temp.expect_e(format($q$select * from public.app_store_credit_purchase(%L, null, 'google_play', 'produccion', 'nope', 'x', 'gp-token-9', null)$q$, pg_temp.u(2)), 'STORE_PRODUCT_UNKNOWN');
+  perform pg_temp.expect_e(format($q$select * from public.app_store_credit_purchase(%L, null, 'google_play', 'produccion', 'st-premium', 'x', 'gp-token-9', null)$q$, pg_temp.u(2)), 'STORE_PRODUCT_UNKNOWN');
+  perform pg_temp.expect_e(format($q$select * from public.app_store_credit_purchase(%L, null, 'stripe', 'produccion', 'st-pack-100', 'x', 'gp-token-9', null)$q$, pg_temp.u(2)), 'STORE_REQUEST_INVALID');
+  assert (select count(*) from public.transacciones_cartera) = n_ledger and not exists (select 1 from public.compras_usuario where identificador_transaccion = 'gp-token-9'), 'refusals wrote nothing';
+
+  -- ---- 3. refund after credit: P2 path (unspent reversed); refund retry (same event) REPLAY; the same void from another source REPLAY
+  select * into r from public.app_store_refund_purchase('google_play', 'reembolso:' || pg_temp.h('gp-token-1'), 'gp-token-1');
+  assert r.outcome = 'REFUNDED' and r.saldo = 0, 'refund after credit: ' || r.outcome;
+  assert (select outcome from public.app_store_refund_purchase('google_play', 'reembolso:' || pg_temp.h('gp-token-1'), 'gp-token-1')) = 'REPLAY', 'same refund event: REPLAY';
+  assert (select outcome from public.app_store_refund_purchase('google_play', 'void:gpa.1', 'gp-token-1')) = 'REPLAY', 'second source of the same void: REPLAY';
+  perform pg_temp.invariants(pg_temp.u(1), 'store refund');
+
+  -- ---- 4. REFUND_REVERSED (D3): the refunded order goes back to review, no automatic re-credit; replay REPLAY; unknown key NOOP
+  assert public.app_store_refund_reversed('google_play', 'rev-1', 'gp-token-1') = 'EN_REVISION', 'refund reversed -> review';
+  assert (select estado from public.compras_usuario where identificador_transaccion = 'gp-token-1') = 'en_revision' and pg_temp.bal(pg_temp.u(1)) = 0, 'no re-credit';
+  assert public.app_store_refund_reversed('google_play', 'rev-1', 'gp-token-1') = 'REPLAY', 'reversal replay';
+  assert public.app_store_refund_reversed('google_play', 'rev-2', 'gp-unknown') = 'NOOP', 'reversal of an unknown purchase: NOOP';
+  assert exists (select 1 from public.auditoria_log where accion = 'reembolso_revertido'), 'reversal audited';
+  perform pg_temp.invariants(pg_temp.u(1), 'refund reversed');
+
+  -- ---- 5. out of order: the void arrives BEFORE the purchase (orphan, held on the inbox), then the verify credits nothing (SEC-V1-05)
+  perform pg_temp.expect_e($q$select * from public.app_store_refund_purchase('google_play', 'not-in-inbox', 'gp-token-2')$q$, 'STORE_EVENT_NOT_IN_INBOX');
+  perform public.app_store_inbox_put('google_play', 'rtdn-2', 'REEMBOLSO', 'gp-token-2', 'produccion', pg_temp.h('b'), '{}');
+  assert (select outcome from public.app_store_refund_purchase('google_play', 'rtdn-2', 'gp-token-2')) = 'REFUND_ORPHAN_HELD', 'orphan refund held';
+  select * into r from pg_temp.buy(pg_temp.u(3), 'gp-token-2');
+  assert r.outcome = 'EN_REVISION' and r.estado = 'en_revision' and r.saldo = 0 and pg_temp.credits(pg_temp.u(3)) = 0, 'purchase after its refund: no credit: ' || r.outcome;
+  assert (select resultado from public.tienda_bandeja where evento_id = 'rtdn-2') = 'REFUND_HELD', 'the orphan is now held on its order';
+  select * into r from pg_temp.buy(pg_temp.u(3), 'gp-token-2');
+  assert r.saldo = 0 and pg_temp.credits(pg_temp.u(3)) = 0, 'retry of the verify: still nothing';
+  perform pg_temp.invariants(pg_temp.u(3), 'orphan refund');
+
+  -- ---- 6. ECO-04: an event id already bound to another order sends this order to review (not a silent REPLAY), credits nothing
+  select * into r from pg_temp.buy(pg_temp.u(4), 'as-tx-1', 'app_store');
+  assert r.outcome = 'CREDITED' and r.saldo = 100, 'apple purchase credited';
+  select * into r from pg_temp.buy(pg_temp.u(4), 'as-tx-2', 'app_store');
+  assert r.outcome = 'CREDITED' and r.saldo = 200, 'second apple purchase credited';
+  select * into r from public.app_credit_payment_order('app_store', 'compra:' || pg_temp.h('as-tx-1'),
+                                                       (select id from public.compras_usuario where identificador_transaccion = 'as-tx-2'), 'as-tx-2', 99, 'EUR', 'st-pack-100');
+  assert r.outcome = 'EN_REVISION' and r.estado = 'en_revision' and r.saldo = 200, 'event of another order: review, no second credit: ' || r.outcome;
+  assert exists (select 1 from public.auditoria_log where accion = 'evento_de_otro_pedido'), 'ECO-04 audited';
+  perform pg_temp.invariants(pg_temp.u(4), 'eco04');
+
+  -- ---- 7. subscriptions: create, stale event ignored, grace keeps access, hold removes it, recovery restores it, cancel keeps paid time,
+  --         bound to another user refused, revoke denies at once, linked token closes the previous row, expire denies
+  select * into r from public.app_store_upsert_subscription(pg_temp.u(5), pg_temp.tok(pg_temp.u(5)), 'google_play', 'produccion', 'st-premium', 'premium/monthly',
+                                                            'gp-sub-1', 'activa', now(), now() + interval '30 days', now() + interval '30 days', null, 100, null);
+  assert r.outcome = 'CREATED' and r.es_premium, 'subscription created, premium';
+  select * into r from public.app_store_upsert_subscription(null, null, 'google_play', 'produccion', 'st-premium', 'premium/monthly',
+                                                            'gp-sub-1', 'caducada', null, now() - interval '1 day', null, 'expiro', 50, null);
+  assert r.outcome = 'STALE' and r.es_premium and r.estado = 'activa', 'older event is STALE';
+  select * into r from public.app_store_upsert_subscription(null, null, 'google_play', 'produccion', 'st-premium', 'premium/monthly',
+                                                            'gp-sub-1', 'activa', null, now() + interval '3 days', null, null, 200, null);
+  assert r.outcome = 'UPDATED' and r.es_premium, 'grace period keeps access';
+  select * into r from public.app_store_upsert_subscription(null, null, 'google_play', 'produccion', 'st-premium', 'premium/monthly',
+                                                            'gp-sub-1', 'pausada', null, now() + interval '3 days', null, null, 300, null);
+  assert r.outcome = 'UPDATED' and not r.es_premium, 'account hold removes access';
+  select * into r from public.app_store_upsert_subscription(null, null, 'google_play', 'produccion', 'st-premium', 'premium/monthly',
+                                                            'gp-sub-1', 'activa', null, now() + interval '30 days', null, null, 400, null);
+  assert r.es_premium, 'recovery restores access';
+  select * into r from public.app_store_upsert_subscription(null, null, 'google_play', 'produccion', 'st-premium', 'premium/monthly',
+                                                            'gp-sub-1', 'cancelada', null, now() + interval '10 days', null, 'usuario_cancelo', 500, null);
+  assert r.es_premium and r.estado = 'cancelada', 'cancelled keeps the paid time';
+  perform pg_temp.expect_e(format($q$select * from public.app_store_upsert_subscription(%L, %L, 'google_play', 'produccion', 'st-premium', 'x', 'gp-sub-1', 'activa', null, null, null, null, 600, null)$q$,
+                                  pg_temp.u(6), pg_temp.tok(pg_temp.u(6))), 'STORE_PURCHASE_BOUND_TO_OTHER');
+  select * into r from public.app_store_upsert_subscription(null, null, 'google_play', 'produccion', 'st-premium', 'premium/monthly',
+                                                            'gp-sub-1', 'caducada', null, now() + interval '10 days', null, 'reembolso', 700, null);
+  assert not r.es_premium, 'revoked/refunded: no access at once even with paid time left';
+  select * into r from public.app_store_upsert_subscription(pg_temp.u(5), pg_temp.tok(pg_temp.u(5)), 'google_play', 'produccion', 'st-premium', 'premium/annual',
+                                                            'gp-sub-2', 'activa', now(), now() + interval '365 days', null, null, 800, 'gp-sub-1');
+  assert r.outcome = 'CREATED' and r.es_premium, 'resubscribe with a linked token';
+  assert (select estado from public.suscripciones where identificador_externo = 'gp-sub-1') = 'caducada', 'linked token closed';
+  select * into r from public.app_store_upsert_subscription(null, null, 'google_play', 'produccion', 'st-premium', 'premium/annual',
+                                                            'gp-sub-2', 'caducada', null, now() - interval '1 minute', null, 'expiro', 900, null);
+  assert not r.es_premium, 'expired: no access';
+  perform pg_temp.expect_e($q$select * from public.app_store_upsert_subscription(null, null, 'google_play', 'produccion', 'st-premium', 'x', 'gp-sub-unknown', 'activa', null, null, null, null, 1, null)$q$, 'STORE_ACCOUNT_MISMATCH');
+  perform pg_temp.expect_e($q$select * from public.app_store_upsert_subscription(null, null, 'google_play', 'produccion', 'st-pack-100', 'x', 'gp-sub-1', 'activa', null, null, null, null, 1000, null)$q$, 'STORE_PRODUCT_UNKNOWN');
+  perform pg_temp.expect_e($q$select * from public.app_store_upsert_subscription(null, null, 'google_play', 'produccion', 'st-premium', 'x', 'gp-sub-1', 'gratis', null, null, null, null, 1000, null)$q$, 'STORE_REQUEST_INVALID');
+
+  -- ---- 8. inbox: idempotent put, payload fingerprint compared, processed rows never go back to pending, pending list
+  select * into r from public.app_store_inbox_put('app_store', 'n-1', 'COMPRA', 'as-tx-9', 'sandbox', pg_temp.h('x'), '{"k":1}');
+  assert r.nuevo and r.estado = 'pendiente', 'first put is new';
+  select * into r from public.app_store_inbox_put('app_store', 'n-1', 'COMPRA', 'as-tx-9', 'sandbox', pg_temp.h('x'), '{"k":1}');
+  assert not r.nuevo and r.misma_huella, 'same notification: not new, same fingerprint';
+  select * into r from public.app_store_inbox_put('app_store', 'n-1', 'COMPRA', 'as-tx-9', 'sandbox', pg_temp.h('y'), '{"k":2}');
+  assert not r.nuevo and not r.misma_huella, 'same id, other body: detected';
+  assert exists (select 1 from public.app_store_inbox_pending(10) where evento_id = 'n-1'), 'pending row listed';
+  perform public.app_store_inbox_mark('app_store', 'n-1', 'pendiente', null, 'REFUNDS_DISABLED');
+  assert (select intentos from public.tienda_bandeja where evento_id = 'n-1') = 1 and (select ultimo_error from public.tienda_bandeja where evento_id = 'n-1') = 'REFUNDS_DISABLED', 'deferral recorded';
+  perform public.app_store_inbox_mark('app_store', 'n-1', 'procesado', 'CREDITED', null);
+  perform public.app_store_inbox_mark('app_store', 'n-1', 'pendiente', null, 'late failure');
+  assert (select estado from public.tienda_bandeja where evento_id = 'n-1') = 'procesado', 'processed stays processed';
+  assert not exists (select 1 from public.app_store_inbox_pending(10) where evento_id = 'n-1'), 'processed row not listed';
+
+  -- ---- 9. Play finish bookkeeping: a credited google pack is listed until marked; apple and uncredited never listed; entitlements read
+  select * into r from pg_temp.buy(pg_temp.u(7), 'gp-token-7');
+  assert exists (select 1 from public.app_store_pending_finalize(50) where clave = 'gp-token-7' and tipo = 'compra' and tienda_producto_id = 'ot_100'), 'unconsumed pack listed';
+  assert public.app_store_mark_finalized('google_play', 'compra', 'gp-token-7'), 'mark consumed';
+  assert not exists (select 1 from public.app_store_pending_finalize(50) where clave = 'gp-token-7'), 'consumed pack not listed';
+  assert not exists (select 1 from public.app_store_pending_finalize(50) where clave in ('as-tx-1', 'gp-token-2')), 'apple and uncredited never listed';
+  assert (select saldo from public.app_store_entitlements(pg_temp.u(7))) = 100 and not (select es_premium from public.app_store_entitlements(pg_temp.u(7))), 'entitlements read';
+
+  -- ---- 10. account deletion then void: the order goes with the account (FK cascade, owner D6), the void is an orphan, nothing fails
+  select * into r from pg_temp.buy(pg_temp.u(8), 'gp-token-8');
+  delete from auth.users where id = pg_temp.u(8);
+  perform public.app_store_inbox_put('google_play', 'rtdn-8', 'REEMBOLSO', 'gp-token-8', 'produccion', pg_temp.h('c'), '{}');
+  assert (select outcome from public.app_store_refund_purchase('google_play', 'rtdn-8', 'gp-token-8')) = 'REFUND_ORPHAN_HELD', 'void after deletion: orphan, held';
+
+  -- ---- 11. ECO-11: service_role cannot write orders or subscriptions directly (the SECURITY DEFINER RPCs above can)
+  assert not has_table_privilege('service_role', 'public.compras_usuario', 'insert') and not has_table_privilege('service_role', 'public.compras_usuario', 'update')
+     and not has_table_privilege('service_role', 'public.suscripciones', 'insert') and not has_table_privilege('service_role', 'public.suscripciones', 'delete')
+     and has_table_privilege('service_role', 'public.suscripciones', 'select'), 'ECO-11 grants';
+  assert (select count(*) from public.app_wallet_reconcile(null)) = 0, 'global reconcile clean';
+  raise notice 'OK store payments';
+end $$;
+rollback;

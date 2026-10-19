@@ -22,3 +22,4 @@
 20261022102200_v1_auth_code_binding
 20261022102300_v1_control_rpcs
 20261022102400_v1_refund_order_fix
+20261022102600_v1_store_payments
