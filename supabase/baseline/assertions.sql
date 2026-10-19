@@ -175,17 +175,17 @@ begin
   raise notice 'OK anon/authenticated boundaries';
 end $$;
 
--- authenticated client: server-owned profile columns closed, own editable columns still open
+-- authenticated client: no direct profile write at all since 20261022102700 (privilege check first, before the Slice 1 guard triggers, which stay as a second layer)
 select set_config('request.jwt.claim.sub','a0000000-0000-0000-0000-00000000000f', true);
 select set_config('request.jwt.claims','{"sub":"a0000000-0000-0000-0000-00000000000f","role":"authenticated"}', true);
 set local role authenticated;
 do $$
 begin
-  perform pg_temp.expect($q$update public.perfiles_usuario set onboarding_completado = true where usuario_id = 'a0000000-0000-0000-0000-00000000000f'$q$, '42501', 'PROFILE_FIELD_NOT_CLIENT_WRITABLE');
-  perform pg_temp.expect($q$update public.perfiles_usuario set username = 'hacker' where usuario_id = 'a0000000-0000-0000-0000-00000000000f'$q$, '42501', 'PROFILE_FIELD_NOT_CLIENT_WRITABLE');
-  perform pg_temp.expect($q$update public.perfiles_usuario set especialidad_principal_id = 'e1000000-0000-0000-0000-000000000001' where usuario_id = 'a0000000-0000-0000-0000-00000000000f'$q$, '42501', 'PROFILE_FIELD_NOT_CLIENT_WRITABLE');
-  perform pg_temp.expect($q$update public.perfiles_usuario set estado_cuenta = 'bloqueada' where usuario_id = 'a0000000-0000-0000-0000-00000000000f'$q$, '42501', 'ESTADO_CUENTA_NOT_CLIENT_WRITABLE');
-  perform pg_temp.expect($q$update public.perfiles_usuario set nombre_mostrar = 'Fefe', avatar_url = null where usuario_id = 'a0000000-0000-0000-0000-00000000000f'$q$, null);
+  perform pg_temp.expect($q$update public.perfiles_usuario set onboarding_completado = true where usuario_id = 'a0000000-0000-0000-0000-00000000000f'$q$, '42501', 'permission denied for table perfiles_usuario');
+  perform pg_temp.expect($q$update public.perfiles_usuario set username = 'hacker' where usuario_id = 'a0000000-0000-0000-0000-00000000000f'$q$, '42501', 'permission denied for table perfiles_usuario');
+  perform pg_temp.expect($q$update public.perfiles_usuario set especialidad_principal_id = 'e1000000-0000-0000-0000-000000000001' where usuario_id = 'a0000000-0000-0000-0000-00000000000f'$q$, '42501', 'permission denied for table perfiles_usuario');
+  perform pg_temp.expect($q$update public.perfiles_usuario set estado_cuenta = 'bloqueada' where usuario_id = 'a0000000-0000-0000-0000-00000000000f'$q$, '42501', 'permission denied for table perfiles_usuario');
+  perform pg_temp.expect($q$update public.perfiles_usuario set nombre_mostrar = 'Fefe', avatar_url = null where usuario_id = 'a0000000-0000-0000-0000-00000000000f'$q$, '42501', 'permission denied for table perfiles_usuario');
   perform pg_temp.expect($q$select count(*) from public.documentos_legales$q$, null);
 end $$;
 reset role;
@@ -3611,4 +3611,102 @@ begin
   perform pg_temp.expect_e($q$select public.auth_code_binding_begin('signup', 'not-hex', repeat('A', 43))$q$, 'new row for relation "auth_code_bindings" violates check constraint "auth_code_bindings_email_ref_check"');
   raise notice 'OK SEC-V1-08 auth binding hardening';
 end $$;
+rollback;
+
+-- 20261022102700: no direct client write (PostgREST) on the Bot-owned user tables; an admin JWT is `authenticated` and cannot write other users' rows either
+begin;
+create function pg_temp.expect(p_sql text, p_state text, p_msg text default null) returns void language plpgsql as $$
+declare v_state text; v_msg text;
+begin
+  begin
+    execute p_sql;
+  exception when others then
+    get stacked diagnostics v_state = returned_sqlstate, v_msg = message_text;
+  end;
+  if v_state is distinct from p_state or (p_msg is not null and v_msg is distinct from p_msg) then
+    raise exception 'ASSERT FAILED: % -> expected %/% got %/%', p_sql, p_state, p_msg, v_state, v_msg;
+  end if;
+end $$;
+create function pg_temp.u(n int) returns uuid language sql as $$ select ('a0000000-0000-0000-0000-' || lpad((800 + n)::text, 12, '0'))::uuid $$;
+insert into auth.users (id, email, aud, role) select pg_temp.u(n), 'utw' || n || '@test.local', 'authenticated', 'authenticated' from generate_series(1, 2) n;
+insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta)
+  select pg_temp.u(n), 'utw' || n, 'utw_user_' || n, true, 'activa' from generate_series(1, 2) n
+  on conflict (usuario_id) do update set username = excluded.username;
+insert into public.roles_app (codigo, nombre) select 'admin', 'Admin' where not exists (select 1 from public.roles_app where codigo = 'admin');
+insert into public.roles_usuario (usuario_id, rol_id) select pg_temp.u(1), id from public.roles_app where codigo = 'admin';
+insert into public.sesiones_estudio (usuario_id) values (pg_temp.u(2));
+do $$
+declare t text; r text; p text;
+begin
+  -- privilege matrix: writes closed for anon/authenticated, service_role keeps them, the client read grant is untouched
+  foreach t in array array['public.perfiles_usuario', 'public.tokens_dispositivo', 'public.sesiones_estudio', 'public.configuraciones_usuario', 'public.preguntas_favoritas_usuario',
+                           'public.cola_repaso_usuario', 'public.recomendaciones_usuario', 'public.abandonos_examen', 'public.uso_recursos_pregunta', 'public.registros_reto_diario'] loop
+    foreach r in array array['anon', 'authenticated'] loop
+      foreach p in array array['insert', 'update', 'delete'] loop
+        assert not has_table_privilege(r, t, p), format('%s can %s %s', r, p, t);
+      end loop;
+    end loop;
+    foreach p in array array['insert', 'update', 'delete', 'select'] loop
+      assert has_table_privilege('service_role', t, p), format('service_role lost %s on %s', p, t);
+    end loop;
+    if t <> 'public.registros_reto_diario' then
+      assert has_table_privilege('authenticated', t, 'select'), format('authenticated read of %s changed (read policies belong to Control)', t);
+    end if;
+  end loop;
+end $$;
+-- ATTACK (a): an ADMIN session pushes its device token onto the victim, rewrites the victim's profile / sessions
+select set_config('request.jwt.claim.sub', 'a0000000-0000-0000-0000-000000000801', true);
+select set_config('request.jwt.claims', '{"sub":"a0000000-0000-0000-0000-000000000801","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+begin
+  assert public.es_admin(), 'fixture: the session is an admin';
+  perform pg_temp.expect($q$insert into public.tokens_dispositivo (usuario_id, plataforma, token_dispositivo) values ('a0000000-0000-0000-0000-000000000802', 'android', 'stolen')$q$, '42501', 'permission denied for table tokens_dispositivo');
+  perform pg_temp.expect($q$update public.tokens_dispositivo set usuario_id = 'a0000000-0000-0000-0000-000000000801'$q$, '42501', 'permission denied for table tokens_dispositivo');
+  perform pg_temp.expect($q$update public.perfiles_usuario set nombre_mostrar = 'pwned' where usuario_id = 'a0000000-0000-0000-0000-000000000802'$q$, '42501', 'permission denied for table perfiles_usuario');
+  perform pg_temp.expect($q$delete from public.sesiones_estudio where usuario_id = 'a0000000-0000-0000-0000-000000000802'$q$, '42501', 'permission denied for table sesiones_estudio');
+  perform pg_temp.expect($q$select count(*) from public.sesiones_estudio$q$, null);  -- reads unchanged
+end $$;
+reset role;
+-- ATTACK (b): a user writes his own rows bypassing Ktor (ranking opt-in without username, forged session tickets, review queue, settings, favourites, telemetry)
+select set_config('request.jwt.claim.sub', 'a0000000-0000-0000-0000-000000000802', true);
+select set_config('request.jwt.claims', '{"sub":"a0000000-0000-0000-0000-000000000802","role":"authenticated"}', true);
+set local role authenticated;
+do $$
+begin
+  assert not public.es_admin(), 'fixture: a plain user';
+  perform pg_temp.expect($q$update public.perfiles_usuario set ranking_publico = true where usuario_id = 'a0000000-0000-0000-0000-000000000802'$q$, '42501', 'permission denied for table perfiles_usuario');
+  perform pg_temp.expect($q$insert into public.perfiles_usuario (usuario_id) values ('a0000000-0000-0000-0000-000000000802')$q$, '42501', 'permission denied for table perfiles_usuario');
+  perform pg_temp.expect($q$update public.sesiones_estudio set opositickets_ganados = 999 where usuario_id = 'a0000000-0000-0000-0000-000000000802'$q$, '42501', 'permission denied for table sesiones_estudio');
+  perform pg_temp.expect($q$insert into public.sesiones_estudio (usuario_id, opositickets_ganados) values ('a0000000-0000-0000-0000-000000000802', 999)$q$, '42501', 'permission denied for table sesiones_estudio');
+  perform pg_temp.expect($q$insert into public.configuraciones_usuario (usuario_id) values ('a0000000-0000-0000-0000-000000000802')$q$, '42501', 'permission denied for table configuraciones_usuario');
+  perform pg_temp.expect($q$delete from public.preguntas_favoritas_usuario$q$, '42501', 'permission denied for table preguntas_favoritas_usuario');
+  perform pg_temp.expect($q$update public.cola_repaso_usuario set estado = 'completada'$q$, '42501', 'permission denied for table cola_repaso_usuario');
+  perform pg_temp.expect($q$update public.recomendaciones_usuario set estado = 'aceptada'$q$, '42501', 'permission denied for table recomendaciones_usuario');
+  perform pg_temp.expect($q$insert into public.abandonos_examen (usuario_id) values ('a0000000-0000-0000-0000-000000000802')$q$, '42501', 'permission denied for table abandonos_examen');
+  perform pg_temp.expect($q$delete from public.uso_recursos_pregunta$q$, '42501', 'permission denied for table uso_recursos_pregunta');
+  perform pg_temp.expect($q$insert into public.registros_reto_diario (usuario_id) values ('a0000000-0000-0000-0000-000000000802')$q$, '42501', 'permission denied for table registros_reto_diario');
+  perform pg_temp.expect($q$select count(*) from public.perfiles_usuario$q$, null);
+end $$;
+reset role;
+-- the backend (service_role) still writes; the SECURITY DEFINER RPCs run as their owner and are unaffected
+set local role service_role;
+do $$
+begin
+  insert into public.tokens_dispositivo (usuario_id, plataforma, token_dispositivo) values ('a0000000-0000-0000-0000-000000000802', 'ios', 'tok-802');
+  update public.perfiles_usuario set nombre_mostrar = 'srv' where usuario_id = 'a0000000-0000-0000-0000-000000000802';
+  delete from public.sesiones_estudio where usuario_id = 'a0000000-0000-0000-0000-000000000802';
+  assert (select nombre_mostrar from public.perfiles_usuario where usuario_id = 'a0000000-0000-0000-0000-000000000802') = 'srv', 'service_role update';
+end $$;
+reset role;
+-- second layer: if a write grant ever came back, the Slice 1 guard trigger still refuses the server-owned profile columns
+grant update on table public.perfiles_usuario to authenticated;
+set local role authenticated;
+do $$
+begin
+  perform pg_temp.expect($q$update public.perfiles_usuario set username = 'hacker' where usuario_id = 'a0000000-0000-0000-0000-000000000802'$q$, '42501', 'PROFILE_FIELD_NOT_CLIENT_WRITABLE');
+  perform pg_temp.expect($q$update public.perfiles_usuario set estado_cuenta = 'bloqueada' where usuario_id = 'a0000000-0000-0000-0000-000000000802'$q$, '42501', 'ESTADO_CUENTA_NOT_CLIENT_WRITABLE');
+  raise notice 'OK V1 P3 user tables client write revoke';
+end $$;
+reset role;
 rollback;
