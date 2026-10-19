@@ -1,6 +1,6 @@
 # Store payments contract (Google Play + App Store), V1
 
-Status: CONTRACT (E1, 2026-10-19). Implementation follows on this branch, OFF by default (`PAYMENTS_STORE_GOOGLE_PLAY_ENABLED` / `PAYMENTS_STORE_APP_STORE_ENABLED`).
+Status: IMPLEMENTED (E1, 2026-10-19), OFF by default (`PAYMENTS_STORE_GOOGLE_PLAY_ENABLED` / `PAYMENTS_STORE_APP_STORE_ENABLED`). Code: `StorePayments.kt`, `StoreGooglePlay.kt`, `StoreAppStore.kt`, `StorePaymentRoutes.kt`.
 Owner: OposiBot (E1). OposiControl audits it (checklist: Control's `docs/audit-v1/STORE_PAYMENTS_AUDIT_REQUIREMENTS.md`, PAY-R1..R6, D1..D10) and
 owns the admin side (`admin_payment_order_resolve`, orders/refunds UI, prices). Client side: OposiBot `docs/payments/STORE_BILLING_CLIENT.md` (E4).
 Sources opened 2026-10-19 (listed at the end). Migration: `supabase/migrations/20261022102600_v1_store_payments.sql`.
@@ -31,8 +31,8 @@ recomputed from a leaked user id and matches E4's contract ("opaque UUID issued 
 | Id | Route | Notes |
 |---|---|---|
 | S-01 | `GET /api/v1/app/store/account-token` | `{accountToken}` |
-| S-02 | `GET /api/v1/app/store/products` | `{items:[{storeProductId, platform, kind, productCode}]}` from config; only platforms that are enabled |
-| S-03 | `POST /api/v1/app/store/purchases/verify` | `Idempotency-Key` required. Body `{platform, storeProductId, kind, token}` (`token` = Play `purchaseToken` or StoreKit 2 `jwsRepresentation`, max 32 KiB, PAY-R2). `200 {result: GRANTED|PENDING, kind, productCode, balance, premium}` |
+| S-02 | `GET /api/v1/app/store/products` | `{items:[{storeProductId, platform, kind, productCode, basePlanId?}]}` from config; only platforms that are enabled |
+| S-03 | `POST /api/v1/app/store/purchases/verify` | `Idempotency-Key` required. Body `{platform, storeProductId, kind, token, transactionId?, accountToken?}` (`token` = Play `purchaseToken` or StoreKit 2 `jwsRepresentation`, max 32 KiB, PAY-R2). `200 {result: GRANTED|PENDING, kind, productCode, balance, premium, premiumUntil?}` |
 | S-04 | `POST /api/v1/app/store/purchases/restore` | Body `{platform, purchases:[{storeProductId, kind, token}]}` (1..20). `200 {items:[{storeProductId, result, code?}]}`; each item = S-03 without its own key |
 | S-05 | `GET /api/v1/app/store/entitlements` | `{balance, premium:{active, state, productCode?, provider?, until?}}` |
 
@@ -116,7 +116,7 @@ user -> 409 (**D5**). Subscriptions in V1 at all: **D8**.
 - Acknowledge/consume only after the DB credit committed; never a PENDING purchase. On failure the row keeps `tienda_finalizada_en = null` and
   `app_store_pending_finalize` returns it to the job (Play refunds after 3 days without acknowledgement).
 - Retries `pendiente` inbox rows (exponential: attempts are counted; Control sees `intentos` and `ultimo_error`).
-- Daily Voided Purchases poll (`type=1`, 30-day window, quota 6000/day): each void is put in the inbox as event `void:<orderId or token hash>`
+- Daily Voided Purchases poll (`type=0`, one-time products only; last 3 days of the 30-day window; quota 6000/day): each void goes to the inbox as event `void:<orderId or token hash>`; subscription voids come from RTDN (`SUBSCRIPTION_REVOKED` + `voidedPurchaseNotification`)
   and processed like an RTDN void.
 
 ## 6. Environments and sandbox (D4)
@@ -174,3 +174,20 @@ History / consumption, later); product ids, base plans and prices per storefront
 Still NV (not confirmed in an opened page): exact Apple Transaction History / Subscription Status / Refund History paths; whether `appAccountToken` is
 kept on renewals (the server falls back to the subscription row owner); Google access semantics during account hold (we deny); whether
 `purchases.products` v1 will be deprecated (productsv2 is used for reads, v1 only for `consume`); separate ASSN URLs per environment.
+
+## Alignment with E4 (`STORE_BILLING_CLIENT.md`, OposiBot e221c6e)
+
+Same: opaque server-issued UUID account token (S-01); catalogue with `storeProductId`, `kind`, server `code`, `basePlanId` (S-02); one idempotent
+verify with `Idempotency-Key` and `{platform, storeProductId, kind, token, transactionId?, accountToken?}`; each store token credited at most once;
+`PENDING` = no grant, no finish; 5xx = retry, 401 = session lost; the server may consume/acknowledge first (client sees `ITEM_NOT_OWNED`).
+Differences: (1) rejections are canonical 4xx envelopes (`STORE_*` codes, table above), not `REJECTED{code}` in a 200: the client maps 409/422 to
+REJECTED; (2) `GRANTED` returns `balance` always and `premiumUntil` when premium is active, plus `premium` and `productCode`; (3) `transactionId` is
+informative (the key comes from the verified proof) and `accountToken`, when sent, must equal the one the store signed; (4) restore is also available as
+one batch call (S-04, <= 20 items), optional for the client; (5) a purchase held for review answers 409 `STORE_PURCHASE_IN_REVIEW` (client: never finish).
+
+## Pending outside this branch
+
+- Edge routing: `ops/caddy` does not yet send `/api/v1/webhooks/store/*` to the bot pool (deny by default), so W-02/W-03 are unreachable in
+  production until infra adds that path (not changed here).
+- OpenAPI amendment for S-01..S-05 / W-02 / W-03 (contract-first files under `openapi/`), and Notification History / Consumption API calls (need the
+  App Store API key, D7/D9).

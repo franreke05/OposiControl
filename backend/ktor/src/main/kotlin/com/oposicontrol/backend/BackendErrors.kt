@@ -1074,6 +1074,14 @@ enum class CanonicalErrorCode(val status: HttpStatusCode, val defaultMessage: St
     ORDER_PENDING_LIMIT(HttpStatusCode.Conflict, "Ya tienes varios pedidos abiertos. Termina o espera a que caduquen antes de crear otro."),
     PAYMENT_RECEIPT_INVALID(HttpStatusCode.UnprocessableEntity, "El justificante de pago no es valido para este pedido."),
     WEBHOOK_SIGNATURE_INVALID(HttpStatusCode.Unauthorized, "La firma del aviso de pago no es valida."),
+
+    // V1 pagos de tienda (Google Play / App Store), docs/payments/STORE_PAYMENTS_CONTRACT.md. Ninguno escribe nada.
+    STORE_PRODUCT_UNKNOWN(HttpStatusCode.UnprocessableEntity, "Este producto de la tienda no esta a la venta en OposiBot."),
+    STORE_PURCHASE_INVALID(HttpStatusCode.UnprocessableEntity, "La tienda no confirma esta compra."),
+    STORE_ACCOUNT_MISMATCH(HttpStatusCode.UnprocessableEntity, "Esta compra no se hizo con tu cuenta."),
+    STORE_PURCHASE_BOUND_TO_OTHER(HttpStatusCode.Conflict, "Esta compra ya esta asociada a otra cuenta."),
+    STORE_PURCHASE_IN_REVIEW(HttpStatusCode.Conflict, "Esta compra esta en revision. Te avisaremos cuando se resuelva."),
+    STORE_SANDBOX_REJECTED(HttpStatusCode.UnprocessableEntity, "Las compras de prueba no estan admitidas."),
     ;
 
     fun exception(

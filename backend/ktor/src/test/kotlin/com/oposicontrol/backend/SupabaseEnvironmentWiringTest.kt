@@ -123,7 +123,8 @@ class SupabaseEnvironmentWiringTest {
     fun noProductionSourceSignsSupabaseRequestsByHand() {
         val handBearer = Regex(""""Bearer \$""")
         val handApiKey = Regex(""""apikey"\s*,""")
-        val allowed = setOf("SupabaseRequestAuthPolicy.kt", "OposiBotsAuthGateway.kt")
+        // StoreGooglePlay.kt firma con un token OAuth de la cuenta de servicio de GOOGLE (Play Developer API), no con una clave de Supabase.
+        val allowed = setOf("SupabaseRequestAuthPolicy.kt", "OposiBotsAuthGateway.kt", "StoreGooglePlay.kt")
 
         val offenders = mainSources()
             .filterKeys { it !in allowed }

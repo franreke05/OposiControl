@@ -159,6 +159,9 @@ GET /api/v1/app/ranking
 GET /api/v1/app/reto-diario
 GET /api/v1/app/retos/hoy
 GET /api/v1/app/retos/{}/preguntas/{}/recursos/{}
+GET /api/v1/app/store/account-token
+GET /api/v1/app/store/entitlements
+GET /api/v1/app/store/products
 GET /api/v1/app/wallet
 GET /api/v1/app/wallet/movimientos
 GET /api/v1/app/wallet/paquetes
@@ -274,8 +277,11 @@ POST /api/v1/app/oposired/reportes
 POST /api/v1/app/payments/orders
 POST /api/v1/app/payments/orders/{}/verify
 POST /api/v1/app/retos/{}/reclamar
+POST /api/v1/app/store/purchases/restore
+POST /api/v1/app/store/purchases/verify
 POST /api/v1/app/wallet/canjes
 POST /api/v1/webhooks/payments/{}
+POST /api/v1/webhooks/store/{}
 POST /content/comunidades
 POST /content/especialidades
 POST /content/etiquetas

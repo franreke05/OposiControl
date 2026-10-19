@@ -143,6 +143,8 @@ internal fun scrubBreadcrumb(breadcrumb: io.sentry.Breadcrumb): io.sentry.Breadc
 fun main() {
     // V1 economia: el proveedor de pago sandbox no puede existir fuera de local/test. Se comprueba ANTES de nada: sin enlazar el puerto.
     enforceSandboxProviderGuard()
+    // V1 pagos de tienda: una plataforma activada sin credenciales completas no arranca (codigo 78), antes de enlazar el puerto.
+    enforceStorePaymentsConfig()
     initializeSentry()
 
     val port = System.getenv("PORT")?.toIntOrNull() ?: 8080
@@ -576,6 +578,12 @@ fun Application.module() {
     val catalogRuntime = canonicalIdentityResolver?.let { CatalogRuntime.fromEnvironment(it, authRuntime?.rateLimiter) }
     // SLICE 7: lecturas de cartera (D6-01, D6-02), solo lectura, misma credencial de servicio.
     val walletRuntime = canonicalIdentityResolver?.let { WalletRuntime.fromEnvironment(it, authRuntime?.rateLimiter) }
+    // V1 pagos de tienda (Google Play / App Store): solo si alguna plataforma esta activada; su trabajo de reconciliacion vive con el runtime.
+    val storePaymentsRuntime = canonicalIdentityResolver?.let { StorePaymentsRuntime.fromEnvironment(it, authRuntime, log = { message -> log.warn(message) }) }
+    storePaymentsRuntime?.let { rt ->
+        val job = StorePaymentsJob.start(this, rt, StorePaymentsSettings.fromEnvironment().jobSeconds, { message -> log.warn(message) })
+        monitor.subscribe(ApplicationStopped) { job?.cancel() }
+    }
     // FA15: lecturas de consumidor (D7-05, D5-01, D5-16), solo lectura, misma credencial de servicio.
     val appReadsRuntime = canonicalIdentityResolver?.let { AppReadsRuntime.fromEnvironment(it) }
     // FA11 (D4-01..D4-11): noticias canonicas. UN servicio compartido con `/content/noticias*`; la auditoria usa el actor del JWT.
@@ -619,6 +627,7 @@ fun Application.module() {
         accessRequestGateway = SupabaseAdminAccessRequestGateway.fromEnvironment(json),
         // SLICE 3: mismo resolver y MISMA politica de acceso (el servicio de catalogo) que SLICE 2.
         economyRuntime = canonicalIdentityResolver?.let { EconomyRuntime.fromEnvironment(it, authRuntime) },
+        storePaymentsRuntime = storePaymentsRuntime,
         savedItemsRuntime = canonicalIdentityResolver?.let { SavedItemsRuntime.fromEnvironment(it, authRuntime) },
         planQuotaRuntime = canonicalIdentityResolver?.let { PlanQuotaRuntime.fromEnvironment(it, authRuntime) },
         challengeRuntime = canonicalIdentityResolver?.let { ChallengeRuntime.fromEnvironment(it, authRuntime) },
@@ -692,6 +701,8 @@ internal class CombinedRoutingDeps(
     internal val attemptRuntime: AttemptRuntime? = null,
     /** V1 economia: canje, paquetes, pedidos de pago y avisos del proveedor. */
     internal val economyRuntime: EconomyRuntime? = null,
+    /** V1 pagos de tienda (S-01..S-05, W-02, W-03). `null` = ninguna plataforma activada: las rutas existen y fallan cerrado (500). */
+    internal val storePaymentsRuntime: StorePaymentsRuntime? = null,
     /** V1 Guardar + OposiTeca (D4-20, D4-21, D4-24, D4-26). `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
     internal val savedItemsRuntime: SavedItemsRuntime? = null,
     /** V1 Access v2 (D7-31, D7-32). `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
@@ -769,6 +780,8 @@ internal fun Route.installBotRoutes(deps: CombinedRoutingDeps) = with(deps) {
     attemptRoutes(attemptRuntime)
     // V1 economia (OposiTickets): canje D6-03, paquetes D6-11, pedidos D6-12..D6-14 y aviso del proveedor.
     economyRoutes(economyRuntime)
+    // V1 pagos de tienda: verificacion de compras de Google Play / App Store y sus avisos.
+    storePaymentRoutes(storePaymentsRuntime)
     // V1 Guardar + OposiTeca: preguntas guardadas del usuario (D4-20, D4-21, D4-24, D4-26).
     savedItemsRoutes(savedItemsRuntime)
     // V1 Access v2: cupo de inmersivos del plan (D7-31, D7-32).

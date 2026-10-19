@@ -336,3 +336,9 @@ POST	/api/v1/app/oposired/imagenes	BOT	user-jwt	Forum: start an image upload (D5
 PUT	/api/v1/app/oposired/imagenes/{}/contenido	BOT	user-jwt	Forum: upload the image bytes, verified and re-encoded (D5-31)	OposiBot
 GET	/api/v1/app/oposired/imagenes/{}	BOT	user-jwt	Forum: state of an own upload (D5-32)	OposiBot
 GET	/api/v1/app/oposired/publicaciones/{}/imagen	BOT	user-jwt	Forum: short-lived signed URL of a post image (D5-33)	OposiBot
+GET	/api/v1/app/store/account-token	BOT	user-jwt	Store payments: opaque account token for obfuscatedAccountId / appAccountToken (S-01)	OposiBot
+GET	/api/v1/app/store/entitlements	BOT	user-jwt	Store payments: balance and premium state (S-05)	OposiBot
+GET	/api/v1/app/store/products	BOT	user-jwt	Store payments: store product catalogue from config (S-02)	OposiBot
+POST	/api/v1/app/store/purchases/restore	BOT	user-jwt	Store payments: restore purchases (S-04)	OposiBot
+POST	/api/v1/app/store/purchases/verify	BOT	user-jwt	Store payments: verify a Google Play / App Store purchase (S-03)	OposiBot
+POST	/api/v1/webhooks/store/{}	BOT	none	Store notifications (W-02 Google RTDN OIDC, W-03 App Store ASSN V2 JWS); authenticated by the store, not JWT	none

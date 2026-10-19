@@ -1,8 +1,9 @@
-# max: 167
+# max: 173
 # REVIEWED EXCEPTIONS REGISTER: routes served by Ktor that the frozen openapi/ does not declare. NOT a spec: no semantics are invented here.
 # The list can only shrink: a row that is no longer routed or is now documented fails RouteInventoryTest; a new undocumented route fails until it is
 # reviewed and added here (and then `# max:` goes up on purpose). Legacy routes are enrolled, never deleted (no published-client telemetry yet).
-# Columns: METHOD<TAB>path<TAB>class<TAB>ref<TAB>consumer<TAB>evidence. class: LEGACY_PUBLISHED_CLIENT_TELEMETRY_PENDING | ADMIN_CONTRACT_GAP | INFRA | DEV_ONLY.
+# Columns: METHOD<TAB>path<TAB>class<TAB>ref<TAB>consumer<TAB>evidence. class: LEGACY_PUBLISHED_CLIENT_TELEMETRY_PENDING | ADMIN_CONTRACT_GAP | INFRA | DEV_ONLY
+#   | CONTRACT_AMENDMENT_PENDING (new V1 route specified in a reviewed docs/ contract, waiting for its OpenAPI freeze amendment; leaves when documented).
 # ref: LegacyEndpoint id (LegacyRoutes.kt) or inventory EP id, with -> successor contract when one exists. consumer: OC | OB | BOTH | NONE.
 # Seeded mechanically from the production route matrix audit (PRODUCTION_ROUTE_MATRIX.md, 2026-10-01); see docs/backend/ROUTE_MAP.md.
 GET	/admin/audit	ADMIN_CONTRACT_GAP	EP-022 -> D8-01	NONE	no live caller in OC/OB (route matrix audit 2026-10-01); no legacy counter, telemetry pending
@@ -172,3 +173,9 @@ GET	/v1/examenes	LEGACY_PUBLISHED_CLIENT_TELEMETRY_PENDING	EP-126 -> D2-15	OC	ca
 GET	/v1/examenes/{}	LEGACY_PUBLISHED_CLIENT_TELEMETRY_PENDING	EP-127 -> D2-16	NONE	counter legacy_route_requests_total{endpoint="EP-127"}; no live caller in OC/OB (route matrix audit 2026-10-01); retire only after zero telemetry
 GET	/v1/examenes/{}/preguntas	LEGACY_PUBLISHED_CLIENT_TELEMETRY_PENDING	EP-128 -> D2-08	NONE	counter legacy_route_requests_total{endpoint="EP-128"}; no live caller in OC/OB (only a dead BackendRoutes constant; route matrix audit 2026-10-01); retire only after zero telemetry
 POST	/v1/auth/admin-access-requests	ADMIN_CONTRACT_GAP	ACCESS-REQ-01	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorAccessRequestsRepositoryImpl.kt (submitRequest); public, rate limited, served by the bot pool under the already forwarded /v1/auth/* prefix; not part of the frozen consumer auth contract
+GET	/api/v1/app/store/account-token	CONTRACT_AMENDMENT_PENDING	S-01 (docs/payments/STORE_PAYMENTS_CONTRACT.md)	OB	E1 P3 store payments 2026-10-19; client E4 STORE_BILLING_CLIENT.md (OposiBot e221c6e); OpenAPI freeze amendment pending
+GET	/api/v1/app/store/entitlements	CONTRACT_AMENDMENT_PENDING	S-05 (docs/payments/STORE_PAYMENTS_CONTRACT.md)	OB	E1 P3 store payments 2026-10-19; OpenAPI freeze amendment pending
+GET	/api/v1/app/store/products	CONTRACT_AMENDMENT_PENDING	S-02 (docs/payments/STORE_PAYMENTS_CONTRACT.md)	OB	E1 P3 store payments 2026-10-19; OpenAPI freeze amendment pending
+POST	/api/v1/app/store/purchases/restore	CONTRACT_AMENDMENT_PENDING	S-04 (docs/payments/STORE_PAYMENTS_CONTRACT.md)	OB	E1 P3 store payments 2026-10-19; OpenAPI freeze amendment pending
+POST	/api/v1/app/store/purchases/verify	CONTRACT_AMENDMENT_PENDING	S-03 (docs/payments/STORE_PAYMENTS_CONTRACT.md)	OB	E1 P3 store payments 2026-10-19; client E4 STORE_BILLING_CLIENT.md; OpenAPI freeze amendment pending
+POST	/api/v1/webhooks/store/{}	CONTRACT_AMENDMENT_PENDING	W-02/W-03 (docs/payments/STORE_PAYMENTS_CONTRACT.md)	NONE	called by Google Pub/Sub and App Store servers, not by a client; OpenAPI freeze amendment pending

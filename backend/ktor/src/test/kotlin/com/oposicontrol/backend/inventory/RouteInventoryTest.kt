@@ -39,7 +39,8 @@ class RouteInventoryTest {
         val key get() = "$method $path"
     }
 
-    private val allowedClasses = setOf("LEGACY_PUBLISHED_CLIENT_TELEMETRY_PENDING", "ADMIN_CONTRACT_GAP", "INFRA", "DEV_ONLY")
+    // CONTRACT_AMENDMENT_PENDING: ruta V1 nueva con contrato revisado en docs/ (p. ej. docs/payments/STORE_PAYMENTS_CONTRACT.md) a la espera de su enmienda de OpenAPI.
+    private val allowedClasses = setOf("LEGACY_PUBLISHED_CLIENT_TELEMETRY_PENDING", "ADMIN_CONTRACT_GAP", "INFRA", "DEV_ONLY", "CONTRACT_AMENDMENT_PENDING")
     private val allowedConsumers = setOf("OC", "OB", "BOTH", "NONE")
 
     private fun parseRegister(file: File): Pair<Int, List<Row>> {
