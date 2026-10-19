@@ -193,12 +193,19 @@ internal const val STORE_APPLE_ENABLED_ENV = "PAYMENTS_STORE_APP_STORE_ENABLED"
 
 internal class StoreConfigException(message: String) : IllegalStateException(message)
 
+/**
+ * F8: huella SHA-256 (DER) de Apple Root CA - G3, la raiz que firma la cadena de StoreKit 2 / App Store Server Notifications. Valor publicado por
+ * Apple en su lista de raices de confianza (https://support.apple.com/en-am/121672, consultada 2026-10-19). Es publica: no es un secreto.
+ */
+internal val APPLE_ROOT_CA_SHA256_PINS: Set<String> = setOf("63343abfb89a6a03ebb57e9b3f5fa7be7c4f5c756f3017b3a8c488c3653e9179")
+
 internal data class GooglePlayConfig(
     val packageName: String,
     val serviceAccountFile: String,
     val pubsubAudience: String,
     val pubsubServiceAccount: String,
-    val pubsubSubscription: String?,
+    /** F7 (auditoria Control 2026-10-19): obligatoria; un push de otra suscripcion del proyecto es 401. */
+    val pubsubSubscription: String,
 )
 
 internal data class AppStoreConfig(
@@ -217,7 +224,7 @@ internal data class StorePaymentsSettings(
 ) {
     companion object {
         /** Lee y valida. Una plataforma activada con algo que falta lanza [StoreConfigException] (sin valores, solo nombres de variable). */
-        fun fromEnvironment(environment: (String) -> String? = System::getenv): StorePaymentsSettings {
+        fun fromEnvironment(environment: (String) -> String? = System::getenv, appleRootPins: Set<String> = APPLE_ROOT_CA_SHA256_PINS): StorePaymentsSettings {
             fun flag(name: String) = environment(name)?.trim()?.lowercase() == "true"
             fun required(name: String, missing: MutableList<String>): String = environment(name)?.trim().orEmpty().also { if (it.isEmpty()) missing += name }
             val missing = mutableListOf<String>()
@@ -227,7 +234,7 @@ internal data class StorePaymentsSettings(
                     serviceAccountFile = required("PAYMENTS_GOOGLE_SERVICE_ACCOUNT_FILE", missing),
                     pubsubAudience = required("PAYMENTS_GOOGLE_PUBSUB_AUDIENCE", missing),
                     pubsubServiceAccount = required("PAYMENTS_GOOGLE_PUBSUB_SERVICE_ACCOUNT", missing),
-                    pubsubSubscription = environment("PAYMENTS_GOOGLE_PUBSUB_SUBSCRIPTION")?.trim()?.takeIf { it.isNotEmpty() },
+                    pubsubSubscription = required("PAYMENTS_GOOGLE_PUBSUB_SUBSCRIPTION", missing),
                 )
             } else null
             val apple = if (flag(STORE_APPLE_ENABLED_ENV)) {
@@ -249,6 +256,20 @@ internal data class StorePaymentsSettings(
             if ((google != null || apple != null) && catalog.products.isEmpty()) throw StoreConfigException("Pagos de tienda activados sin PAYMENTS_STORE_PRODUCTS")
             google?.let { g -> if (!java.io.File(g.serviceAccountFile).canRead()) throw StoreConfigException("PAYMENTS_GOOGLE_SERVICE_ACCOUNT_FILE no se puede leer") }
             apple?.let { a -> a.rootCaPaths.forEach { if (!java.io.File(it).canRead()) throw StoreConfigException("PAYMENTS_APPLE_ROOT_CA_PATHS: un certificado no se puede leer") } }
+            // F8 (auditoria Control 2026-10-19): cada raiz configurada tiene que ser Apple Root CA - G3, FIJADA por huella; otra no arranca.
+            apple?.let { a ->
+                a.rootCaPaths.forEach { path ->
+                    if (sha256Hex(java.io.File(path).readBytes()) !in appleRootPins) {
+                        throw StoreConfigException("PAYMENTS_APPLE_ROOT_CA_PATHS: la huella SHA-256 de un certificado no es la de Apple Root CA - G3")
+                    }
+                }
+            }
+            // F8: cada raiz configurada tiene que ser una raiz de Apple FIJADA por huella (Apple Root CA - G3); otra cualquiera no arranca.
+            apple?.let { a ->
+                a.rootCaPaths.forEach { path ->
+                    if (sha256Hex(java.io.File(path).readBytes()) !in appleRootPins) throw StoreConfigException("PAYMENTS_APPLE_ROOT_CA_PATHS: la huella SHA-256 de un certificado no es la de Apple Root CA - G3")
+                }
+            }
             val sandbox = try {
                 StoreSandboxPolicy.parse(environment("PAYMENTS_STORE_SANDBOX"), environment("PAYMENTS_STORE_SANDBOX_USERS"))
             } catch (e: IllegalArgumentException) {
@@ -375,6 +396,16 @@ internal data class StoreInboxRow(
     val datos: JsonObject = JsonObject(emptyMap()),
     val intentos: Int = 0,
 )
+
+@Serializable
+private data class StoreInboxStatsRow(
+    val estado: String,
+    val n: Long,
+    @SerialName("mas_antiguo") val masAntiguo: String? = null,
+    @SerialName("max_intentos") val maxIntentos: Int? = null,
+)
+
+internal data class StoreInboxBacklog(val estado: String, val rows: Long, val oldestSeconds: Long, val maxAttempts: Int)
 
 @Serializable
 private data class StoreFinalizeRow(
@@ -582,7 +613,7 @@ internal class StorePaymentsService(
             }.toString(),
         ).singleOrNull() ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
         if (!put.nuevo && !put.mismaHuella) log("store inbox: same event id with a different body (${platform.provider})")
-        if (!put.nuevo && put.estado != "pendiente") return "REPLAY"
+        if (!put.nuevo && put.estado != "pendiente" && put.estado != "retenido") return "REPLAY"
         return processInbox(StoreInboxRow(platform.provider, event.eventId, event.type.inbox, event.purchaseKey, event.environment?.db, event.data))
     }
 
@@ -592,7 +623,8 @@ internal class StorePaymentsService(
             val result = process(row)
             Triple(if (result == "DISCARDED") "descartado" else "procesado", result, null)
         } catch (e: StoreDeferred) {
-            Triple("pendiente", null, e.reason)
+            // F4: reembolsos apagados = RETENIDO (no cuenta como intento, nunca se descarta); cualquier otro aplazamiento = fallo con backoff.
+            Triple(if (e.reason == "REFUNDS_DISABLED") "retenido" else "pendiente", null, e.reason)
         } catch (e: BackendDomainException) {
             if (e.status.value >= 500) Triple("pendiente", null, e.errorCode) else Triple("descartado", e.errorCode, e.errorCode)
         } catch (e: Exception) {
@@ -662,10 +694,18 @@ internal class StorePaymentsService(
 
     /** Reintenta la bandeja `pendiente`. Devuelve cuantas filas se intentaron. */
     suspend fun reprocessPending(limit: Int = 50): Int {
-        val rows = rpc<StoreInboxRow>("app_store_inbox_pending", buildJsonObject { put("p_limit", limit) }.toString())
+        // F4: los retenidos (reembolsos apagados) solo se vuelven a pedir cuando los reembolsos estan encendidos.
+        val rows = rpc<StoreInboxRow>("app_store_inbox_pending", buildJsonObject { put("p_limit", limit); put("p_incluir_retenidos", refundsEnabled) }.toString())
         rows.forEach { processInbox(it) }
         return rows.size
     }
+
+    /** F4: atasco de la bandeja por estado (`pendiente` / `retenido`): filas, edad de la mas antigua (s) e intentos maximos. Para metrica y alerta. */
+    suspend fun inboxStats(): List<StoreInboxBacklog> =
+        rpc<StoreInboxStatsRow>("app_store_inbox_stats", "{}").map { row ->
+            val oldest = row.masAntiguo?.let { runCatching { OffsetDateTime.parse(it).toInstant() }.getOrNull() }
+            StoreInboxBacklog(row.estado, row.n, oldest?.let { java.time.Duration.between(it, clock()).seconds.coerceAtLeast(0) } ?: 0, row.maxIntentos ?: 0)
+        }
 
     /** Play: consume / acknowledge lo acreditado y aun no terminado. */
     suspend fun finishPending(limit: Int = 50): Int {
@@ -699,7 +739,7 @@ internal class StorePaymentsService(
                 put("p_datos", event.data)
             }.toString(),
         ).singleOrNull() ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
-        if (!put.nuevo && put.estado != "pendiente") return "REPLAY"
+        if (!put.nuevo && put.estado != "pendiente" && put.estado != "retenido") return "REPLAY"
         return processInbox(StoreInboxRow(event.platform.provider, event.eventId, event.type.inbox, event.purchaseKey, event.environment?.db, event.data))
     }
 

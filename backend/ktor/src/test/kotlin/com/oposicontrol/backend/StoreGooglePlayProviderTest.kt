@@ -15,7 +15,7 @@ import kotlin.test.assertTrue
 /** Google Play: OIDC de Pub/Sub, RTDN, lectura de compras (productsv2 / subscriptionsv2) y el cliente HTTP de la API, todo sin red. */
 class StoreGooglePlayProviderTest {
     private val keys = GoogleTestKeys()
-    private val config = GooglePlayConfig("com.oposibot.app", "unused.json", GoogleTestKeys.AUDIENCE, GoogleTestKeys.SERVICE_ACCOUNT, null)
+    private val config = GooglePlayConfig("com.oposibot.app", "unused.json", GoogleTestKeys.AUDIENCE, GoogleTestKeys.SERVICE_ACCOUNT, "projects/p/subscriptions/rtdn")
     private val account = "6f1c2c1e-1111-4a6b-9b1e-2a2b2c2d2e2f"
     private val now = Instant.now()
 
@@ -96,7 +96,7 @@ class StoreGooglePlayProviderTest {
     @Test
     fun anAuthenticMessageForAnotherPackageIsRefusedAndAMalformedOneIs400() = runTest {
         assertEquals("STORE_PURCHASE_INVALID", assertFailsWith<BackendDomainException> { parse(pubsub(rtdn(""""testNotification":{}""", pkg = "com.other"))) }.errorCode)
-        assertEquals("MALFORMED_BODY", assertFailsWith<BackendDomainException> { parse("{}".toByteArray()) }.errorCode)
+        assertEquals("MALFORMED_BODY", assertFailsWith<BackendDomainException> { parse("""{"subscription":"projects/p/subscriptions/rtdn"}""".toByteArray()) }.errorCode)
     }
 
     @Test

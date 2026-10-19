@@ -181,6 +181,7 @@ internal object StorePaymentsJob {
             while (isActive) {
                 runCatching { runtime.service.reprocessPending() }.onFailure { log("store job reprocess failed: ${it::class.simpleName}") }
                 runCatching { runtime.service.finishPending() }.onFailure { log("store job finish failed: ${it::class.simpleName}") }
+                runCatching { StoreInboxMetrics.update(runtime.service.inboxStats(), log) }.onFailure { log("store job inbox stats failed: ${it::class.simpleName}") }
                 val now = clock()
                 if (runtime.google != null && now.isAfter(lastVoidedPoll.plusSeconds(86_400))) {
                     runCatching { pollVoided(runtime, now) }
@@ -198,4 +199,35 @@ internal object StorePaymentsJob {
         events.forEach { (event, fingerprint) -> runtime.service.ingest(event, fingerprint) }
         return events.size
     }
+}
+
+/**
+ * F4 (auditoria Control 2026-10-19): metrica y alerta del atasco de la bandeja de tienda. `store_inbox_backlog{estado}` (filas) y
+ * `store_inbox_oldest_seconds{estado}` (edad de la mas antigua) para `pendiente` y `retenido`; un log WARN cuando hay retenidos (reembolsos
+ * apagados con avisos guardados) o un pendiente de mas de una hora. Sin ids ni tokens.
+ */
+internal object StoreInboxMetrics {
+    const val BACKLOG_METRIC = "store_inbox_backlog"
+    const val OLDEST_METRIC = "store_inbox_oldest_seconds"
+    private val rows = java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>()
+    private val oldest = java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>()
+
+    private fun gauge(map: java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>, name: String, estado: String) =
+        map.computeIfAbsent(estado) { key ->
+            java.util.concurrent.atomic.AtomicLong(0).also { holder ->
+                io.micrometer.core.instrument.Gauge.builder(name) { holder.get().toDouble() }.tag("estado", key).register(BackendPrometheusMetrics.registry)
+            }
+        }
+
+    fun update(stats: List<StoreInboxBacklog>, log: (String) -> Unit) {
+        listOf("pendiente", "retenido").forEach { estado ->
+            val s = stats.firstOrNull { it.estado == estado }
+            gauge(rows, BACKLOG_METRIC, estado).set(s?.rows ?: 0)
+            gauge(oldest, OLDEST_METRIC, estado).set(s?.oldestSeconds ?: 0)
+        }
+        stats.firstOrNull { it.estado == "retenido" && it.rows > 0 }?.let { log("ALERT store inbox: ${it.rows} refund notifications retained while PAYMENTS_REFUNDS_ENABLED is off (oldest ${it.oldestSeconds}s)") }
+        stats.firstOrNull { it.estado == "pendiente" && it.oldestSeconds > 3_600 }?.let { log("ALERT store inbox: ${it.rows} pending notifications, oldest ${it.oldestSeconds}s, max attempts ${it.maxAttempts}") }
+    }
+
+    fun value(name: String, estado: String): Long? = (if (name == BACKLOG_METRIC) rows else oldest)[estado]?.get()
 }

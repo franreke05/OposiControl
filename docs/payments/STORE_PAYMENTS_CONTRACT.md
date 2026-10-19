@@ -85,8 +85,8 @@ notifications are recovered with Get Notification History (pending: needs the Ap
 | Same key, other user | refused | `STORE_PURCHASE_BOUND_TO_OTHER` |
 | Refund / void / Apple `REFUND` (revocationDate) | `app_store_refund_purchase` -> `app_refund_payment_order` | `REFUNDED` / `REFUNDED_P2`; order not paid -> `REFUND_HELD` (SEC-V1-05) |
 | Refund before the purchase exists (out of order) | inbox row marked `REFUND_ORPHAN_HELD` | a later verify creates the order, holds the refund, credits nothing (`EN_REVISION`) |
-| Refund with `PAYMENTS_REFUNDS_ENABLED=false` | inbox `pendiente` (`REFUNDS_DISABLED`), 200 | applied by the job when the switch is on (ECO-02) |
-| Apple `REFUND_REVERSED` | `app_store_refund_reversed`: order `reembolsada -> en_revision`, audit `reembolso_revertido` | Control decides (**D3**); no automatic re-credit |
+| Refund with `PAYMENTS_REFUNDS_ENABLED=false` | inbox `retenido` (`REFUNDS_DISABLED`, not an attempt, never dropped), 200 | listed again and applied by the job when the switch is on (ECO-02) |
+| Apple `REFUND_REVERSED` | `app_store_refund_reversed`: refunded order -> `en_revision`; not refunded yet -> recorded (`REVERSAL_EARLY`), a later refund goes to review; unknown key -> held on the inbox and attached to the order on purchase | Control decides (**D3**); never a NOOP, never an automatic re-credit |
 | Apple `CONSUMPTION_REQUEST` | recorded only | no consumption data is sent without consent (**D7**) |
 | Account deleted, then void | order gone with the account (FK cascade) -> refund is an orphan, held | **D6** (legal): ledger retention on deletion |
 
@@ -191,3 +191,21 @@ one batch call (S-04, <= 20 items), optional for the client; (5) a purchase held
   production until infra adds that path (not changed here).
 - OpenAPI amendment for S-01..S-05 / W-02 / W-03 (contract-first files under `openapi/`), and Notification History / Consumption API calls (need the
   App Store API key, D7/D9).
+
+## Audit fixes (OposiControl audit of 8859ee4, 2026-10-19; migration `20261022102800`)
+
+- F2/F12: a `REFUND_REVERSED` is never a silent NOOP (see the table above); `app_refund_payment_order` sends a paid order with an early reversal to
+  review (`reembolso_tras_reversion`) instead of debiting.
+- F4: inbox state `retenido` for refunds deferred by the switch (no attempt counted, never dropped, listed only when refunds are on); real failures
+  back off 1 min .. 6 h with no attempt cap; claims use `FOR UPDATE SKIP LOCKED` + 5-minute lease, ordered by next attempt (no starvation).
+  Metric `store_inbox_backlog{estado}` / `store_inbox_oldest_seconds{estado}` and an `ALERT store inbox` WARN log (alert rules in ops: pending).
+- F6: Apple `RETRYABLE_VERIFICATION_FAILURE` (OCSP undetermined) -> 503 `UPSTREAM_UNAVAILABLE` (store / client retry), not 422 / 401.
+- F7: `PAYMENTS_GOOGLE_PUBSUB_SUBSCRIPTION` is required with Google enabled and always checked.
+- F8: configured Apple roots must match the pinned SHA-256 of Apple Root CA - G3
+  (`63343abf...653e9179`, Apple's root list https://support.apple.com/en-am/121672), or startup fails.
+- F10: the DB refuses a JWT user without the store account token (`STORE_ACCOUNT_MISMATCH`), for purchases and subscriptions.
+- F11 (OWNER DECISION D11, not implemented): today a subscription refund/revocation waits behind `PAYMENTS_REFUNDS_ENABLED` like an OT refund, so
+  Premium stays active while the switch is off. Proposal: treat subscription revocation as an ACCESS fact from the store (apply it always; it touches
+  no ledger) and keep the switch for the OT ledger policy (P2) only. It changes who loses access and when, so it is not policy-neutral.
+- Regression tests from Control's audit: `StoreAuditRegressionTest` (A-K1..A-K8; A-K3 and A-K6 inverted) and the `20261022102800` block of
+  `supabase/baseline/assertions.sql` (S1, S5, S7, S8 inverted; S2 kept as current D3 behaviour; S3 left to Control's F3 migration).

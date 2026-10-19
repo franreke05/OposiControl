@@ -404,7 +404,7 @@ class StorePaymentRoutesTest {
         assertEquals("DEFERRED", json.parseToJsonElement(response.bodyAsText()).jsonObject["result"]!!.jsonPrimitive.content)
         assertEquals(listOf("app_store_inbox_put", "app_store_inbox_mark"), upstream.names())
         val mark = upstream.args("app_store_inbox_mark")
-        assertEquals("pendiente", mark["p_estado"]!!.jsonPrimitive.content)
+        assertEquals("retenido", mark["p_estado"]!!.jsonPrimitive.content, "F4: retained, not a failed attempt")
         assertEquals("REFUNDS_DISABLED", mark["p_error"]!!.jsonPrimitive.content)
     }
 
@@ -488,7 +488,7 @@ class StorePaymentRoutesTest {
         val api = StoreGooglePlayProviderTest.FakeApi().apply {
             voidedPages = listOf(Json.parseToJsonElement("""{"voidedPurchases":[{"purchaseToken":"gp-token-1","orderId":"GPA.7"}]}""").jsonObject)
         }
-        val provider = GooglePlayProvider(GooglePlayConfig("p", "f", "a", "s", null), api, GoogleOidcVerifier("a", "s", GoogleTestKeys().source), clock = { now })
+        val provider = GooglePlayProvider(GooglePlayConfig("p", "f", "a", "s", "projects/p/subscriptions/rtdn"), api, GoogleOidcVerifier("a", "s", GoogleTestKeys().source), clock = { now })
         val svc = StorePaymentsService(upstream, mapOf(StorePlatform.GOOGLE_PLAY to provider), catalog, sandbox, true, clock = { now })
         val runtime = StorePaymentsRuntime(resolver, svc, InMemoryIdempotencyStore { now }, google = provider)
         assertEquals(1, StorePaymentsJob.pollVoided(runtime, now))
@@ -498,4 +498,33 @@ class StorePaymentRoutesTest {
     }
 
     private fun kotlinx.serialization.json.JsonPrimitive.contentOrNullSafe(): String? = if (this is kotlinx.serialization.json.JsonNull) null else content
+
+    /** F4: un aviso ya RETENIDO que la tienda reenvia se vuelve a procesar (no es un REPLAY), y la metrica de atasco se publica. */
+    @Test
+    fun aRetainedNotificationRedeliveredIsReprocessedAndTheBacklogIsMeasured() = runTest {
+        upstream.handlers["app_store_inbox_put"] = { ok("""[{"nuevo":false,"estado":"retenido","resultado":null,"misma_huella":true}]""") }
+        google.event = webhookEvent(StoreEventType.REFUND)
+        assertEquals("REFUNDED", service().webhook(StorePlatform.GOOGLE_PLAY, { null }, "{}".toByteArray()))
+        assertTrue("app_store_refund_purchase" in upstream.names())
+        upstream.handlers["app_store_inbox_stats"] = { ok("""[{"estado":"retenido","n":3,"mas_antiguo":"2026-10-19T11:00:00+00:00","max_intentos":0}]""") }
+        val alerts = CopyOnWriteArrayList<String>()
+        StoreInboxMetrics.update(service().inboxStats(), { alerts += it })
+        assertEquals(3L, StoreInboxMetrics.value(StoreInboxMetrics.BACKLOG_METRIC, "retenido"))
+        assertEquals(3600L, StoreInboxMetrics.value(StoreInboxMetrics.OLDEST_METRIC, "retenido"))
+        assertEquals(0L, StoreInboxMetrics.value(StoreInboxMetrics.BACKLOG_METRIC, "pendiente"))
+        assertTrue(alerts.single().startsWith("ALERT store inbox: 3 refund notifications retained"), alerts.toString())
+        val pending = upstream.args("app_store_inbox_stats")
+        assertTrue(pending.isEmpty())
+    }
+
+    /** F4: con reembolsos encendidos el trabajo pide tambien los retenidos; apagados, no. */
+    @Test
+    fun theJobAsksForRetainedRowsOnlyWhenRefundsAreOn() = runTest {
+        upstream.handlers["app_store_inbox_pending"] = { ok("[]") }
+        service().reprocessPending()
+        assertEquals("true", upstream.args("app_store_inbox_pending")["p_incluir_retenidos"]!!.jsonPrimitive.content)
+        refundsEnabled = false
+        service().reprocessPending()
+        assertEquals("false", upstream.args("app_store_inbox_pending")["p_incluir_retenidos"]!!.jsonPrimitive.content)
+    }
 }

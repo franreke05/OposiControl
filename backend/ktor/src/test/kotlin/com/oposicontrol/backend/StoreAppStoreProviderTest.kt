@@ -200,4 +200,20 @@ class StoreAppStoreProviderTest {
         assertEquals(StoreEventType.TEST, webhook(pki.sign(notification("TEST", null, uuid = "t1"))).type)
         assertEquals(StoreEventType.CONSUMPTION_REQUEST, webhook(pki.sign(notification("CONSUMPTION_REQUEST", pki.sign(tx()), uuid = "t2"))).type)
     }
+
+    /** F6 (auditoria Control 2026-10-19): un fallo reintentable de Apple (OCSP indeterminado) es 503; el resto conserva su codigo definitivo. */
+    @Test
+    fun aRetryableAppleVerificationFailureIs503AndOtherFailuresKeepTheirCode() {
+        val retry = appleVerificationFailure(
+            com.apple.itunes.storekit.verification.VerificationException(com.apple.itunes.storekit.verification.VerificationStatus.RETRYABLE_VERIFICATION_FAILURE),
+            CanonicalErrorCode.STORE_PURCHASE_INVALID,
+        )
+        assertEquals("UPSTREAM_UNAVAILABLE", retry.errorCode)
+        assertEquals(503, retry.status.value)
+        val chain = appleVerificationFailure(
+            com.apple.itunes.storekit.verification.VerificationException(com.apple.itunes.storekit.verification.VerificationStatus.INVALID_CHAIN),
+            CanonicalErrorCode.WEBHOOK_SIGNATURE_INVALID,
+        )
+        assertEquals("WEBHOOK_SIGNATURE_INVALID", chain.errorCode)
+    }
 }

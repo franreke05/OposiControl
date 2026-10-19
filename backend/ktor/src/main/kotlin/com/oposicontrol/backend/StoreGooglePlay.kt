@@ -259,9 +259,8 @@ internal class GooglePlayProvider(
         if (!auth.startsWith("Bearer ", ignoreCase = true)) throw CanonicalErrorCode.WEBHOOK_SIGNATURE_INVALID.exception()
         withContext(Dispatchers.IO) { oidc.verify(auth.substring(7).trim()) }
         val envelope = parseObject(String(rawBody, StandardCharsets.UTF_8)) ?: throw CanonicalErrorCode.MALFORMED_BODY.exception()
-        config.pubsubSubscription?.let { expected ->
-            if (envelope.storeStr("subscription") != expected) throw CanonicalErrorCode.WEBHOOK_SIGNATURE_INVALID.exception()
-        }
+        // F7: siempre (configuracion obligatoria): un push autentico de OTRA suscripcion del proyecto no es nuestro.
+        if (envelope.storeStr("subscription") != config.pubsubSubscription) throw CanonicalErrorCode.WEBHOOK_SIGNATURE_INVALID.exception()
         val message = envelope["message"] as? JsonObject ?: throw CanonicalErrorCode.MALFORMED_BODY.exception()
         val messageId = (message.storeStr("messageId") ?: message.storeStr("message_id"))?.takeIf { it.isNotBlank() && it.length <= 150 }
             ?: throw CanonicalErrorCode.MALFORMED_BODY.exception()

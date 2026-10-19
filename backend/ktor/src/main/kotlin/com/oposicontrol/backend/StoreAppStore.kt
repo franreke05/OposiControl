@@ -8,6 +8,7 @@ import com.apple.itunes.storekit.model.NotificationTypeV2
 import com.apple.itunes.storekit.model.Type
 import com.apple.itunes.storekit.verification.SignedDataVerifier
 import com.apple.itunes.storekit.verification.VerificationException
+import com.apple.itunes.storekit.verification.VerificationStatus
 import com.auth0.jwt.JWT
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -58,8 +59,8 @@ internal class AppStoreProvider(
         val verifier = verifierFor(peekEnvironment(signed, nested = true)) ?: throw CanonicalErrorCode.WEBHOOK_SIGNATURE_INVALID.exception()
         val notification = try {
             verifier.verifyAndDecodeNotification(signed)
-        } catch (_: VerificationException) {
-            throw CanonicalErrorCode.WEBHOOK_SIGNATURE_INVALID.exception()
+        } catch (e: VerificationException) {
+            throw appleVerificationFailure(e, CanonicalErrorCode.WEBHOOK_SIGNATURE_INVALID)
         }
         val uuid = notification.notificationUUID?.takeIf { it.isNotBlank() && it.length <= 150 } ?: throw CanonicalErrorCode.MALFORMED_BODY.exception()
         val eventId = "assn:$uuid"
@@ -82,14 +83,14 @@ internal class AppStoreProvider(
         }
         val tx = try {
             verifier.verifyAndDecodeTransaction(signedTx)
-        } catch (_: VerificationException) {
-            throw CanonicalErrorCode.WEBHOOK_SIGNATURE_INVALID.exception()
+        } catch (e: VerificationException) {
+            throw appleVerificationFailure(e, CanonicalErrorCode.WEBHOOK_SIGNATURE_INVALID)
         }
         val renewal = data.signedRenewalInfo?.let {
             try {
                 verifier.verifyAndDecodeRenewalInfo(it)
-            } catch (_: VerificationException) {
-                throw CanonicalErrorCode.WEBHOOK_SIGNATURE_INVALID.exception()
+            } catch (e: VerificationException) {
+                throw appleVerificationFailure(e, CanonicalErrorCode.WEBHOOK_SIGNATURE_INVALID)
             }
         }
         val facts = factsOf(tx, renewal, type, notification.signedDate)
@@ -114,8 +115,8 @@ internal class AppStoreProvider(
         val verifier = verifierFor(peekEnvironment(jws, nested = false)) ?: return null
         return try {
             verifier.verifyAndDecodeTransaction(jws)
-        } catch (_: VerificationException) {
-            null
+        } catch (e: VerificationException) {
+            throw appleVerificationFailure(e, CanonicalErrorCode.STORE_PURCHASE_INVALID)
         }
     }
 
@@ -182,3 +183,10 @@ internal class AppStoreProvider(
 
     private fun iso(millis: Long?): String? = millis?.let { Instant.ofEpochMilli(it).toString() }
 }
+
+/**
+ * F6 (auditoria Control 2026-10-19): un fallo REINTENTABLE de la verificacion de Apple (estado de revocacion OCSP indeterminado, p. ej. caida
+ * del OCSP de Apple) es 503 UPSTREAM_UNAVAILABLE: la tienda / el cliente reintentan y no se marca la compra como invalida. El resto, [definitive].
+ */
+internal fun appleVerificationFailure(e: VerificationException, definitive: CanonicalErrorCode): BackendDomainException =
+    if (e.status == VerificationStatus.RETRYABLE_VERIFICATION_FAILURE) CanonicalErrorCode.UPSTREAM_UNAVAILABLE.exception(cause = e) else definitive.exception()

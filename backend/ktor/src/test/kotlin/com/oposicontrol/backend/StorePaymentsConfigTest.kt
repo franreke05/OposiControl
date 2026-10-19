@@ -41,7 +41,7 @@ class StorePaymentsConfigTest {
     fun unreadableCredentialFilesAndAnEmptyCatalogAlsoRefuse() {
         val base = arrayOf(
             STORE_GOOGLE_ENABLED_ENV to "true", "PAYMENTS_GOOGLE_PACKAGE_NAME" to "com.x", "PAYMENTS_GOOGLE_PUBSUB_AUDIENCE" to "https://a",
-            "PAYMENTS_GOOGLE_PUBSUB_SERVICE_ACCOUNT" to "s@x", "PAYMENTS_GOOGLE_SERVICE_ACCOUNT_FILE" to "/definitely/missing.json",
+            "PAYMENTS_GOOGLE_PUBSUB_SERVICE_ACCOUNT" to "s@x", "PAYMENTS_GOOGLE_SERVICE_ACCOUNT_FILE" to "/definitely/missing.json", "PAYMENTS_GOOGLE_PUBSUB_SUBSCRIPTION" to "projects/p/subscriptions/rtdn",
         )
         assertTrue(guard(env(*base, "PAYMENTS_STORE_PRODUCTS" to "google_play:ot_100=PACK_100:CONSUMABLE"))!!.contains("no se puede leer"))
         assertTrue(guard(env(*base))!!.contains("PAYMENTS_STORE_PRODUCTS"))
@@ -58,11 +58,14 @@ class StorePaymentsConfigTest {
     @Test
     fun aCompleteConfigurationStarts() {
         val sa = File.createTempFile("svc-account", ".json").apply { writeText("{}"); deleteOnExit() }
-        val root = File.createTempFile("apple-root", ".cer").apply { writeBytes(StoreTestPki().rootDer); deleteOnExit() }
+        val rootDer = StoreTestPki().rootDer
+        val root = File.createTempFile("apple-root", ".cer").apply { writeBytes(rootDer); deleteOnExit() }
         val settings = StorePaymentsSettings.fromEnvironment(
+            appleRootPins = setOf(sha256Hex(rootDer)),   // prueba: la raiz generada aqui; en produccion solo Apple Root CA - G3 (F8)
+            environment =
             env(
                 STORE_GOOGLE_ENABLED_ENV to "true", "PAYMENTS_GOOGLE_PACKAGE_NAME" to "com.x", "PAYMENTS_GOOGLE_PUBSUB_AUDIENCE" to "https://a",
-                "PAYMENTS_GOOGLE_PUBSUB_SERVICE_ACCOUNT" to "s@x", "PAYMENTS_GOOGLE_SERVICE_ACCOUNT_FILE" to sa.path,
+                "PAYMENTS_GOOGLE_PUBSUB_SERVICE_ACCOUNT" to "s@x", "PAYMENTS_GOOGLE_SERVICE_ACCOUNT_FILE" to sa.path, "PAYMENTS_GOOGLE_PUBSUB_SUBSCRIPTION" to "projects/p/subscriptions/rtdn",
                 STORE_APPLE_ENABLED_ENV to "true", "PAYMENTS_APPLE_BUNDLE_ID" to "com.x", "PAYMENTS_APPLE_APP_APPLE_ID" to "123", "PAYMENTS_APPLE_ROOT_CA_PATHS" to root.path,
                 "PAYMENTS_STORE_PRODUCTS" to "google_play:ot_100=PACK_100:CONSUMABLE,app_store:com.x.ot100=PACK_100:CONSUMABLE",
             ),
@@ -92,5 +95,34 @@ class StorePaymentsConfigTest {
         assertTrue(allow.allows(StoreEnvironment.SANDBOX, TEST_UID))
         assertFalse(allow.allows(StoreEnvironment.SANDBOX, "11111111-1111-4111-8111-111111111111"))
         assertFalse(allow.allows(StoreEnvironment.SANDBOX, null))
+    }
+
+    /** F8 (auditoria OposiControl 2026-10-19): una raiz configurada que no es Apple Root CA - G3 (huella fijada) no arranca. */
+    @Test
+    fun anAppleRootThatIsNotThePinnedAppleRootCaG3RefusesToStart() {
+        val sa = File.createTempFile("svc-account", ".json").apply { writeText("{}"); deleteOnExit() }
+        val root = File.createTempFile("apple-root", ".cer").apply { writeBytes(StoreTestPki().rootDer); deleteOnExit() }
+        val message = guard(
+            env(
+                STORE_APPLE_ENABLED_ENV to "true", "PAYMENTS_APPLE_BUNDLE_ID" to "com.x", "PAYMENTS_APPLE_APP_APPLE_ID" to "123", "PAYMENTS_APPLE_ROOT_CA_PATHS" to root.path,
+                "PAYMENTS_STORE_PRODUCTS" to "app_store:com.x.ot100=PACK_100:CONSUMABLE",
+            ),
+        )
+        assertTrue(message.orEmpty().contains("PAYMENTS_APPLE_ROOT_CA_PATHS") && message.orEmpty().contains("huella"), "must refuse an unpinned root: $message")
+        sa.delete()
+    }
+
+    /** F7 (auditoria OposiControl 2026-10-19): con Google activado la suscripcion push es obligatoria. */
+    @Test
+    fun googleWithoutThePushSubscriptionNameRefusesToStart() {
+        val sa = File.createTempFile("svc-account", ".json").apply { writeText("{}"); deleteOnExit() }
+        val message = guard(
+            env(
+                STORE_GOOGLE_ENABLED_ENV to "true", "PAYMENTS_GOOGLE_PACKAGE_NAME" to "com.x", "PAYMENTS_GOOGLE_PUBSUB_AUDIENCE" to "https://a",
+                "PAYMENTS_GOOGLE_PUBSUB_SERVICE_ACCOUNT" to "s@x", "PAYMENTS_GOOGLE_SERVICE_ACCOUNT_FILE" to sa.path,
+                "PAYMENTS_STORE_PRODUCTS" to "google_play:ot_100=PACK_100:CONSUMABLE",
+            ),
+        )
+        assertTrue(message.orEmpty().contains("PAYMENTS_GOOGLE_PUBSUB_SUBSCRIPTION"), "$message")
     }
 }
