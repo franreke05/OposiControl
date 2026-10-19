@@ -39,6 +39,7 @@
 -- $$;
 -- drop function if exists public.admin_set_exam_grading_rules(uuid, uuid, text, integer, integer, boolean, text);
 -- drop function if exists public.admin_set_exam_question_flags(uuid, uuid, uuid, boolean, text, boolean, integer);
+-- drop function if exists public.admin_foro_imagenes_purga_resumen();
 -- drop function if exists public.admin_foro_restriccion_levantar(uuid, uuid);
 -- drop function if exists public.admin_foro_restricciones_list();
 -- drop function if exists public.admin_foro_bloqueos_remove(uuid, text);
@@ -55,7 +56,7 @@
 -- select 'control_rpc_service_role_only:' || f.n as check_name,
 --        (case when has_function_privilege('anon', f.n, 'execute') or has_function_privilege('authenticated', f.n, 'execute') or not has_function_privilege('service_role', f.n, 'execute') then 1 else 0 end)::bigint as failures
 --   from (values ('public.admin_referral_list(text,text,integer)'), ('public.admin_foro_bloqueos_list()'), ('public.admin_foro_bloqueos_add(uuid,text)'), ('public.admin_foro_bloqueos_remove(uuid,text)'),
---                ('public.admin_foro_restricciones_list()'), ('public.admin_foro_restriccion_levantar(uuid,uuid)'), ('public.admin_set_exam_question_flags(uuid,uuid,uuid,boolean,text,boolean,integer)'),
+--                ('public.admin_foro_restricciones_list()'), ('public.admin_foro_imagenes_purga_resumen()'), ('public.admin_foro_restriccion_levantar(uuid,uuid)'), ('public.admin_set_exam_question_flags(uuid,uuid,uuid,boolean,text,boolean,integer)'),
 --                ('public.admin_set_exam_grading_rules(uuid,uuid,text,integer,integer,boolean,text)'), ('public.admin_payment_order_resolve(uuid,uuid,text,text,boolean)')) f(n)
 -- union all
 -- select 'control_private_helpers_closed:' || f.n,
@@ -259,6 +260,24 @@ end;
 $$;
 revoke all on function public.admin_foro_restriccion_levantar(uuid, uuid) from public, anon, authenticated;
 grant execute on function public.admin_foro_restriccion_levantar(uuid, uuid) to service_role;
+
+-- forum images waiting for the purge job (read only): removed/rejected images whose bytes are still in Storage. pendientes = still retried by the job, atascadas = 10+ failed attempts (the job gave up on them)
+create or replace function public.admin_foro_imagenes_purga_resumen()
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select jsonb_build_object(
+           'pendientes', count(*) filter (where i.intentos_purga < 10),
+           'atascadas', count(*) filter (where i.intentos_purga >= 10),
+           'masAntiguaEn', min(coalesce(i.retirada_en, i.creado_en)))
+    from public.imagenes_oposired i
+   where i.estado in ('retirada', 'rechazada') and i.purgada_en is null
+$$;
+revoke all on function public.admin_foro_imagenes_purga_resumen() from public, anon, authenticated;
+grant execute on function public.admin_foro_imagenes_purga_resumen() to service_role;
 
 -- ---- 3. annulled / reserve flags of ONE question of an exam, one transaction (FA37 rules: demo never reserve nor annulled, reserves only in official exams, reserves keep orders 1..R and sit after the last main)
 create or replace function public.admin_set_exam_question_flags(
