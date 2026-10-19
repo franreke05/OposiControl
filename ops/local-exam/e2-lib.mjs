@@ -12,6 +12,10 @@ export const L = process.env.E2_STACK_LOCAL ?? 'C:/Users/franr/AndroidStudioProj
 export const PORT = process.env.E2_PORT ?? '8091';
 export const KTOR = `http://127.0.0.1:${PORT}`;
 export const secrets = JSON.parse(fs.readFileSync(path.join(L, 'secrets.json'), 'utf8'));
+// Issuer/ports come from the live stack (.local/issuer.txt, .local/ports.json), never hardcoded:
+// the gateway port lives inside the issuer URL, so the token iss always matches what Ktor validates.
+export const issuer = fs.readFileSync(path.join(L, 'issuer.txt'), 'utf8').trim();
+export const ports = JSON.parse(fs.readFileSync(path.join(L, 'ports.json'), 'utf8'));
 export const LOC = 'e5000000-0000-4000-8000-000000000001';
 export const OTH = 'e2b50000-0000-4000-8000-000000000001';
 export const run = crypto.randomBytes(3).toString('hex');
@@ -22,7 +26,7 @@ export const sqlTry = (text) => { try { return { ok: true, out: sql(text) }; } c
 const b64u = (b) => Buffer.from(b).toString('base64url');
 const jwk = crypto.createPrivateKey({ key: secrets.privateJwk, format: 'jwk' });
 export const token = (sub) => { const n = Math.floor(Date.now() / 1000); const h = b64u(JSON.stringify({ alg: 'ES256', typ: 'JWT', kid: secrets.kid }));
-  const p = b64u(JSON.stringify({ sub, role: 'authenticated', aud: 'authenticated', iss: 'http://localhost:54321/auth/v1', iat: n - 60, exp: n + 3000 }));
+  const p = b64u(JSON.stringify({ sub, role: 'authenticated', aud: 'authenticated', iss: issuer, iat: n - 60, exp: n + 3000 }));
   return `${h}.${p}.${b64u(crypto.sign('sha256', Buffer.from(`${h}.${p}`), { key: jwk, dsaEncoding: 'ieee-p1363' }))}`; };
 
 export const results = [];
@@ -37,8 +41,11 @@ export function finish(out) {
 }
 
 export async function call(u, method, p, body, headers = {}, raw = false) {
-  const h = { ...headers }; if (u) h.Authorization = `Bearer ${u.t ?? u}`; if (body !== undefined) h['Content-Type'] = 'application/json';
-  const r = await fetch(KTOR + p, { method, headers: h, body: body === undefined ? undefined : (raw ? body : JSON.stringify(body)) });
+  // GET/HEAD must never carry a body (fetch throws "Request with GET/HEAD method cannot have body"); drop it even if a caller passes one.
+  const noBody = method === 'GET' || method === 'HEAD';
+  const sendBody = body !== undefined && !noBody;
+  const h = { ...headers }; if (u) h.Authorization = `Bearer ${u.t ?? u}`; if (sendBody) h['Content-Type'] = 'application/json';
+  const r = await fetch(KTOR + p, { method, headers: h, body: sendBody ? (raw ? body : JSON.stringify(body)) : undefined });
   const text = await r.text(); let json = null; try { json = JSON.parse(text); } catch { /* empty */ }
   return { status: r.status, json, text, headers: r.headers };
 }

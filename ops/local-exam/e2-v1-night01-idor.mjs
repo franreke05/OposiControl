@@ -17,9 +17,25 @@ const noToken = (p, method = 'GET', body) => call(null, method, p, body);
 const garbled = (p, method = 'GET', body) => call({ t: 'not-a-jwt-at-all' }, method, p, body);
 const otherSig = (u, p, method = 'GET', body) => { const parts = u.t.split('.'); const tampered = parts[0] + '.' + parts[1] + '.' + 'ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ'; return call({ t: tampered }, method, p, body); };
 
+// VALIDITY GATE: the owner reading its own resource must return 2xx for every route family; otherwise the token is wrong
+// (as in the hardcoded-iss regression) and every "refused" result below would be a false pass -> the whole sweep is invalid.
+await scenario(only, 'Z_POSITIVE_CONTROLS', async () => {
+  const pc = mkUser('pc'); const ex = mkExam({ tipo: 'rafaga', acceso: 'gratuito', n: 2 });
+  const fams = [['me', '/api/v1/app/me'], ['plan', '/api/v1/app/plan/catalogo'], ['opositeca', '/api/v1/app/opositeca'], ['examenes', '/api/v1/app/examenes'], ['public', '/api/v1/public/especialidades']];
+  const failed = [];
+  for (const [fam, p] of fams) { const r = await GET(pc, p); if (r.status < 200 || r.status >= 300) failed.push(`${fam} ${p} -> ${r.status}`); }
+  const s = await call(pc, 'POST', `/api/v1/app/examenes/${ex.id}/intentos`, {}, { 'Idempotency-Key': uuid() });
+  const aid = s.json?.intento?.id ?? s.json?.id;
+  const own = aid ? await GET(pc, `/api/v1/app/intentos/${aid}`) : { status: 0 };
+  if (!(own.status >= 200 && own.status < 300)) failed.push(`intentos start=${s.status} read=${own.status}`);
+  check('Z0.POSITIVE_CONTROL_owner_reads_own_resource_2xx_for_every_route_family', failed.length === 0, failed.join(' | ') || 'me/plan/opositeca/examenes/public/intentos all 2xx');
+});
+
 await scenario(only, 'A_ME_ROUTES', async () => {
   const a = mkUser('mea'); const b = mkUser('meb');
-  const routes = ['/api/v1/app/me', '/api/v1/app/me/onboarding', '/api/v1/app/me/profile', '/api/v1/app/me/legal-acceptances', '/api/v1/app/me/credentials', '/api/v1/app/me/entitlement', '/api/v1/app/me/billing-history', '/api/v1/app/me/invitacion', '/api/v1/app/me/invitaciones', '/api/v1/app/racha', '/api/v1/app/plan/cupo', '/api/v1/app/plan/catalogo', '/api/v1/app/opositeca', '/api/v1/app/payments/orders', '/api/v1/app/opositester/me', '/api/v1/app/estadisticas/resumen', '/api/v1/app/estadisticas/debilidades', '/api/v1/app/wallet', '/api/v1/app/wallet/movimientos', '/api/v1/app/wallet/paquetes', '/api/v1/app/ranking', '/api/v1/app/ranking/visibilidad', '/api/v1/app/oposired/canales', '/api/v1/app/oposired/categorias', '/api/v1/app/reto-diario', '/api/v1/app/retos/hoy', '/api/v1/app/examenes', '/api/v1/public/examenes', '/api/v1/public/especialidades'];
+  // Full no-path-param /app GET surface from openapi/root.yaml + public no-param routes. POST/PUT-only routes are included on
+  // purpose: an owner GET returns 405/404 (never 5xx, never a 200 leak), and the no-token/garbled/tampered pass must still be 4xx.
+  const routes = ['/api/v1/app/me', '/api/v1/app/me/onboarding', '/api/v1/app/me/profile', '/api/v1/app/me/avatar', '/api/v1/app/me/legal-acceptances', '/api/v1/app/me/credentials', '/api/v1/app/me/entitlement', '/api/v1/app/me/billing-history', '/api/v1/app/me/invitacion', '/api/v1/app/me/invitaciones', '/api/v1/app/me/examenes', '/api/v1/app/legal/documents', '/api/v1/app/racha', '/api/v1/app/plan/cupo', '/api/v1/app/plan/catalogo', '/api/v1/app/opositeca', '/api/v1/app/payments/orders', '/api/v1/app/opositester/me', '/api/v1/app/feedback/pregunta', '/api/v1/app/estadisticas/resumen', '/api/v1/app/estadisticas/debilidades', '/api/v1/app/wallet', '/api/v1/app/wallet/movimientos', '/api/v1/app/wallet/paquetes', '/api/v1/app/wallet/canjes', '/api/v1/app/ranking', '/api/v1/app/ranking/visibilidad', '/api/v1/app/oposired/canales', '/api/v1/app/oposired/categorias', '/api/v1/app/oposired/imagenes', '/api/v1/app/oposired/publicaciones', '/api/v1/app/oposired/reportes', '/api/v1/app/reto-diario', '/api/v1/app/retos/hoy', '/api/v1/app/examenes', '/api/v1/public/examenes', '/api/v1/public/especialidades'];
   const leaksB = [];
   for (const p of routes) {
     const ra = await GET(a, p); const rb = await GET(b, p);
@@ -30,10 +46,12 @@ await scenario(only, 'A_ME_ROUTES', async () => {
     if (ra.status >= 500) leaksB.push(`${p} 5xx for an authenticated own-data GET (${ra.status})`);
   }
   check('M1.every_me_shaped_route_answers_per_user_data_(no_shared_body_no_5xx)', leaksB.length === 0, leaksB.join(' | ') || `${routes.length} routes checked`);
-  // no token / garbled token / tampered signature on every route
+  // no token / garbled token / tampered signature on every route.
+  // ANON-by-contract app routes (openapi x-roles:[ANON], security:[]) are legitimately reachable without a token.
+  const publicApp = new Set(['/api/v1/app/legal/documents']);
   const bad = [];
   for (const p of routes) {
-    if (p.startsWith('/api/v1/public/')) continue;
+    if (p.startsWith('/api/v1/public/') || publicApp.has(p)) continue;
     const n = await noToken(p); const g = await garbled(p); const t = await otherSig(a, p);
     if (n.status < 400 || n.status >= 500) bad.push(`${p} no-token -> ${n.status}`);
     if (g.status < 400 || g.status >= 500) bad.push(`${p} garbled-token -> ${g.status}`);
@@ -44,9 +62,11 @@ await scenario(only, 'A_ME_ROUTES', async () => {
 
 await scenario(only, 'B_PROFILE_WRITE_IDOR', async () => {
   const a = mkUser('wra'); const b = mkUser('wrb');
-  const before = (await GET(b, '/api/v1/app/me/profile')).text;
+  // Strip the per-request echo `requestId` before comparing: it differs between any two reads and is not profile state.
+  const stable = (t) => t.replace(/"requestId":"[^"]*"/g, '"requestId":"_"');
+  const before = stable((await GET(b, '/api/v1/app/me/profile')).text);
   const r1 = await call(a, 'PATCH', '/api/v1/app/me/profile', { nombreMostrar: 'HACKED BY A', usuarioId: b.id, usuario_id: b.id });
-  const after = (await GET(b, '/api/v1/app/me/profile')).text;
+  const after = stable((await GET(b, '/api/v1/app/me/profile')).text);
   check('P1.a_user_cannot_edit_another_users_profile_by_injecting_usuarioId_in_the_body_(mass_assignment)', after === before && !/HACKED BY A/.test(after), `write=${r1.status} before==after:${before === after}`);
   const r2 = await call(a, 'PATCH', '/api/v1/app/me/profile', { estadoCuenta: 'premium_vip', esAdmin: true, rol: 'admin' });
   const mine = await GET(a, '/api/v1/app/me');
@@ -72,14 +92,16 @@ await scenario(only, 'C_IDOR_INTENTOS_AND_ENTITLEMENT', async () => {
 });
 
 await scenario(only, 'D_OPOSITECA_SAVED_IDOR', async () => {
+  // V1 OposiTeca saves QUESTIONS only (openapi: PUT /opositeca/guardados/{tipo}/{targetId}, tipo enum = [pregunta]).
   const ex = mkExam({ tipo: 'rafaga', acceso: 'gratuito', n: 1 });
+  const target = ex.qs[0].id;
   const a = mkUser('opa'); const b = mkUser('opb');
-  const save = await call(a, 'PUT', `/api/v1/app/opositeca/guardados/examen/${ex.id}`, {}, { 'Idempotency-Key': uuid() });
-  const listA = await GET(a, '/api/v1/app/opositeca'); const listB = await GET(b, '/api/v1/app/opositeca');
-  check('O1.saved_item_is_per_user_(a_second_users_list_does_not_show_it)', (save.status === 200 || save.status === 201 || save.status === 204) && !listB.text.includes(ex.id) && listA.text.includes(ex.id), `save=${save.status} a_has=${listA.text.includes(ex.id)} b_has=${listB.text.includes(ex.id)}`);
-  const delB = await call(b, 'DELETE', `/api/v1/app/opositeca/guardados/examen/${ex.id}`);
-  const listA2 = await GET(a, '/api/v1/app/opositeca');
-  check('O2.a_user_cannot_delete_another_users_saved_item_by_guessing_the_target_id', listA2.text.includes(ex.id), `b_delete=${delB.status} a_still_has=${listA2.text.includes(ex.id)}`);
+  const save = await call(a, 'PUT', `/api/v1/app/opositeca/guardados/pregunta/${target}`, {}, { 'Idempotency-Key': uuid() });
+  const listA = await GET(a, '/api/v1/app/opositeca?tipo=pregunta'); const listB = await GET(b, '/api/v1/app/opositeca?tipo=pregunta');
+  check('O1.saved_item_is_per_user_(a_second_users_list_does_not_show_it)', (save.status === 200 || save.status === 201 || save.status === 204) && !listB.text.includes(target) && listA.text.includes(target), `save=${save.status} a_has=${listA.text.includes(target)} b_has=${listB.text.includes(target)}`);
+  const delB = await call(b, 'DELETE', `/api/v1/app/opositeca/guardados/pregunta/${target}`);
+  const listA2 = await GET(a, '/api/v1/app/opositeca?tipo=pregunta');
+  check('O2.a_user_cannot_delete_another_users_saved_item_by_guessing_the_target_id', listA2.text.includes(target), `b_delete=${delB.status} a_still_has=${listA2.text.includes(target)}`);
 });
 
 await scenario(only, 'E_VERB_AND_CONTENT_TYPE', async () => {
