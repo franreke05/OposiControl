@@ -59,7 +59,11 @@ class NetworkResultAdapter(
         return when {
             status == 401 -> AppError.Authentication("Tu sesión ha caducado. Vuelve a iniciar sesión.")
             status == 403 -> AppError.Authorization("No tienes permisos para realizar esta acción.")
-            status == 404 -> AppError.NotFound("El recurso solicitado no existe.")
+            // CP-05: un 404 con el sobre canonico del backend (codigo de dominio: ORDER_NOT_FOUND, FORO_NOT_FOUND...) dice
+            // QUE no existe; se muestra su mensaje. Sin codigo (ruta inexistente, proxy) sigue el texto generico.
+            status == 404 -> AppError.NotFound(
+                backendMessage(raw)?.takeIf { backendErrorCode(raw) != null } ?: "El recurso solicitado no existe.",
+            )
             status != null && status in 500..599 -> AppError.Network(serverFailureMessage(raw), status)
             // Resto de 4xx: errores de negocio. El backend ya redacta un mensaje
             // humano en el cuerpo (`ErrorDto.message`), y hasta ahora se tiraba:

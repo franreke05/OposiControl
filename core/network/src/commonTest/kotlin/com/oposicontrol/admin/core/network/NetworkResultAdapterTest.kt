@@ -44,6 +44,22 @@ class NetworkResultAdapterTest {
 
         val failure = assertIs<AppResult.Failure>(result)
         assertIs<AppError.NotFound>(failure.error)
+        assertEquals("El recurso solicitado no existe.", failure.error.message, "sin sobre canonico: texto generico")
+    }
+
+    /** CP-05: el 404 de dominio conserva su mensaje (que pedido, que hilo), sin ruta, id ni JSON. */
+    @Test
+    fun aDomain404ShowsTheBackendMessageAndNothingElse() = runTest {
+        val result = adapter.safeCall<Unit> {
+            error(
+                "backend 404 /api/v1/admin/pedidos/8f3c2b1a-0000-4000-8000-000000000001: " +
+                    "{\"error\":\"order_not_found\",\"message\":\"El pedido no existe.\",\"code\":\"ORDER_NOT_FOUND\"}",
+            )
+        }
+
+        val failure = assertIs<AppResult.Failure>(result)
+        assertIs<AppError.NotFound>(failure.error)
+        assertEquals("El pedido no existe.", failure.error.message)
     }
 
     @Test
