@@ -74,3 +74,30 @@ After: the full `:backend:ktor:test` has 2223 tests, 0 failures, 0 errors and 1 
 - `scripts/db-pg17-gate.test.sh` (the mutants) and `promtool` were not run in this round. `alert_rules.yml` only gained a comment.
 - Apple's real Notification History (that it returns the same `signedPayload` that was sent to the webhook) was not checked against Apple. It is
   the documented behaviour, and the test uses forged payloads.
+
+# Round 5 (N5-1 to N5-3 and the H-04 contract bug)
+
+Source: OposiControl `docs/audit-v1/HANDOFF_BOT_store_payments_round5.md` (re-audit of `c30292c` + `764e334`). It found N4-1/2/4/5/6 FIXED and
+N4-3 PARTIAL. New migration `20261022103200_v1_store_payments_round5.sql`. G1/D8 defaults are unchanged.
+
+| ID | Status | Change | Test(s) | Before (fails) | After |
+|---|---|---|---|---|---|
+| N5-1 (N4-3) | FIXED | When a read stops at 100 pages, the server **stores Apple's `paginationToken`** together with its window (`tienda_sondeo.pagina_token / ventana_inicio_ms / ventana_fin_ms`, `app_store_poll_page`). The cursor does not move. The next job run (no 6-hour wait) continues from that token in the same window. When the window is complete, `app_store_poll_advance` moves the cursor to the window end and clears the token. If Apple refuses a stored token (4xx), the token is dropped and the window is read again from the cursor. Gauge `store_inbox_history_incomplete` (1 while a token is stored), alert `StoreAppleHistoryIncomplete` (`== 1` for 6 h), ALERT log. **Why the token and not "advance to the signed date of the last notification read":** that option is only safe if History comes back in chronological order, which nobody has checked against Apple. With the token, nothing can be skipped in any order: the cursor moves only after the whole window was read | `StoreServerSyncTest.moreThanAHundredPagesAreReadAcrossPollsFromThePersistedTokenAndNothingIsSkipped` (101 pages across 2 polls), `.aRejectedStoredTokenRestartsTheWindowFromTheCursor`; gate step 6 `N5-1 pagina`, `N5-1 fin`; VERIFY `poll_advance_keeps_token`, `poll_page_check_missing` | `expected:<p101> but was:<null>`; `Expected an exception ... completed successfully with the result: <0>` | green |
+| N5-2 | FIXED | `drop function app_store_inbox_pending(integer, boolean)`. Nothing called it: Ktor uses `(integer, text[])` and `assertions.sql` was moved to it (`false` -> `'{}'::text[]`, `true` -> `array['REFUNDS_DISABLED']`) | VERIFY `old_pending_overload_left`; gate `N5-2 sobrecarga` | (the overload existed) | green |
+| N5-3 | FIXED | The orphan loop keeps its cursor between runs (`orphanCursor`). A run that hits the 50 cap leaves the cursor for the next run. A run that reaches the end (no row) resets it to null. It is kept in the replica's memory because it only sets the order of visits, never whether a row is processed: the database serialises by key and each replica rotates on its own | `StoreRound4RegressionTest.orphanReconcileResumesTheNextRunFromTheCursorWhenARunHitsTheCap` | `expected:<[assn:50]> but was:<[null]>` | green |
+| H-04 contract | FIXED (policy-neutral) | `AttemptService` answer / finish / abandon map an `ATTEMPT_EXPIRED` outcome to 409 `ATTEMPT_EXPIRED`, not 502 `UPSTREAM_CONTRACT_ERROR`. No timer behaviour was added: no RPC emits it today | `AttemptRoutesTest.h04AnAttemptExpiredOutcomeFromTheDatabaseIsThe409OfTheContract` (it replaces `h04TheRpcsNeverEmitAttemptExpiredSoKtorTreatsItAsAnUpstreamContractError`) | 502 `upstream_contract_error` | 409 `ATTEMPT_EXPIRED` |
+
+Evidence:
+- `:backend:ktor:test`: 2225 tests, 0 failures, 0 errors, 1 skipped. Before the fix, the 4 new or rewritten tests failed with the messages above.
+- PG17 gate on the worktree: `rc=0`. 31 pending migrations, VERIFY = 0, `assertions.sql` OK, rollback == bootstrap, store races (incl. D2,
+  N4-x, N5-x), H-04 races F1..F5.
+- `scripts/verify-ops-config.sh` rc=0: the metrics named in the alerts exist in the code. Whether promtool ran inside it was not checked.
+
+Retest:
+1. `./gradlew :backend:ktor:test --tests "com.oposicontrol.backend.StoreServerSyncTest" --tests "com.oposicontrol.backend.StoreRound4RegressionTest" --tests "com.oposicontrol.backend.AttemptRoutesTest"`, then the full suite.
+2. `bash scripts/db-pg17-gate.sh`.
+3. SQL by hand: `select app_store_poll_page('app_store','notification_history','tok',900,5000)` leaves `cursor_ms` unchanged and stores the token.
+   `select app_store_poll_advance('app_store','notification_history',5000)` moves the cursor and clears it.
+   `to_regprocedure('public.app_store_inbox_pending(integer,boolean)')` is null.
+
+Still not verified: Apple's real behaviour (token lifetime, order of History).

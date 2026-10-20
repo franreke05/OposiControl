@@ -172,17 +172,30 @@ class StoreServerSyncTest {
     private class Db : EconomyUpstream {
         val rpcs = CopyOnWriteArrayList<Pair<String, String>>()
         var cursor: Pair<Long, String>? = null
+        var token: String? = null
+        var window: Pair<Long, Long>? = null
         var due = "[]"
         override fun get(path: String): String = "[]"
         override fun rpc(function: String, body: String): SupabaseRawResponse {
             rpcs += function to body
             val args = Json.parseToJsonElement(body).jsonObject
             return when (function) {
-                "app_store_poll_get" -> SupabaseRawResponse(200, cursor?.let { """[{"cursor_ms":${it.first},"ultimo_sondeo_en":"${it.second}"}]""" } ?: "[]")
+                "app_store_poll_get" -> SupabaseRawResponse(200, cursor?.let {
+                    """[{"cursor_ms":${it.first},"ultimo_sondeo_en":"${it.second}","pagina_token":${token?.let { t -> "\"$t\"" } ?: "null"},""" +
+                        """"ventana_inicio_ms":${window?.first},"ventana_fin_ms":${window?.second}}]"""
+                } ?: "[]")
                 "app_store_poll_advance" -> {
                     val c = maxOf(cursor?.first ?: 0, args["p_cursor_ms"]!!.jsonPrimitive.content.toLong())
                     cursor = c to Instant.now().toString()
+                    token = null
+                    window = null
                     SupabaseRawResponse(200, "$c")
+                }
+                "app_store_poll_page" -> {
+                    token = args["p_token"]!!.jsonPrimitive.content
+                    window = args["p_inicio_ms"]!!.jsonPrimitive.content.toLong() to args["p_fin_ms"]!!.jsonPrimitive.content.toLong()
+                    cursor = (cursor?.first ?: window!!.first) to Instant.now().toString()
+                    SupabaseRawResponse(200, "true")
                 }
                 "app_store_inbox_put" -> SupabaseRawResponse(200, """[{"nuevo":true,"estado":"pendiente","resultado":null,"misma_huella":true,"reclamo":"c"}]""")
                 "app_store_subscriptions_due" -> SupabaseRawResponse(200, due)
@@ -234,14 +247,21 @@ class StoreServerSyncTest {
         assertEquals(before, http.calls.size)
     }
 
+    private fun testNotification(uuid: String) = pki.sign(
+        """{"notificationType":"TEST","notificationUUID":"$uuid","version":"2.0","signedDate":${now.toEpochMilli()},""" +
+            """"data":{"environment":"Production","bundleId":"$bundle","appAppleId":$appAppleId}}""",
+    )
+
     /**
-     * N4-3 (re-auditoria Control ronda 4): Get Notification History se corta a las 100 paginas. Si Apple aun dice que hay mas (`hasMore`), el cursor
-     * NO avanza hasta `now` (los avisos de las paginas siguientes no se pierden): se queda donde estaba (solo cuenta la hora del sondeo) y se avisa.
+     * N4-3 + N5-1 (re-auditoria Control rondas 4 y 5): mas de 100 paginas desde el cursor. Se GUARDA el `paginationToken` con su ventana (el cursor no
+     * se mueve: no depende de que History venga en orden), el siguiente paso del trabajo sigue desde ese token en la MISMA ventana (sin esperar
+     * 6 h) y, al acabar, el cursor llega al fin de la ventana. Gauge `store_inbox_history_incomplete` = 1 mientras queda token, 0 al terminar.
      */
     @Test
-    fun aTruncatedHistoryReadDoesNotMoveTheCursorPastTheUnreadPages() = runTest {
+    fun moreThanAHundredPagesAreReadAcrossPollsFromThePersistedTokenAndNothingIsSkipped() = runTest {
         val http = RecordingHttp()
-        repeat(100) { i -> http.responses += StoreHttpResponse(200, """{"notificationHistory":[],"hasMore":true,"paginationToken":"p${i + 2}"}""") }
+        http.responses += StoreHttpResponse(200, """{"notificationHistory":[{"signedPayload":"${testNotification("t-1")}"}],"hasMore":true,"paginationToken":"p2"}""")
+        repeat(99) { i -> http.responses += StoreHttpResponse(200, """{"notificationHistory":[],"hasMore":true,"paginationToken":"p${i + 3}"}""") }
         val db = Db()
         val twoDaysAgo = now.minusSeconds(2 * 86_400L)
         db.cursor = twoDaysAgo.toEpochMilli() to now.minusSeconds(7 * 3_600L).toString()
@@ -249,7 +269,38 @@ class StoreServerSyncTest {
         StorePaymentsJob.pollAppleHistory(runtime(db, apple = provider(http)), now) { logs += it }
         assertEquals(100, http.calls.count { it.url.contains("/notifications/history") })
         assertEquals(twoDaysAgo.toEpochMilli(), db.cursor!!.first, "the cursor stays where the unread pages start")
+        assertEquals("p101", db.token)
+        val window = twoDaysAgo.toEpochMilli() - 3_600_000L to now.toEpochMilli()
+        assertEquals(window, db.window)
+        assertEquals(1L, StoreInboxMetrics.historyIncomplete())
         assertTrue(logs.any { it.startsWith("ALERT store apple history") }, logs.toString())
+        // pagina 101: siguiente vuelta del trabajo (5 min despues, sin esperar 6 h), desde el token guardado y con la MISMA ventana
+        http.calls.clear()
+        http.responses += StoreHttpResponse(200, """{"notificationHistory":[{"signedPayload":"${testNotification("t-2")}"}],"hasMore":false}""")
+        StorePaymentsJob.pollAppleHistory(runtime(db, apple = provider(http)), now.plusSeconds(300))
+        val call = http.calls.single()
+        assertEquals("https://api.storekit.apple.com/inApps/v1/notifications/history?paginationToken=p101", call.url)
+        val body = Json.parseToJsonElement(call.body!!).jsonObject
+        assertEquals(window.first, body["startDate"]!!.jsonPrimitive.content.toLong())
+        assertEquals(window.second, body["endDate"]!!.jsonPrimitive.content.toLong())
+        assertEquals(now.toEpochMilli(), db.cursor!!.first, "complete: the cursor reaches the end of the window")
+        assertEquals(null, db.token)
+        assertEquals(0L, StoreInboxMetrics.historyIncomplete())
+        assertEquals(listOf("assn:t-1", "assn:t-2"), db.calls("app_store_inbox_put").map { it["p_evento_id"]!!.jsonPrimitive.content })
+    }
+
+    /** N5-1: Apple rechaza un token guardado (4xx): se descarta y la ventana se relee desde el cursor (nada se salta); el error sube. */
+    @Test
+    fun aRejectedStoredTokenRestartsTheWindowFromTheCursor() = runTest {
+        val http = RecordingHttp().apply { responses += StoreHttpResponse(400, """{"errorCode":4000006,"errorMessage":"Invalid pagination token"}""") }
+        val db = Db()
+        val twoDaysAgo = now.minusSeconds(2 * 86_400L)
+        db.cursor = twoDaysAgo.toEpochMilli() to now.minusSeconds(60).toString()
+        db.token = "stale"
+        db.window = twoDaysAgo.toEpochMilli() - 3_600_000L to now.minusSeconds(3_600).toEpochMilli()
+        assertFailsWith<Exception> { StorePaymentsJob.pollAppleHistory(runtime(db, apple = provider(http)), now) }
+        assertEquals(null, db.token)
+        assertEquals(twoDaysAgo.toEpochMilli(), db.cursor!!.first)
     }
 
     /** N4-4: el mismo aviso por el webhook y por Notification History da la MISMA huella (sha256 del signedPayload en los dos caminos). */

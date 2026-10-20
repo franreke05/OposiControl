@@ -176,3 +176,14 @@ groups:
         annotations:
           summary: "Pagos de tienda activos sin metricas de la bandeja"
           description: "El trabajo de reconciliacion no publica store_inbox_backlog. Revisar PAYMENTS_STORE_JOB_SECONDS y los logs del trabajo. Dead letter: decision N3-6 (docs/payments/DECISIONS_PENDING.md)."
+
+      # N5-1 (re-auditoria Control ronda 5): Get Notification History lleva mas de 100 paginas desde el cursor; el token de la pagina siguiente esta
+      # guardado y cada vuelta del trabajo lee 100 mas. Si sigue a medias 6 horas, algo no avanza (token rechazado en bucle, API caida).
+      - alert: StoreAppleHistoryIncomplete
+        expr: max(store_inbox_history_incomplete) == 1
+        for: 6h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Recuperacion de avisos de App Store (Notification History) a medias desde hace 6 horas"
+          description: "tienda_sondeo guarda un paginationToken que no se termina de leer. Revisar los logs 'store apple history' del trabajo y la App Store Server API."

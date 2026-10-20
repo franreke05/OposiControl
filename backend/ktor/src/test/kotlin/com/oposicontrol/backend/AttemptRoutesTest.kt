@@ -975,18 +975,23 @@ class AttemptRoutesTest {
     }
 
     @Test
-    fun h04TheRpcsNeverEmitAttemptExpiredSoKtorTreatsItAsAnUpstreamContractError() = testApplication {
+    fun h04AnAttemptExpiredOutcomeFromTheDatabaseIsThe409OfTheContract() = testApplication {
         application { attemptModule() }
-        // ATTEMPT_EXPIRED existe en el catalogo de errores y en el OpenAPI, pero ningun outcome de la base lo produce y el servicio
-        // no lo traduce: si una base futura lo devolviera sin cambiar Ktor, el cliente veria 502, no 409.
+        // H-04 (re-auditoria Control ronda 5), neutral de politica: hoy ninguna RPC emite ATTEMPT_EXPIRED (no hay limite de tiempo, ver
+        // h04AnOpenAttemptLongPastTheExamDurationHasNoDeadlineAndIsStillOpen). Si una base futura lo devolviera, el cliente ve el 409
+        // ATTEMPT_EXPIRED del catalogo / OpenAPI, nunca un 502 UPSTREAM_CONTRACT_ERROR.
         upstream.answerOutcome = """{"outcome":"ATTEMPT_EXPIRED"}"""
         val answer = client.call(HttpMethod.Put, "$base/respuestas/${q(1)}", answerBody(1, 1), key1)
-        assertEquals(HttpStatusCode.BadGateway, answer.status)
-        assertEquals("UPSTREAM_CONTRACT_ERROR", code(answer.bodyAsText()))
+        assertEquals(HttpStatusCode.Conflict, answer.status, answer.bodyAsText())
+        assertEquals("ATTEMPT_EXPIRED", code(answer.bodyAsText()))
         upstream.finishOutcome = """{"outcome":"ATTEMPT_EXPIRED"}"""
         val finish = client.call(HttpMethod.Post, "$base/finalizar")
-        assertEquals(HttpStatusCode.BadGateway, finish.status)
-        assertEquals("UPSTREAM_CONTRACT_ERROR", code(finish.bodyAsText()))
+        assertEquals(HttpStatusCode.Conflict, finish.status, finish.bodyAsText())
+        assertEquals("ATTEMPT_EXPIRED", code(finish.bodyAsText()))
+        upstream.abandonOutcome = """{"outcome":"ATTEMPT_EXPIRED"}"""
+        val abandon = client.call(HttpMethod.Post, "$base/abandonar", """{"posicionPregunta":1,"motivo":"salida_usuario"}""")
+        assertEquals(HttpStatusCode.Conflict, abandon.status, abandon.bodyAsText())
+        assertEquals("ATTEMPT_EXPIRED", code(abandon.bodyAsText()))
     }
 
     @Test

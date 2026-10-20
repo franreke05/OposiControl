@@ -530,6 +530,7 @@ internal class AttemptService(
             }
             "ATTEMPT_NOT_FOUND" -> throw attemptNotOwned()
             "ATTEMPT_NOT_IN_PROGRESS" -> throw CanonicalErrorCode.ATTEMPT_NOT_IN_PROGRESS.exception()
+            "ATTEMPT_EXPIRED" -> throw CanonicalErrorCode.ATTEMPT_EXPIRED.exception()   // H-04 ronda 5: ninguna RPC lo emite hoy; si lo hiciera, 409 y no 502
             "QUESTION_NOT_IN_ATTEMPT" -> throw CanonicalErrorCode.QUESTION_NOT_IN_ATTEMPT.exception()
             "OPTION_NOT_IN_QUESTION" -> throw CanonicalErrorCode.OPTION_NOT_IN_QUESTION.exception()
             "ANSWER_LOCKED" -> throw CanonicalErrorCode.ANSWER_LOCKED.exception()
@@ -546,6 +547,7 @@ internal class AttemptService(
             "OK" -> Unit
             "ATTEMPT_NOT_FOUND" -> throw attemptNotOwned()
             "ATTEMPT_ABANDONED" -> throw CanonicalErrorCode.ATTEMPT_ABANDONED.exception()
+            "ATTEMPT_EXPIRED" -> throw CanonicalErrorCode.ATTEMPT_EXPIRED.exception()
             else -> throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
         }
         resultOf(gateway.attempt(userId.value, attemptId) ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception())
@@ -562,6 +564,7 @@ internal class AttemptService(
             "OK" -> Unit
             "ATTEMPT_NOT_FOUND" -> throw attemptNotOwned()
             "ATTEMPT_ALREADY_FINISHED" -> throw CanonicalErrorCode.ATTEMPT_ALREADY_FINISHED.exception()
+            "ATTEMPT_EXPIRED" -> throw CanonicalErrorCode.ATTEMPT_EXPIRED.exception()
             "INVALID_POSITION" -> throw validationError(ErrorIssue("posicionPregunta", CanonicalIssue.OUT_OF_RANGE))
             "INVALID_REASON" -> throw validationError(ErrorIssue("motivo", CanonicalIssue.INVALID_FORMAT))
             else -> throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()

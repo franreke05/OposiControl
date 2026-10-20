@@ -191,4 +191,32 @@ class StoreRound4RegressionTest {
         assertTrue(upstream.calls("app_store_reconcile_orphan_step").all { it["p_reembolsos_habilitados"]!!.jsonPrimitive.content == "false" })
     }
 
+    /**
+     * N5-3 (re-auditoria Control ronda 5): una vuelta que llega al tope de 50 NO vuelve a empezar desde el principio en la siguiente (50 huerfanos
+     * con ERROR persistente en cabeza no dejan sin procesar a los de detras): la siguiente vuelta sigue desde su cursor. Una vuelta que llega al
+     * final (sin fila) vuelve a empezar por el principio.
+     */
+    @Test
+    fun orphanReconcileResumesTheNextRunFromTheCursorWhenARunHitsTheCap() = runTest {
+        val upstream = Upstream()
+        var n = 0
+        var end = false
+        upstream.handlers["app_store_reconcile_orphan_step"] = {
+            n++
+            if (end) SupabaseRawResponse(200, "[]")
+            else SupabaseRawResponse(200, """[{"proveedor":"app_store","evento_id":"assn:$n","recibido_en":"2026-10-20T10:00:00+00:00","resultado":"ERROR"}]""")
+        }
+        val service = StorePaymentsService(upstream, emptyMap(), catalog, StoreSandboxPolicy.parse("reject", null), StorePaymentDecisions.CONSERVATIVE, clock = { now })
+        service.maintenance(null)
+        upstream.rpcs.clear()
+        service.maintenance(null)
+        val second = upstream.calls("app_store_reconcile_orphan_step").first()
+        assertEquals("assn:50", second["p_tras_evento"]!!.jsonPrimitive.content, "the second run resumes after the 50 rows of the first")
+        end = true
+        upstream.rpcs.clear()
+        service.maintenance(null)   // the run that resumes from assn:100 finds nothing after it: the cursor goes back to the start
+        upstream.rpcs.clear()
+        service.maintenance(null)
+        assertEquals(JsonNull, upstream.calls("app_store_reconcile_orphan_step").first()["p_tras_recibido"])
+    }
 }

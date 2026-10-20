@@ -229,19 +229,34 @@ internal object StorePaymentsJob {
      */
     suspend fun pollAppleHistory(runtime: StorePaymentsRuntime, now: Instant, log: (String) -> Unit = {}): Int {
         val apple = runtime.apple?.takeIf { it.hasServerApi } ?: return 0
-        val cursor = runtime.service.pollCursor(StorePlatform.APP_STORE, HISTORY_SOURCE)
-        if (cursor != null && cursor.second.isAfter(now.minusSeconds(6 * 3_600L))) return 0
+        val state = runtime.service.pollState(StorePlatform.APP_STORE, HISTORY_SOURCE)
+        // N5-1: una lectura a medias (token guardado) sigue en la siguiente vuelta del trabajo, sin esperar las 6 horas.
+        val page = state?.pendingPage
+        if (page == null && state != null && state.lastPoll.isAfter(now.minusSeconds(6 * 3_600L))) return 0
         val nowMs = now.toEpochMilli()
-        val start = maxOf(nowMs - 180 * DAY_MS + DAY_MS, (cursor?.first ?: (nowMs - 3 * DAY_MS)) - 3_600_000L)
-        val read = apple.notificationHistory(StoreEnvironment.PRODUCTION, start, nowMs, log)
+        val start = page?.second ?: maxOf(nowMs - 180 * DAY_MS + DAY_MS, (state?.cursorMs ?: (nowMs - 3 * DAY_MS)) - 3_600_000L)
+        val end = page?.third ?: nowMs
+        val read = try {
+            apple.notificationHistory(StoreEnvironment.PRODUCTION, start, end, log, startToken = page?.first)
+        } catch (e: BackendDomainException) {
+            // Apple rechaza el token guardado (4xx): se descarta y la ventana se relee entera desde el cursor (que no se movio): nada se salta.
+            if (page != null && e.status.value < 500) {
+                state?.let { runtime.service.advancePollCursor(StorePlatform.APP_STORE, HISTORY_SOURCE, it.cursorMs) }
+                log("store apple history: stored pagination token refused; the window is read again from the cursor")
+            }
+            throw e
+        }
         read.events.forEach { (event, fingerprint) -> runtime.service.ingest(event, fingerprint) }
-        if (read.complete) {
-            runtime.service.advancePollCursor(StorePlatform.APP_STORE, HISTORY_SOURCE, nowMs)
+        val next = read.nextToken
+        if (next == null) {
+            runtime.service.advancePollCursor(StorePlatform.APP_STORE, HISTORY_SOURCE, end)
+            StoreInboxMetrics.historyIncomplete(false)
         } else {
-            // N4-3: Apple aun tenia paginas (tope de 100): el cursor NO avanza (lo no leido se vuelve a pedir en el siguiente sondeo, la bandeja
-            // deduplica); solo se anota la hora del sondeo (la base nunca mueve el cursor hacia atras) para no repetirlo cada vuelta del trabajo.
-            runtime.service.advancePollCursor(StorePlatform.APP_STORE, HISTORY_SOURCE, cursor?.first ?: start)
-            log("ALERT store apple history: page cap reached with more pages pending; cursor kept, ${read.events.size} notification(s) ingested")
+            // N4-3 / N5-1: mas de 100 paginas. Se GUARDA el token con su ventana y el cursor no se mueve: no depende de que History venga en
+            // orden cronologico (avanzar hasta la fecha del ultimo aviso leido si dependeria). Gauge + alerta StoreAppleHistoryIncomplete.
+            runtime.service.savePollPage(StorePlatform.APP_STORE, HISTORY_SOURCE, next, start, end)
+            StoreInboxMetrics.historyIncomplete(true)
+            log("ALERT store apple history: page cap reached; pagination token stored, reading continues next run (${read.events.size} notification(s) ingested)")
         }
         return read.events.size
     }
@@ -291,4 +306,14 @@ internal object StoreInboxMetrics {
     }
 
     fun value(name: String, estado: String): Long? = (if (name == BACKLOG_METRIC) rows else oldest)[estado]?.get()
+
+    /** N5-1: 1 mientras Get Notification History tiene un `paginationToken` guardado (lectura de mas de 100 paginas a medias), 0 si no. */
+    const val HISTORY_INCOMPLETE_METRIC = "store_inbox_history_incomplete"
+    private val historyIncomplete = java.util.concurrent.atomic.AtomicLong(0).also { holder ->
+        io.micrometer.core.instrument.Gauge.builder(HISTORY_INCOMPLETE_METRIC) { holder.get().toDouble() }.register(BackendPrometheusMetrics.registry)
+    }
+
+    fun historyIncomplete(incomplete: Boolean) = historyIncomplete.set(if (incomplete) 1 else 0)
+
+    fun historyIncomplete(): Long = historyIncomplete.get()
 }

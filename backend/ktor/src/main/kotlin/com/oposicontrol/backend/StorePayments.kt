@@ -461,7 +461,14 @@ private data class StoreOrphanStepRow(
 private data class StorePollRow(
     @SerialName("cursor_ms") val cursorMs: Long,
     @SerialName("ultimo_sondeo_en") val ultimoSondeoEn: String,
+    /** N5-1: lectura a medias (mas de 100 paginas): token de la pagina siguiente y su ventana. */
+    @SerialName("pagina_token") val paginaToken: String? = null,
+    @SerialName("ventana_inicio_ms") val ventanaInicioMs: Long? = null,
+    @SerialName("ventana_fin_ms") val ventanaFinMs: Long? = null,
 )
+
+/** N5-1: estado persistido de un sondeo (tienda_sondeo). [pendingPage] = (token, inicio, fin) de una lectura a medias, o null. */
+internal data class StorePollState(val cursorMs: Long, val lastPoll: Instant, val pendingPage: Triple<String, Long, Long>?)
 
 @Serializable
 private data class StoreFinalizeRow(
@@ -516,6 +523,10 @@ internal class StorePaymentsService(
 ) {
     private val refundsEnabled: Boolean get() = decisions.refundsEnabled
     private val deadLetterAttempts: Int get() = decisions.deadLetterAttempts
+    /** N5-3: cursor de re-enlace de huerfanos entre vueltas del trabajo (null = empezar por el principio). */
+    @Volatile
+    private var orphanCursor: StoreOrphanStepRow? = null
+
     private fun provider(platform: StorePlatform): StorePaymentProvider =
         providers[platform] ?: throw CanonicalErrorCode.PAYMENT_PROVIDER_UNAVAILABLE.exception()
 
@@ -857,6 +868,24 @@ internal class StorePaymentsService(
     }
 
     /** Cursor persistido de un sondeo (tienda_sondeo): (cursor ms, ultimo sondeo) o null si nunca se sondeo. */
+    /** N5-1: el estado completo del sondeo, con el token de una lectura a medias si lo hay. */
+    suspend fun pollState(platform: StorePlatform, source: String): StorePollState? =
+        rpc<StorePollRow>("app_store_poll_get", buildJsonObject { put("p_proveedor", platform.provider); put("p_fuente", source) }.toString()).singleOrNull()
+            ?.let { row ->
+                val page = row.paginaToken?.let { t -> if (row.ventanaInicioMs != null && row.ventanaFinMs != null) Triple(t, row.ventanaInicioMs, row.ventanaFinMs) else null }
+                StorePollState(row.cursorMs, runCatching { OffsetDateTime.parse(row.ultimoSondeoEn).toInstant() }.getOrNull() ?: Instant.EPOCH, page)
+            }
+
+    /** N5-1: guarda el token de la pagina siguiente y su ventana (el cursor NO se mueve; la hora del sondeo si). */
+    suspend fun savePollPage(platform: StorePlatform, source: String, token: String, startMillis: Long, endMillis: Long) {
+        rpcScalar(
+            "app_store_poll_page",
+            buildJsonObject {
+                put("p_proveedor", platform.provider); put("p_fuente", source); put("p_token", token); put("p_inicio_ms", startMillis); put("p_fin_ms", endMillis)
+            }.toString(),
+        )
+    }
+
     suspend fun pollCursor(platform: StorePlatform, source: String): Pair<Long, Instant>? =
         rpc<StorePollRow>("app_store_poll_get", buildJsonObject { put("p_proveedor", platform.provider); put("p_fuente", source) }.toString()).singleOrNull()
             ?.let { row -> row.cursorMs to (runCatching { OffsetDateTime.parse(row.ultimoSondeoEn).toInstant() }.getOrNull() ?: Instant.EPOCH) }
@@ -900,7 +929,10 @@ internal class StorePaymentsService(
     suspend fun maintenance(retentionDays: Int?) {
         // N4-6: UNA fila por llamada (una transaccion: como mucho un cerrojo de clave y uno de cartera), siguiendo el cursor de la anterior; una clave
         // ocupada (BUSY) o un fallo (ERROR) no frena a las siguientes y se reintenta en la proxima vuelta. Como mucho 50 filas por vuelta.
-        var cursor: StoreOrphanStepRow? = null
+        // N5-3: una vuelta que llega al tope deja su cursor para la siguiente (50 ERROR en cabeza no tapan a los de detras); al llegar al final
+        // (sin fila) vuelve a null y la siguiente empieza por el principio. En memoria de la replica: solo decide el ORDEN de visita, nunca si
+        // una fila se procesa (cada replica rota sola; la base serializa por clave).
+        var cursor: StoreOrphanStepRow? = orphanCursor
         var linked = 0
         for (i in 0 until ORPHAN_STEPS_PER_RUN) {
             val step = rpc<StoreOrphanStepRow>(
@@ -911,10 +943,15 @@ internal class StorePaymentsService(
                     put("p_tras_proveedor", cursor?.proveedor)
                     put("p_tras_evento", cursor?.eventoId)
                 }.toString(),
-            ).singleOrNull() ?: break
+            ).singleOrNull()
+            if (step == null) {
+                cursor = null
+                break
+            }
             if (step.resultado !in ORPHAN_STEP_NOT_LINKED) linked++
             cursor = step
         }
+        orphanCursor = cursor
         if (linked > 0) log("store inbox: $linked orphan notification(s) re-linked to their order")
         retentionDays?.let { days -> rpcScalar("app_store_inbox_purge", buildJsonObject { put("p_dias", days) }.toString()) }
     }

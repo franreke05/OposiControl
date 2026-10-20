@@ -140,7 +140,7 @@ metrics_known() {
       ktor_http_server_requests_seconds_count|ktor_http_server_requests_seconds_sum|ktor_http_server_requests_seconds_bucket) ;;
       jvm_memory_used_bytes|jvm_memory_max_bytes|jvm_gc_pause_seconds_sum|jvm_gc_pause_seconds_count|jvm_threads_live_threads) ;;
       legacy_route_requests_total|upstream_response_wire_bytes_total|upstream_supabase_up) ;;
-      store_inbox_backlog|store_inbox_oldest_seconds|store_payments_enabled) ;;  # StoreInboxMetrics (StorePaymentRoutes.kt)
+      store_inbox_backlog|store_inbox_oldest_seconds|store_inbox_history_incomplete|store_payments_enabled) ;;  # StoreInboxMetrics (StorePaymentRoutes.kt)
       *) echo "metrica desconocida: $m" >&2; bad=1 ;;
     esac
   done

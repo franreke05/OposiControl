@@ -155,13 +155,16 @@ internal class AppStoreProvider(
 
     /**
      * Get Notification History (recuperar huecos): cada `signedPayload` verificado como un aviso. Uno con firma mala se salta (y se cuenta).
-     * N4-3: como mucho [maxPages] paginas; [AppleHistoryRead.complete] = false si Apple aun tenia mas (el cursor NO debe pasar de la ventana leida).
+     * N4-3 / N5-1: como mucho [maxPages] paginas desde [startToken] (null = primera); [AppleHistoryRead.nextToken] = token de la siguiente si Apple
+     * aun tenia mas (se guarda y se sigue en el siguiente sondeo, con la MISMA ventana).
      */
-    suspend fun notificationHistory(environment: StoreEnvironment, startMillis: Long, endMillis: Long, log: (String) -> Unit = {}, maxPages: Int = 100): AppleHistoryRead {
-        val server = api ?: return AppleHistoryRead(emptyList(), complete = true)
+    suspend fun notificationHistory(
+        environment: StoreEnvironment, startMillis: Long, endMillis: Long, log: (String) -> Unit = {}, maxPages: Int = 100, startToken: String? = null,
+    ): AppleHistoryRead {
+        val server = api ?: return AppleHistoryRead(emptyList(), null)
         return withContext(Dispatchers.IO) {
             val events = mutableListOf<Pair<StoreEvent, String>>()
-            var token: String? = null
+            var token: String? = startToken
             var pages = 0
             var skipped = 0
             do {
@@ -179,7 +182,7 @@ internal class AppStoreProvider(
                 pages++
             } while (token != null && pages < maxPages)
             if (skipped > 0) log("store apple history: $skipped notification(s) failed verification and were skipped")
-            AppleHistoryRead(events, complete = token == null)
+            AppleHistoryRead(events, token)
         }
     }
 
@@ -295,4 +298,7 @@ internal fun appleVerificationFailure(e: VerificationException, definitive: Cano
     if (e.status == VerificationStatus.RETRYABLE_VERIFICATION_FAILURE) CanonicalErrorCode.UPSTREAM_UNAVAILABLE.exception(cause = e) else definitive.exception()
 
 /** N4-3: lo leido de Get Notification History y si se leyo ENTERO (sin `paginationToken` pendiente). */
-internal data class AppleHistoryRead(val events: List<Pair<StoreEvent, String>>, val complete: Boolean)
+internal data class AppleHistoryRead(val events: List<Pair<StoreEvent, String>>, val nextToken: String?) {
+    /** Sin `paginationToken` pendiente: se leyo la ventana entera. */
+    val complete: Boolean get() = nextToken == null
+}
