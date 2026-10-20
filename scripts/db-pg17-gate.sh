@@ -3,6 +3,9 @@
 #   1. Manifiesto: supabase/baseline/PENDING_MIGRATIONS.txt == supabase/migrations/2026092810*.sql + 2026093*.sql + 202610*.sql; su parte
 #      2026093* == supabase/SLICE1_MIGRATIONS.txt, su parte 202610*_slice2_* == supabase/SLICE2_MIGRATIONS.txt (SLICE 2), su parte 202610*_slice7_* == supabase/SLICE7_MIGRATIONS.txt (SLICE 7) y el resto
 #      de 202610* == supabase/SLICE3_MIGRATIONS.txt (SLICE 3); cada pendiente tiene bloque ROLLBACK y VERIFY (salvo NO_VERIFY, abajo).
+#      Las 202610*_security_* NO son pendientes (DEBT-156b): se aplican a MAIN a mano con GO y se prueban en backend/dbtest contra
+#      stubs con la forma de MAIN. Paso 1b: cada una lleva VERIFY, ROLLBACK y una clase de dbtest que la nombre (salvo las listas
+#      LEGACY_* explicitas), y ninguna migracion V1 (20261022* o V1_MIGRATIONS.txt) puede quedar fuera por llevar _security_.
 #   2. Arranca un contenedor nuevo, carga supabase/baseline/main_shape_subset.sql con ON_ERROR_STOP=1 en UNA transaccion
 #      (cero errores tolerados) y toma la huella de catalogo F0.
 #   3. Aplica cada pendiente EN ORDEN con ON_ERROR_STOP=1 y ejecuta su VERIFY justo despues: cada fila debe ser
@@ -22,7 +25,7 @@ boot=supabase/baseline/main_shape_subset.sql; pend=supabase/baseline/PENDING_MIG
 for f in "$boot" "$pend" "$man" "$man2" "$man3" "$man7" supabase/baseline/assertions.sql; do [ -s "$f" ] || fail "$f vacio o ausente"; done
 pending="$(tr -d '\r' < "$pend" | grep -Ev '^[[:space:]]*(#|$)')"
 [ "$pending" = "$(echo "$pending" | sort -u)" ] || fail "$pend no esta ordenado o tiene duplicados"
-actual="$( (cd supabase/migrations && ls | grep -E '^(2026092810|2026093|202610).*\.sql$' | sed 's/\.sql$//' | sort) )"
+actual="$( (cd supabase/migrations && ls | grep -E '^(2026092810|2026093|202610).*\.sql$' | grep -v '_security_' | sed 's/\.sql$//' | sort) )"
 [ "$pending" = "$actual" ] || { echo "FAIL: $pend y supabase/migrations difieren (< pendientes, > real):"; diff <(echo "$pending") <(echo "$actual"); exit 1; }
 [ "$(echo "$pending" | grep '^2026093')" = "$(tr -d '\r' < "$man" | grep -Ev '^[[:space:]]*(#|$)' | sort)" ] || fail "$pend (2026093*) y $man difieren"
 [ "$(echo "$pending" | grep '^202610' | grep -Ev '^[0-9]+_slice[27]_')" = "$(tr -d '\r' < "$man3" | grep -Ev '^[[:space:]]*(#|$)' | sort)" ] || fail "$pend (202610*) y $man3 difieren"
@@ -37,6 +40,24 @@ for v in $pending; do
   f="supabase/migrations/$v.sql"
   block "$f" ROLLBACK >/dev/null || fail "$v: bloque ROLLBACK ausente o con lineas sin comentar"
   if [ "$v" != "$NO_VERIFY" ]; then block "$f" VERIFY >/dev/null || fail "$v: bloque VERIFY ausente o con lineas sin comentar"; fi
+done
+
+# 1b. DEBT-156b (acordado con OposiBot, 2026-10-20). Las listas LEGACY son cerradas: una *_security_* nueva no puede entrar en ellas
+#     sin cambiar este fichero, y se justifican en docs/registry/TECH_DEBT.md (DEBT-156b).
+#     - Sin ROLLBACK: anteriores a la convencion ROLLBACK/VERIFY en las *_security_* (forward-only).
+#     - Sin clase de dbtest que las nombre: anteriores a la regla; su VERIFY es la unica comprobacion automatica.
+LEGACY_SECURITY_NO_ROLLBACK="20261012100000_security_client_write_hardening 20261013100000_security_admin_access_requests 20261014100000_security_user_notices 20261015100000_security_audit_log_index 20261020100000_security_access_request_email_verified 20261021100000_security_audit_log_append_only"
+LEGACY_SECURITY_NO_DBTEST="20261012100000_security_client_write_hardening 20261014100000_security_user_notices 20261015100000_security_audit_log_index"
+in_list() { case " $2 " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+security="$( (cd supabase/migrations && ls | grep -E '^202610.*_security_.*\.sql$' | sed 's/\.sql$//' | sort) )"
+v1list="$( [ -f supabase/V1_MIGRATIONS.txt ] && tr -d '\r' < supabase/V1_MIGRATIONS.txt | grep -Ev '^[[:space:]]*(#|$)' )"
+for v in $security; do
+  f="supabase/migrations/$v.sql"
+  case "$v" in 20261022*) fail "$v: una migracion V1 (20261022*) no puede llevar _security_ (quedaria fuera del gate)" ;; esac
+  ! printf '%s\n' "$v1list" | grep -qx "$v" || fail "$v: esta en V1_MIGRATIONS.txt y no puede llevar _security_ (quedaria fuera del gate)"
+  block "$f" VERIFY >/dev/null || fail "$v: bloque VERIFY ausente o con lineas sin comentar (migracion _security_)"
+  in_list "$v" "$LEGACY_SECURITY_NO_ROLLBACK" || block "$f" ROLLBACK >/dev/null || fail "$v: bloque ROLLBACK ausente o con lineas sin comentar (migracion _security_)"
+  in_list "$v" "$LEGACY_SECURITY_NO_DBTEST" || grep -rqF "$v" backend/dbtest/src/test 2>/dev/null || fail "$v: ninguna prueba de backend/dbtest la nombra (migracion _security_)"
 done
 echo "ok:   manifiesto ($(echo "$pending" | wc -l | tr -d ' ') pendientes) y bloques VERIFY/ROLLBACK"
 

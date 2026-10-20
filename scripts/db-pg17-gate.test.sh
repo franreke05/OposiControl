@@ -2,6 +2,7 @@
 # Control negativo de db-pg17-gate.sh (DB-CI-PG17), con PostgreSQL 17 REAL (Docker): una copia sin tocar del arbol PASA y cada
 # mutacion sembrada FALLA por SU motivo (mensaje FAIL concreto), nunca por otro:
 #   manifiesto: una pendiente borrada de PENDING_MIGRATIONS.txt / un VERIFY ausente  (sin contenedor, inmediato)
+#   DEBT-156b (sin contenedor): una _security_ nueva sin ROLLBACK / sin VERIFY / sin clase de dbtest; una V1 (20261022*) con _security_
 #   (a) grant select de solicitudes_eliminacion_cuenta a authenticated en la ULTIMA migracion -> frontera de assertions.sql
 #   (a2) grant execute de idem_begin (sin VERIFY propio) a authenticated -> la matriz grants/RLS de assertions.sql
 #   (b) el mismo grant al final de 20260930100300 -> el VERIFY de esa migracion (contador != 0)
@@ -20,7 +21,7 @@ set -uo pipefail
 cd "$(dirname "$0")/.."
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 n=0
-fresh() { n=$((n + 1)); w="$tmp/w$n"; mkdir -p "$w/scripts"; cp -R supabase "$w/"; cp scripts/db-pg17-gate.sh "$w/scripts/"; }
+fresh() { n=$((n + 1)); w="$tmp/w$n"; mkdir -p "$w/scripts" "$w/backend/dbtest/src"; cp -R supabase "$w/"; cp -R backend/dbtest/src/test "$w/backend/dbtest/src/"; cp scripts/db-pg17-gate.sh "$w/scripts/"; }
 gate() { MIG_ROOT="$w" bash "$w/scripts/db-pg17-gate.sh" >"$tmp/out" 2>&1; }
 expect_fail() { # $1 = escenario, $2 = mensaje FAIL esperado
   gate && { cat "$tmp/out"; echo "TEST FAIL: $1 paso"; exit 1; }
@@ -36,6 +37,16 @@ fresh; sed -i '/^20260930101600_/d' "$w/supabase/baseline/PENDING_MIGRATIONS.txt
 expect_fail "pendiente borrada del manifiesto" "PENDING_MIGRATIONS.txt y supabase/migrations difieren"
 fresh; sed -i '/^-- VERIFY-BEGIN/,/^-- VERIFY-END/d' "$w/$del"; mutated "$w/$del"
 expect_fail "bloque VERIFY ausente" "20260930100300_slice1_account_deletion_requests: bloque VERIFY ausente"
+# DEBT-156b: las _security_ quedan fuera de PENDING pero no fuera de control (paso 1b).
+sec=supabase/migrations/20261023100300_security_moderator_requires_active_account.sql
+fresh; sed -i '/^-- ROLLBACK-BEGIN/,/^-- ROLLBACK-END/d' "$w/$sec"; mutated "$w/$sec"
+expect_fail "_security_ sin ROLLBACK" "20261023100300_security_moderator_requires_active_account: bloque ROLLBACK ausente"
+fresh; sed -i '/^-- VERIFY-BEGIN/,/^-- VERIFY-END/d' "$w/$sec"; mutated "$w/$sec"
+expect_fail "_security_ sin VERIFY" "20261023100300_security_moderator_requires_active_account: bloque VERIFY ausente"
+fresh; rm "$w/backend/dbtest/src/test/kotlin/com/oposicontrol/dbtest/security/ModeratorActiveAccountMigrationTest.kt"
+expect_fail "_security_ sin clase de dbtest" "20261023100300_security_moderator_requires_active_account: ninguna prueba de backend/dbtest la nombra"
+fresh; cp "$w/$sec" "$w/supabase/migrations/20261022109900_v1_security_probe.sql"
+expect_fail "una V1 (20261022*) con _security_" "20261022109900_v1_security_probe: una migracion V1"
 
 fresh; gate || { cat "$tmp/out"; echo "TEST FAIL: la copia sin mutar deberia pasar"; exit 1; }; echo "ok:   copia sin mutar pasa"
 fresh; echo "$leak" >> "$w/$last"; mutated "$w/$last"
