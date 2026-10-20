@@ -388,7 +388,14 @@ commit;
 
 Comprobación después (solo lectura): repetir los dos listados de 1) y la consulta de sesiones de la sección 10.4; las filas no aprobadas, sin verificar, anteriores al despliegue y sin roles deben ser 0. No hay auditoría automática de este paso: anotar en el ledger cuántas cuentas se borraron y cuántas se neutralizaron (los contadores de filas de cada sentencia).
 
-Requisito nuevo: `AUTH_RATE_LIMIT_HMAC_SECRET` (32+ caracteres) es obligatorio fuera de desarrollo también para el proceso de control; hoy solo está en `backend.bot.env`. Antes de desplegar, copiar el mismo valor a `backend.control.env` (sin imprimirlo), o control no arranca.
+Requisito (SEC-V1-02 / RB-14, develop `2cab55b`; sustituye a la instrucción anterior de copiar `AUTH_RATE_LIMIT_HMAC_SECRET` a control, que rompía F-09b): `ktor-control` NO arranca fuera de desarrollo sin estas variables PROPIAS en `backend.control.env` (nombres en `ops/deploy/backend.control.env.example`; valores nunca impresos ni en el repo):
+
+- `ADMIN_RATE_LIMIT_MODE=valkey` (`memory` solo en desarrollo).
+- `ADMIN_RATE_LIMIT_VALKEY_URL` (esquema redis, host `valkey`, contraseña de `VALKEY_PASSWORD`).
+- `ADMIN_RATE_LIMIT_HMAC_SECRET` (32+ caracteres, distinto del de bot; también es la clave del seudónimo de correo de los logs de solicitudes de acceso en control).
+- Opcional: `ADMIN_MUTATION_RATE_LIMIT_PER_MINUTE` (vacía = 120).
+
+`backend.control.env` sigue sin `AUTH_RATE_LIMIT_HMAC_SECRET`, `VALKEY_URL` ni `APPLE_CLIENT_SECRET` (`scripts/verify-ops-config.sh` lo comprueba). Comprobación tras desplegar: 121 mutaciones admin seguidas desde una misma sesión de administrador en staging → la 121.ª devuelve 429 `RATE_LIMITED` con `Retry-After`. Evidencia local: `docs/audit-v1/evidence/SEC-V1-02/`.
 
 ### 10.7 Pruebas mínimas para después del GO (no ejecutadas)
 

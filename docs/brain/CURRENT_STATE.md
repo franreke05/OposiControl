@@ -13,6 +13,7 @@ Ciclo 2 (mismo día, sin commit, MAIN sin tocar): SEC-V1-01 con migración `2026
 (PG16 8/8, PG17 apply/rollback); SEC-V1-02 corregido y verificado con Ktor real `control` + Valkey; Prometheus sin
 `--web.enable-lifecycle`. Nuevos bloqueantes preexistentes: RB-14 (control no arranca en producción con las plantillas)
 y RB-15 (gate PG17 de develop falla en `assertions.sql`).
+Ciclo 3 (sin commit tras `2cab55b`): retests independientes de Bot. SEC-V1-05 PASS (`1ec2b37`). SEC-V1-04 PASS y SEC-V1-08 mitigado con residual (`aa5e3ab`). Expediente MAIN de SEC-V1-01 en `supabase/canonical/sec_v1_01_main_intervention/`, con preflight y checkpoint validados en PG17. Evidencia SEC-V1-02 en `docs/audit-v1/evidence/`. Plan de integración v2 y requisitos de auditoría de pagos de tienda. La recreación de la BD QA de las 09:33 fue un `up.mjs --reset` manual sugerido por la sesión COORD.
 
 ## Alpha close — 2026-10-15 (rama `develop`)
 

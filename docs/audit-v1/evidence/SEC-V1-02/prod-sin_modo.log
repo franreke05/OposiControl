@@ -1,0 +1,2 @@
+2026-10-19 11:00:14,951 INFO  [main] io.ktor.server.Application - Autoreload is disabled because the development mode is off. 
+Exception in thread "main" java.lang.IllegalStateException: ADMIN_RATE_LIMIT_MODE es obligatorio fuera de desarrollo (limite de mutaciones admin, DEBT-151).

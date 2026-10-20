@@ -1,0 +1,4 @@
+2026-10-19 11:00:41,126 INFO  [main] io.ktor.server.Application - Autoreload is disabled because the development mode is off. 
+Exception in thread "main" io.lettuce.core.RedisConnectionException: Unable to connect to 127.0.0.1/<unresolved>:56999
+Caused by: io.netty.channel.AbstractChannel$AnnotatedConnectException: Connection refused: getsockopt: /127.0.0.1:56999
+Caused by: java.net.ConnectException: Connection refused: getsockopt

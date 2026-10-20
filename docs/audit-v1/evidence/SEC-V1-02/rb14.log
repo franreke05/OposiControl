@@ -1,0 +1,7 @@
+2026-10-19 11:40:30,982 INFO  [main] io.ktor.server.Application - Autoreload is disabled because the development mode is off. 
+2026-10-19 11:40:32,979 INFO  [main] i.m.c.i.push.PushMeterRegistry - publishing metrics for LoggingMeterRegistry every 1m 
+2026-10-19 11:40:34,077 WARN  [DefaultDispatcher-worker-1] OC-KTOR-JWT - JWKS warm-up failed (ConnectException); keys will load on first request 
+2026-10-19 11:40:34,412 INFO  [main] io.ktor.server.Application - Application started in 4.013 seconds. 
+2026-10-19 11:40:34,547 INFO  [DefaultDispatcher-worker-1] io.ktor.server.Application - Responding at http://127.0.0.1:18083 
+2026-10-19 11:40:37,427 INFO  [eventLoopGroupProxy-7-2] OC-KTOR-OBSERVABILITY - event=AUTH_LOGIN_FAILED request_id=a01decd7-9c2e-4a0e-97bc-d0d05f4b4656 operation=/api/v1/admin/solicitudes-acceso result=unauthorized duration_ms=56 entity_typ
+2026-10-19 11:40:37,659 INFO  [DefaultDispatcher-worker-2] OC-KTOR-OBSERVABILITY - event=AUTH_LOGIN_FAILED request_id=5262f57f-951a-4e4f-b095-78d3e4f803f3 operation=/admin/ticket-wallets/1/transactions result=unauthorized duration_ms=14 ent

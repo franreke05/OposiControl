@@ -60,7 +60,7 @@ api.oposibots.es {
 				}
 			}
 		}
-		@bot path /v1/auth/* /v1/especialidades /v1/examenes /v1/examenes/* /api/v1/app /api/v1/app/*
+		@bot path /v1/auth/* /v1/especialidades /v1/examenes /v1/examenes/* /api/v1/app /api/v1/app/* /api/v1/webhooks/payments/* /api/v1/webhooks/store/*
 		handle @bot {
 			reverse_proxy 127.0.0.1:18081 127.0.0.1:18082 {
 				lb_policy least_conn

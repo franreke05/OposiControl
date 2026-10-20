@@ -1,0 +1,8 @@
+2026-10-19 10:58:59,621 INFO  [main] io.ktor.server.Application - Autoreload is disabled because the development mode is off. 
+2026-10-19 10:59:01,316 INFO  [main] i.m.c.i.push.PushMeterRegistry - publishing metrics for LoggingMeterRegistry every 1m 
+2026-10-19 10:59:02,344 WARN  [DefaultDispatcher-worker-2] OC-KTOR-JWT - JWKS warm-up failed (ConnectException); keys will load on first request 
+2026-10-19 10:59:02,604 INFO  [main] io.ktor.server.Application - Application started in 3.367 seconds. 
+2026-10-19 10:59:02,742 INFO  [DefaultDispatcher-worker-2] io.ktor.server.Application - Responding at http://127.0.0.1:18080 
+2026-10-19 10:59:39,132 INFO  [DefaultDispatcher-worker-1] OC-KTOR-OBSERVABILITY - event=UPSTREAM_TIMEOUT request_id=631e5385-7622-4a03-9f81-2dc5a3ccad0f operation=/admin/ticket-wallets result=error duration_ms=67 entity_type=- entity_id=- 
+2026-10-19 10:59:39,135 WARN  [DefaultDispatcher-worker-1] OC-KTOR-UPSTREAM - upstream failure on /admin/ticket-wallets (requestId=631e5385-7622-4a03-9f81-2dc5a3ccad0f): Supabase network error on GET /rest/v1/usuario: ConnectException: null
+2026-10-19 10:59:39,314 INFO  [eventLoopGroupProxy-7-9] OC-KTOR-OBSERVABILITY - event=AUTH_LOGIN_FAILED request_id=4260132b-9e8e-41d5-8436-64a1901ff089 operation=/admin/ticket-wallets/1/transactions result=unauthorized duration_ms=13 entity
