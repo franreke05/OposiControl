@@ -30,6 +30,8 @@ import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
+import kotlinx.serialization.builtins.nullable
+import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -1835,6 +1837,18 @@ data class AdminCampanaRafagaDto(
     val status: String = "draft",
 )
 
+/**
+ * Columna `text` NULL de Supabase leída como "" (E2E 2026-10-20: `especialidades.descripcion` es nullable y un solo NULL
+ * tiraba `GET /especialidades` con 502, y con él el guardado de examen en el panel, que ya había creado la fila).
+ * Hacia el panel el contrato sigue siendo un String.
+ */
+object NullTextAsEmptySerializer : kotlinx.serialization.KSerializer<String> {
+    private val delegate = String.serializer().nullable
+    override val descriptor = delegate.descriptor
+    override fun deserialize(decoder: kotlinx.serialization.encoding.Decoder): String = delegate.deserialize(decoder) ?: ""
+    override fun serialize(encoder: kotlinx.serialization.encoding.Encoder, value: String) = delegate.serialize(encoder, value)
+}
+
 // Especialidad: las columnas reales ya son palabras simples => DTO == fila Supabase.
 @Serializable
 data class AdminEspecialidadDto(
@@ -1842,7 +1856,7 @@ data class AdminEspecialidadDto(
     val codigo: String = "",
     val nombre: String,
     val slug: String = "",
-    val descripcion: String = "",
+    @Serializable(with = NullTextAsEmptySerializer::class) val descripcion: String = "",
     val activa: Boolean = true,
     val posicion: Int = 0,
 )
