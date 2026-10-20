@@ -17,8 +17,8 @@ import kotlin.test.assertTrue
 import org.postgresql.util.PSQLException
 
 /**
- * RB-16 / SEC-V1-01c: migracion 20261023100100. En MAIN (catalogo GO-1, 2026-10-19) storage.objects tiene 12 politicas de
- * ESCRITURA con es_admin(): un JWT de admin sube, sobrescribe o borra objetos de exam-resources, news-assets (publico),
+ * RB-16 / SEC-V1-01c: migracion 20261023100100. En MAIN (catalogo GO-1, 2026-10-19; 2026-10-20) storage.objects tiene 14 politicas de
+ * ESCRITURA con es_admin() o can_manage_content(): un JWT de admin sube, sobrescribe o borra objetos de exam-resources, news-assets (publico), news-images,
  * question-resources y recursos_pregunta por la API de Storage, saltandose Ktor. Forma de MAIN: stub
  * `supabase/canonical/sec_v1_01_main_intervention/storage_test/00_storage_objects_stub.sql`.
  * Aqui (PG16 embebido, superusuario): control negativo, denegacion tras migrar, lecturas admin conservadas, service_role
@@ -30,7 +30,7 @@ class StorageAdminWriteRevokeMigrationTest {
     private val stub = "supabase/canonical/sec_v1_01_main_intervention/storage_test/00_storage_objects_stub.sql"
     private val admin = "aaaaaaaa-0000-0000-0000-000000000001"
     private val usuario = "bbbbbbbb-0000-0000-0000-000000000002"
-    private val buckets = listOf("exam-resources", "news-assets", "question-resources", "recursos_pregunta")
+    private val buckets = listOf("exam-resources", "news-assets", "question-resources", "recursos-pregunta", "news-images")
 
     private fun <T> escenario(conMigracion: Boolean = true, bloque: (Connection) -> T): T = PostgresHarness.escenario { c ->
         c.aplicar(stub)
@@ -84,14 +84,16 @@ class StorageAdminWriteRevokeMigrationTest {
         assertEquals(null to 1, c.comoCliente(admin, subir("news-assets")), "MAIN: el admin sube al bucket publico")
         assertEquals(null to 1, c.comoCliente(admin, sobrescribir("exam-resources")), "MAIN: el admin sobrescribe (bucket con SELECT admin)")
         assertEquals(null to 1, c.comoCliente(admin, borrar("exam-resources")), "MAIN: el admin borra objetos")
+        assertEquals(null to 1, c.comoCliente(admin, sobrescribir("news-images")), "MAIN: el admin sobrescribe news-images via can_manage_content()")
+        assertEquals(null to 1, c.comoCliente(admin, borrar("news-images")), "MAIN: el admin borra en news-images")
         assertEquals("42501", c.comoCliente(usuario, subir("news-assets")).first, "un usuario normal ya no podia")
         val v = c.verify()
-        assertEquals(12L, v["storage_admin_write_policy"], v.toString())
+        assertEquals(14L, v["storage_admin_write_policy"], v.toString())
         assertEquals(1L, v["storage_admin_write_backup_rows"], v.toString())
     }
 
     @Test
-    fun trasLaMigracionNingunClienteEscribeEnLosCuatroBuckets(): Unit = escenario { c ->
+    fun trasLaMigracionNingunClienteEscribeEnLosCincoBuckets(): Unit = escenario { c ->
         val antes = c.objetos()
         for (b in buckets) {
             assertEquals("42501", c.comoCliente(admin, subir(b)).first, "admin INSERT $b")
@@ -112,6 +114,7 @@ class StorageAdminWriteRevokeMigrationTest {
     fun serviceRoleSigueEscribiendo(): Unit = escenario { c ->
         assertEquals(null to 1, c.comoCliente(null, subir("news-assets"), rol = "service_role"))
         assertEquals(null to 2, c.comoCliente(null, borrar("news-assets"), rol = "service_role"))
+        assertEquals(null to 1, c.comoCliente(null, borrar("news-images"), rol = "service_role"))
     }
 
     @Test
