@@ -316,6 +316,10 @@ internal class GooglePlayProvider(
         }
     }
 
+    /** Sincronizacion del trabajo: subscriptionsv2 es el estado actual (renovada, caducada, gracia, en espera, revocada = caducada). */
+    override suspend fun currentSubscription(purchaseKey: String, environment: StoreEnvironment): StorePurchaseFacts =
+        withContext(Dispatchers.IO) { readSubscription(purchaseKey) }
+
     /** Sondeo diario de respaldo (Voided Purchases API, solo productos de compra unica: type=0). */
     suspend fun voidedSince(startMillis: Long): List<Pair<StoreEvent, String>> = withContext(Dispatchers.IO) {
         val events = mutableListOf<Pair<StoreEvent, String>>()

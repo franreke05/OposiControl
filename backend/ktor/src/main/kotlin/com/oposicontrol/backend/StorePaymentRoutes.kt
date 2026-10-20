@@ -28,6 +28,8 @@ internal class StorePaymentsRuntime(
     val webhookLimit: suspend (ApplicationCall) -> Unit = {},
     /** Sondeo de Voided Purchases (solo con Google activado). */
     val google: GooglePlayProvider? = null,
+    /** Get Notification History (solo con Apple activado y la App Store Server API configurada). */
+    val apple: AppStoreProvider? = null,
     /** NEW-4: retencion de la bandeja (dias); null = no se purga nada. */
     val retentionDays: Int? = null,
 ) {
@@ -46,12 +48,18 @@ internal class StorePaymentsRuntime(
                 val account = GoogleServiceAccount.parse(File(g.serviceAccountFile).readText())
                 GooglePlayProvider(g, HttpGooglePlayApi(g.packageName, account), GoogleOidcVerifier(g.pubsubAudience, g.pubsubServiceAccount, JwksGoogleKeySource()))
             }
-            val apple = settings.apple?.let { a -> AppStoreProvider(a, a.rootCaPaths.map { readCertificateDer(it) ?: throw StoreConfigException("PAYMENTS_APPLE_ROOT_CA_PATHS: un certificado no se puede leer") }) }
+            val apple = settings.apple?.let { a ->
+                AppStoreProvider(
+                    a,
+                    a.rootCaPaths.map { readCertificateDer(it) ?: throw StoreConfigException("PAYMENTS_APPLE_ROOT_CA_PATHS: un certificado no se puede leer") },
+                    api = a.api?.let { LibraryAppStoreServerApi.fromConfig(it, a.bundleId) },
+                )
+            }
             val providers = listOfNotNull<StorePaymentProvider>(google, apple).associateBy { it.platform }
             val limiter = auth?.rateLimiter
             return StorePaymentsRuntime(
                 resolver = resolver,
-                service = StorePaymentsService(upstream, providers, settings.catalog, settings.sandbox, refundsEnabledFrom(environment), log = log, deadLetterAttempts = settings.deadLetterAttempts),
+                service = StorePaymentsService(upstream, providers, settings.catalog, settings.sandbox, settings.decisions, log = log),
                 idempotency = store,
                 limit = { operation, userId ->
                     if (limiter != null) {
@@ -66,6 +74,7 @@ internal class StorePaymentsRuntime(
                     }
                 },
                 google = google,
+                apple = apple,
                 retentionDays = settings.retentionDays,
             )
         }
@@ -173,34 +182,60 @@ private object StoreMisconfiguredStore : IdempotencyStore {
 
 /**
  * Reconciliacion de tienda (`PAYMENTS_STORE_JOB_SECONDS`, 0 = apagado): reintenta la bandeja pendiente, consume / reconoce en Play lo
- * acreditado y no terminado, y una vez al dia sondea Voided Purchases (ventana de 30 dias de Google; se pide desde hace 3 dias).
+ * acreditado y no terminado, relee de la tienda las suscripciones que llegaron a su fin, sondea Voided Purchases una vez al dia y Get Notification
+ * History cada 6 horas (Apple, solo con la API). Los cursores y la hora del ultimo sondeo viven en la base (tienda_sondeo): sobreviven a un
+ * reinicio y los comparten las replicas; cada ventana se solapa con la anterior y la bandeja deduplica por id de evento.
  */
 internal object StorePaymentsJob {
+    const val VOIDED_SOURCE = "voided_purchases"
+    const val HISTORY_SOURCE = "notification_history"
+    private const val DAY_MS = 86_400_000L
     fun start(scope: CoroutineScope, runtime: StorePaymentsRuntime, intervalSeconds: Long, log: (String) -> Unit = {}, clock: () -> Instant = Instant::now): Job? {
         if (intervalSeconds <= 0) return null
         return scope.launch(Dispatchers.IO) {
             delay(10_000)
-            var lastVoidedPoll = Instant.EPOCH
             while (isActive) {
                 runCatching { runtime.service.reprocessPending() }.onFailure { log("store job reprocess failed: ${it::class.simpleName}") }
                 runCatching { runtime.service.finishPending() }.onFailure { log("store job finish failed: ${it::class.simpleName}") }
                 runCatching { runtime.service.maintenance(runtime.retentionDays) }.onFailure { log("store job maintenance failed: ${it::class.simpleName}") }
                 runCatching { StoreInboxMetrics.update(runtime.service.inboxStats(), log) }.onFailure { log("store job inbox stats failed: ${it::class.simpleName}") }
-                val now = clock()
-                if (runtime.google != null && now.isAfter(lastVoidedPoll.plusSeconds(86_400))) {
-                    runCatching { pollVoided(runtime, now) }
-                        .onSuccess { lastVoidedPoll = now }
-                        .onFailure { log("store job voided poll failed: ${it::class.simpleName}") }
-                }
+                runCatching { runtime.service.syncSubscriptions() }.onFailure { log("store job subscription sync failed: ${it::class.simpleName}") }
+                runCatching { pollVoided(runtime, clock()) }.onFailure { log("store job voided poll failed: ${it::class.simpleName}") }
+                runCatching { pollAppleHistory(runtime, clock(), log) }.onFailure { log("store job apple history poll failed: ${it::class.simpleName}") }
                 delay(intervalSeconds * 1_000)
             }
         }
     }
 
+    /**
+     * Voided Purchases (Google, `type=0`): una vez al dia segun la base. Ventana: desde el cursor menos un dia de solape (nunca mas de 30 dias,
+     * el limite de Google); primera vez, 3 dias. El cursor avanza SOLO si todo lo leido quedo en la bandeja.
+     */
     suspend fun pollVoided(runtime: StorePaymentsRuntime, now: Instant): Int {
         val google = runtime.google ?: return 0
-        val events = google.voidedSince(now.minusSeconds(3 * 86_400L).toEpochMilli())
+        val cursor = runtime.service.pollCursor(StorePlatform.GOOGLE_PLAY, VOIDED_SOURCE)
+        if (cursor != null && cursor.second.isAfter(now.minusSeconds(86_400))) return 0
+        val nowMs = now.toEpochMilli()
+        val start = maxOf(nowMs - 30 * DAY_MS + 3_600_000L, (cursor?.first ?: (nowMs - 3 * DAY_MS)) - DAY_MS)
+        val events = google.voidedSince(start)
         events.forEach { (event, fingerprint) -> runtime.service.ingest(event, fingerprint) }
+        runtime.service.advancePollCursor(StorePlatform.GOOGLE_PLAY, VOIDED_SOURCE, nowMs)
+        return events.size
+    }
+
+    /**
+     * Get Notification History (Apple, produccion): recupera avisos que no llegaron (Apple reintenta 5 veces y luego los deja). Cada 6 horas segun la
+     * base; ventana desde el cursor menos una hora de solape (nunca mas de 180 dias); primera vez, 3 dias. Sin la App Store Server API, nada.
+     */
+    suspend fun pollAppleHistory(runtime: StorePaymentsRuntime, now: Instant, log: (String) -> Unit = {}): Int {
+        val apple = runtime.apple?.takeIf { it.hasServerApi } ?: return 0
+        val cursor = runtime.service.pollCursor(StorePlatform.APP_STORE, HISTORY_SOURCE)
+        if (cursor != null && cursor.second.isAfter(now.minusSeconds(6 * 3_600L))) return 0
+        val nowMs = now.toEpochMilli()
+        val start = maxOf(nowMs - 180 * DAY_MS + DAY_MS, (cursor?.first ?: (nowMs - 3 * DAY_MS)) - 3_600_000L)
+        val events = apple.notificationHistory(StoreEnvironment.PRODUCTION, start, nowMs, log)
+        events.forEach { (event, fingerprint) -> runtime.service.ingest(event, fingerprint) }
+        runtime.service.advancePollCursor(StorePlatform.APP_STORE, HISTORY_SOURCE, nowMs)
         return events.size
     }
 }
@@ -213,6 +248,15 @@ internal object StorePaymentsJob {
 internal object StoreInboxMetrics {
     const val BACKLOG_METRIC = "store_inbox_backlog"
     const val OLDEST_METRIC = "store_inbox_oldest_seconds"
+    /** N3-6: 1 en cuanto el runtime de tienda existe (alguna tienda activada). La regla `StoreInboxMetricsAbsent` la cruza con la bandeja. */
+    const val ENABLED_METRIC = "store_payments_enabled"
+    private val enabled = java.util.concurrent.atomic.AtomicLong(0)
+
+    fun markEnabled() {
+        if (enabled.getAndSet(1) == 0L) {
+            io.micrometer.core.instrument.Gauge.builder(ENABLED_METRIC) { enabled.get().toDouble() }.register(BackendPrometheusMetrics.registry)
+        }
+    }
     private val rows = java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>()
     private val oldest = java.util.concurrent.ConcurrentHashMap<String, java.util.concurrent.atomic.AtomicLong>()
 

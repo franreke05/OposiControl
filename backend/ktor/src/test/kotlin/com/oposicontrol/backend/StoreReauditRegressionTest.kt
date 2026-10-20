@@ -85,7 +85,7 @@ class StoreReauditRegressionTest {
         val gcfg = GooglePlayConfig("com.oposibot.app", "unused.json", GoogleTestKeys.AUDIENCE, GoogleTestKeys.SERVICE_ACCOUNT, subscription)
         val google = GooglePlayProvider(gcfg, api, GoogleOidcVerifier(GoogleTestKeys.AUDIENCE, GoogleTestKeys.SERVICE_ACCOUNT, keys.source), clock = { now })
         val apple = AppStoreProvider(AppStoreConfig(bundle, appAppleId, emptyList(), onlineChecks = false), listOf(pki.rootDer))
-        return StorePaymentsService(upstream, mapOf(StorePlatform.GOOGLE_PLAY to google, StorePlatform.APP_STORE to apple), catalog,
+        return testStoreService(upstream, mapOf(StorePlatform.GOOGLE_PLAY to google, StorePlatform.APP_STORE to apple), catalog,
             StoreSandboxPolicy.parse("reject", null), refunds, clock = { now })
     }
 
@@ -127,7 +127,7 @@ class StoreReauditRegressionTest {
     private val down = OcspDownPki()
     private fun onlineService(): StorePaymentsService {
         val apple = AppStoreProvider(AppStoreConfig(bundle, appAppleId, emptyList(), onlineChecks = true), listOf(down.root.encoded))
-        return StorePaymentsService(upstream, mapOf(StorePlatform.APP_STORE to apple), catalog, StoreSandboxPolicy.parse("reject", null), true, clock = { now })
+        return testStoreService(upstream, mapOf(StorePlatform.APP_STORE to apple), catalog, StoreSandboxPolicy.parse("reject", null), true, clock = { now })
     }
 
     // R-K1 (F6 e2e): con comprobacion OCSP y una cadena sin respondedor OCSP el estado de revocacion es INDETERMINADO -> 503 en el aviso, cero RPC.

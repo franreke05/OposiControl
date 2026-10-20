@@ -85,7 +85,7 @@ class StoreAuditRegressionTest {
         val gcfg = GooglePlayConfig("com.oposibot.app", "unused.json", GoogleTestKeys.AUDIENCE, GoogleTestKeys.SERVICE_ACCOUNT, subscription)
         val google = GooglePlayProvider(gcfg, api, GoogleOidcVerifier(GoogleTestKeys.AUDIENCE, GoogleTestKeys.SERVICE_ACCOUNT, keys.source), clock = { now })
         val apple = AppStoreProvider(AppStoreConfig(bundle, appAppleId, emptyList(), onlineChecks = false), listOf(pki.rootDer))
-        return StorePaymentsService(upstream, mapOf(StorePlatform.GOOGLE_PLAY to google, StorePlatform.APP_STORE to apple), catalog,
+        return testStoreService(upstream, mapOf(StorePlatform.GOOGLE_PLAY to google, StorePlatform.APP_STORE to apple), catalog,
             StoreSandboxPolicy.parse("reject", null), refunds, clock = { now })
     }
 

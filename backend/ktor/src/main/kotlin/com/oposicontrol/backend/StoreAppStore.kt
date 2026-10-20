@@ -10,6 +10,8 @@ import com.apple.itunes.storekit.verification.SignedDataVerifier
 import com.apple.itunes.storekit.verification.VerificationException
 import com.apple.itunes.storekit.verification.VerificationStatus
 import com.auth0.jwt.JWT
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -30,6 +32,8 @@ internal class AppStoreProvider(
     config: AppStoreConfig,
     rootCertificates: List<ByteArray>,
     private val clock: () -> Instant = Instant::now,
+    /** App Store Server API (opcional, clave In-App Purchase). null = solo JWS firmados (cliente y avisos). */
+    private val api: AppStoreServerApi? = null,
 ) : StorePaymentProvider {
     override val platform = StorePlatform.APP_STORE
 
@@ -45,10 +49,29 @@ internal class AppStoreProvider(
         require(rootCertificates.isNotEmpty()) { "App Store: hace falta al menos un certificado raiz" }
     }
 
+    /**
+     * La prueba del cliente se verifica SIEMPRE (firma, cadena, bundle, entorno). Con la App Store Server API ademas se relee de Apple (restaurar y
+     * verificar re-validan con la tienda): Get Transaction Info para un pack, Get All Subscription Statuses para una suscripcion. Lo que manda
+     * es lo que devuelve Apple, verificado igual.
+     */
     override suspend fun verify(storeProductId: String, kind: StoreKind, token: String): StorePurchaseFacts {
         val tx = decodeTransaction(token) ?: throw CanonicalErrorCode.STORE_PURCHASE_INVALID.exception()
-        val facts = factsOf(tx, null, null)
-        if (facts.storeProductId != storeProductId || facts.kind != kind) throw CanonicalErrorCode.STORE_PRODUCT_UNKNOWN.exception()
+        val signedFacts = factsOf(tx, null, null)
+        if (signedFacts.storeProductId != storeProductId || signedFacts.kind != kind) throw CanonicalErrorCode.STORE_PRODUCT_UNKNOWN.exception()
+        val server = api ?: return signedFacts
+        val facts = withContext(Dispatchers.IO) {
+            when (kind) {
+                StoreKind.CONSUMABLE -> {
+                    val fresh = decodeTransaction(server.transactionInfo(signedFacts.environment, signedFacts.purchaseKey))
+                        ?: throw CanonicalErrorCode.STORE_PURCHASE_INVALID.exception()
+                    factsOf(fresh, null, null)
+                }
+                StoreKind.SUBSCRIPTION -> subscriptionFromApi(server, signedFacts.environment, signedFacts.purchaseKey)
+            }
+        }
+        if (facts.storeProductId != storeProductId || facts.kind != kind || facts.purchaseKey != signedFacts.purchaseKey) {
+            throw CanonicalErrorCode.STORE_PURCHASE_INVALID.exception()
+        }
         return facts
     }
 
@@ -56,6 +79,11 @@ internal class AppStoreProvider(
         val body = runCatching { Json.parseToJsonElement(String(rawBody, StandardCharsets.UTF_8)).jsonObject }.getOrNull()
             ?: throw CanonicalErrorCode.MALFORMED_BODY.exception()
         val signed = body.storeStr("signedPayload")?.takeIf { it.isNotBlank() } ?: throw CanonicalErrorCode.MALFORMED_BODY.exception()
+        return eventFromSignedPayload(signed)
+    }
+
+    /** Un `signedPayload` de ASSN V2 (del aviso o de Get Notification History) -> evento, verificado con la libreria de Apple. */
+    fun eventFromSignedPayload(signed: String): StoreEvent {
         val verifier = verifierFor(peekEnvironment(signed, nested = true)) ?: throw CanonicalErrorCode.WEBHOOK_SIGNATURE_INVALID.exception()
         val notification = try {
             verifier.verifyAndDecodeNotification(signed)
@@ -105,9 +133,66 @@ internal class AppStoreProvider(
         )
     }
 
-    /** Los hechos ya se verificaron al recibir el aviso y la bandeja solo la escribe el servidor (service_role, RPC). */
-    override suspend fun factsFor(type: StoreEventType, purchaseKey: String?, data: JsonObject): StorePurchaseFacts? =
-        (data["facts"] as? JsonObject)?.let { json.decodeFromJsonElement(StorePurchaseFacts.serializer(), it) }
+    /**
+     * Los hechos ya se verificaron al recibir el aviso y la bandeja solo la escribe el servidor (service_role, RPC). Para una suscripcion, con la
+     * App Store Server API se relee su estado ACTUAL (Get All Subscription Statuses): el orden de llegada de los avisos deja de importar.
+     */
+    override suspend fun factsFor(type: StoreEventType, purchaseKey: String?, data: JsonObject): StorePurchaseFacts? {
+        val stored = (data["facts"] as? JsonObject)?.let { json.decodeFromJsonElement(StorePurchaseFacts.serializer(), it) } ?: return null
+        val server = api
+        if (server == null || stored.kind != StoreKind.SUBSCRIPTION) return stored
+        return withContext(Dispatchers.IO) { subscriptionFromApi(server, stored.environment, stored.purchaseKey) }
+    }
+
+    /** Sincronizacion del trabajo: estado actual de una suscripcion (solo con la API; sin ella, null y se espera al aviso). */
+    override suspend fun currentSubscription(purchaseKey: String, environment: StoreEnvironment): StorePurchaseFacts? {
+        val server = api ?: return null
+        return withContext(Dispatchers.IO) { subscriptionFromApi(server, environment, purchaseKey) }
+    }
+
+    /** Get Notification History (recuperar huecos): cada `signedPayload` verificado como un aviso. Uno con firma mala se salta (y se cuenta). */
+    suspend fun notificationHistory(environment: StoreEnvironment, startMillis: Long, endMillis: Long, log: (String) -> Unit = {}): List<Pair<StoreEvent, String>> {
+        val server = api ?: return emptyList()
+        return withContext(Dispatchers.IO) {
+            val events = mutableListOf<Pair<StoreEvent, String>>()
+            var token: String? = null
+            var pages = 0
+            var skipped = 0
+            do {
+                val page = server.notificationHistory(environment, startMillis, endMillis, token)
+                page.signedPayloads.forEach { signed ->
+                    try {
+                        events += eventFromSignedPayload(signed) to sha256Hex(signed.toByteArray(StandardCharsets.UTF_8))
+                    } catch (e: BackendDomainException) {
+                        if (e.status.value >= 500) throw e
+                        skipped++
+                    }
+                }
+                token = page.nextToken
+                pages++
+            } while (token != null && pages < 100)
+            if (skipped > 0) log("store apple history: $skipped notification(s) failed verification and were skipped")
+            events
+        }
+    }
+
+    val hasServerApi: Boolean get() = api != null
+
+    private fun subscriptionFromApi(server: AppStoreServerApi, environment: StoreEnvironment, originalTransactionId: String): StorePurchaseFacts {
+        val item = server.subscriptionStatuses(environment, originalTransactionId).firstOrNull { it.originalTransactionId == originalTransactionId }
+            ?: throw CanonicalErrorCode.STORE_PURCHASE_INVALID.exception()
+        val tx = item.signedTransaction?.let { decodeTransaction(it) } ?: throw CanonicalErrorCode.STORE_PURCHASE_INVALID.exception()
+        val renewal = item.signedRenewal?.let { s ->
+            val verifier = verifierFor(peekEnvironment(s, nested = false)) ?: throw CanonicalErrorCode.STORE_PURCHASE_INVALID.exception()
+            try {
+                verifier.verifyAndDecodeRenewalInfo(s)
+            } catch (e: VerificationException) {
+                throw appleVerificationFailure(e, CanonicalErrorCode.STORE_PURCHASE_INVALID)
+            }
+        }
+        // Lectura del estado ACTUAL: su version es la hora de lectura (como Google), siempre >= la de cualquier aviso ya aplicado.
+        return factsOf(tx, renewal, null, clock().toEpochMilli(), item.status)
+    }
 
     override suspend fun finish(kind: StoreKind, storeProductId: String, purchaseKey: String) = Unit
 
@@ -132,7 +217,13 @@ internal class AppStoreProvider(
         if (nested) (claims.getClaim("data").asMap()?.get("environment") as? String) else claims.getClaim("environment").asString()
     }.getOrNull()
 
-    private fun factsOf(tx: JWSTransactionDecodedPayload, renewal: JWSRenewalInfoDecodedPayload?, type: NotificationTypeV2?, signedDate: Long? = null): StorePurchaseFacts {
+    private fun factsOf(
+        tx: JWSTransactionDecodedPayload,
+        renewal: JWSRenewalInfoDecodedPayload?,
+        type: NotificationTypeV2?,
+        signedDate: Long? = null,
+        appleStatus: Int? = null,
+    ): StorePurchaseFacts {
         val kind = when (tx.type) {
             Type.CONSUMABLE -> StoreKind.CONSUMABLE
             Type.AUTO_RENEWABLE_SUBSCRIPTION -> StoreKind.SUBSCRIPTION
@@ -151,7 +242,12 @@ internal class AppStoreProvider(
             val expires = tx.expiresDate
             val grace = renewal?.gracePeriodExpiresDate
             when {
-                revoked -> StoreSubscriptionFacts("caducada", iso(tx.purchaseDate), iso(tx.revocationDate), null, if (type == NotificationTypeV2.REVOKE) "revocada" else "reembolso")
+                revoked || appleStatus == APPLE_STATUS_REVOKED ->
+                    StoreSubscriptionFacts("caducada", iso(tx.purchaseDate), iso(tx.revocationDate ?: now), null, if (type == NotificationTypeV2.REVOKE) "revocada" else "reembolso")
+                // Get All Subscription Statuses: el estado lo dice Apple; las fechas, la transaccion y la renovacion firmadas.
+                appleStatus == APPLE_STATUS_EXPIRED -> StoreSubscriptionFacts("caducada", iso(tx.purchaseDate), iso(expires), null, "expiro")
+                appleStatus == APPLE_STATUS_BILLING_RETRY -> StoreSubscriptionFacts("pausada", iso(tx.purchaseDate), iso(expires), null, null)
+                appleStatus == APPLE_STATUS_GRACE && grace != null -> StoreSubscriptionFacts("activa", iso(tx.purchaseDate), iso(grace), iso(grace), null)
                 grace != null && grace > now -> StoreSubscriptionFacts("activa", iso(tx.purchaseDate), iso(grace), iso(grace), null)
                 expires != null && expires > now && renewal?.autoRenewStatus == AutoRenewStatus.OFF ->
                     StoreSubscriptionFacts("cancelada", iso(tx.purchaseDate), iso(expires), null, "usuario_cancelo")

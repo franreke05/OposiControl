@@ -93,7 +93,7 @@ class StorePaymentRoutesTest {
     private var sandbox = StoreSandboxPolicy.parse("reject", null)
     private var refundsEnabled = true
 
-    private fun service() = StorePaymentsService(upstream, mapOf(StorePlatform.GOOGLE_PLAY to google, StorePlatform.APP_STORE to apple), catalog, sandbox, refundsEnabled, clock = { now })
+    private fun service() = testStoreService(upstream, mapOf(StorePlatform.GOOGLE_PLAY to google, StorePlatform.APP_STORE to apple), catalog, sandbox, refundsEnabled, clock = { now })
 
     private fun pack(
         state: StorePurchaseState = StorePurchaseState.PURCHASED,
@@ -117,6 +117,9 @@ class StorePaymentRoutesTest {
         upstream.handlers["app_store_inbox_put"] = { ok("""[{"nuevo":true,"estado":"pendiente","resultado":null,"misma_huella":true}]""") }
         upstream.handlers["app_store_inbox_mark"] = { ok("") }
         upstream.handlers["app_store_mark_finalized"] = { ok("true") }
+        upstream.handlers["app_store_poll_get"] = { ok("[]") }
+        upstream.handlers["app_store_poll_advance"] = { ok("1") }
+        upstream.handlers["app_store_subscriptions_due"] = { ok("[]") }
         upstream.handlers["app_store_refund_purchase"] = { ok("""[{"outcome":"REFUNDED","orden_id":null,"estado":"reembolsada","saldo":0}]""") }
         upstream.handlers["app_store_refund_reversed"] = { ok("\"EN_REVISION\"") }
         upstream.handlers["app_store_upsert_subscription"] = { body ->
@@ -489,7 +492,7 @@ class StorePaymentRoutesTest {
             voidedPages = listOf(Json.parseToJsonElement("""{"voidedPurchases":[{"purchaseToken":"gp-token-1","orderId":"GPA.7"}]}""").jsonObject)
         }
         val provider = GooglePlayProvider(GooglePlayConfig("p", "f", "a", "s", "projects/p/subscriptions/rtdn"), api, GoogleOidcVerifier("a", "s", GoogleTestKeys().source), clock = { now })
-        val svc = StorePaymentsService(upstream, mapOf(StorePlatform.GOOGLE_PLAY to provider), catalog, sandbox, true, clock = { now })
+        val svc = testStoreService(upstream, mapOf(StorePlatform.GOOGLE_PLAY to provider), catalog, sandbox, true, clock = { now })
         val runtime = StorePaymentsRuntime(resolver, svc, InMemoryIdempotencyStore { now }, google = provider)
         assertEquals(1, StorePaymentsJob.pollVoided(runtime, now))
         assertEquals("void:GPA.7", upstream.args("app_store_inbox_put")["p_evento_id"]!!.jsonPrimitive.content)
@@ -563,7 +566,7 @@ class StorePaymentRoutesTest {
         upstream.handlers["app_store_inbox_put"] = { ok("""[{"nuevo":true,"estado":"pendiente","resultado":null,"misma_huella":true,"reclamo":"c-1"}]""") }
         google.event = webhookEvent(StoreEventType.PURCHASE)
         google.factsFailure = CanonicalErrorCode.UPSTREAM_UNAVAILABLE.exception()
-        StorePaymentsService(upstream, mapOf(StorePlatform.GOOGLE_PLAY to google), catalog, sandbox, true, clock = { now }, deadLetterAttempts = 12)
+        testStoreService(upstream, mapOf(StorePlatform.GOOGLE_PLAY to google), catalog, sandbox, true, clock = { now }, deadLetterAttempts = 12)
             .webhook(StorePlatform.GOOGLE_PLAY, { null }, "{}".toByteArray())
         assertEquals("12", upstream.args("app_store_inbox_mark")["p_max_intentos"]!!.jsonPrimitive.content)
         service().webhook(StorePlatform.GOOGLE_PLAY, { null }, "{}".toByteArray())

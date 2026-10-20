@@ -581,6 +581,7 @@ fun Application.module() {
     // V1 pagos de tienda (Google Play / App Store): solo si alguna plataforma esta activada; su trabajo de reconciliacion vive con el runtime.
     val storePaymentsRuntime = canonicalIdentityResolver?.let { StorePaymentsRuntime.fromEnvironment(it, authRuntime, log = { message -> log.warn(message) }) }
     storePaymentsRuntime?.let { rt ->
+        StoreInboxMetrics.markEnabled()  // N3-6: la regla StoreInboxMetricsAbsent sabe que la bandeja deberia publicarse
         val job = StorePaymentsJob.start(this, rt, StorePaymentsSettings.fromEnvironment().jobSeconds, { message -> log.warn(message) })
         monitor.subscribe(ApplicationStopped) { job?.cancel() }
     }

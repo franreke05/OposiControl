@@ -163,3 +163,14 @@ groups:
         annotations:
           summary: "Reembolsos o reversiones de tienda sin compra desde hace mas de un dia"
           description: "La compra no ha llegado (o no se verifico). El trabajo los re-enlaza en cuanto exista; si no llega, revision manual."
+
+      # N3-6 (re-auditoria Control ronda 3): pagos de tienda encendidos (store_payments_enabled = 1, lo publica el arranque) pero el trabajo no
+      # publica la bandeja (PAYMENTS_STORE_JOB_SECONDS=0, trabajo caido): sin esta regla las demas alertas de la bandeja nunca saltarian.
+      - alert: StoreInboxMetricsAbsent
+        expr: absent(store_inbox_backlog) and on() (max(store_payments_enabled) == 1)
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Pagos de tienda activos sin metricas de la bandeja"
+          description: "El trabajo de reconciliacion no publica store_inbox_backlog. Revisar PAYMENTS_STORE_JOB_SECONDS y los logs del trabajo. Dead letter: decision N3-6 (docs/payments/DECISIONS_PENDING.md)."

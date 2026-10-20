@@ -119,6 +119,9 @@ internal interface StorePaymentProvider {
 
     /** Play: consume (pack) o acknowledge (suscripcion) DESPUES del credito. Apple: nada (el cliente hace `finish`). */
     suspend fun finish(kind: StoreKind, storeProductId: String, purchaseKey: String)
+
+    /** Estado ACTUAL de una suscripcion leido de la tienda (Play subscriptionsv2; Apple solo con la App Store Server API). null = no se puede. */
+    suspend fun currentSubscription(purchaseKey: String, environment: StoreEnvironment): StorePurchaseFacts? = null
 }
 
 // ---------- catalogo (config) ----------
@@ -213,6 +216,8 @@ internal data class AppStoreConfig(
     val appAppleId: Long?,
     val rootCaPaths: List<String>,
     val onlineChecks: Boolean,
+    /** App Store Server API (opcional): las tres variables o ninguna. */
+    val api: AppStoreApiConfig? = null,
 )
 
 internal data class StorePaymentsSettings(
@@ -221,11 +226,15 @@ internal data class StorePaymentsSettings(
     val catalog: StoreCatalog,
     val sandbox: StoreSandboxPolicy,
     val jobSeconds: Long,
-    /** NEW-4: intentos fallidos tras los que un aviso pasa a `muerto` (0 = nunca, por defecto). */
-    val deadLetterAttempts: Int = 0,
-    /** NEW-4: dias de retencion de la bandeja procesada; null = no se borra nada (decision del propietario / legal). */
-    val retentionDays: Int? = null,
+    /** D1..D11 / G1 / N3-6 (StoreDecisions.kt): defecto conservador. */
+    val decisions: StorePaymentDecisions = StorePaymentDecisions.CONSERVATIVE,
 ) {
+    /** NEW-4: intentos fallidos tras los que un aviso pasa a `muerto` (0 = nunca, por defecto). */
+    val deadLetterAttempts: Int get() = decisions.deadLetterAttempts
+
+    /** NEW-4: dias de retencion de la bandeja procesada; null = no se borra nada (decision del propietario / legal). */
+    val retentionDays: Int? get() = decisions.retentionDays
+
     companion object {
         /** Lee y valida. Una plataforma activada con algo que falta lanza [StoreConfigException] (sin valores, solo nombres de variable). */
         fun fromEnvironment(environment: (String) -> String? = System::getenv, appleRootPins: Set<String> = APPLE_ROOT_CA_SHA256_PINS): StorePaymentsSettings {
@@ -249,6 +258,7 @@ internal data class StorePaymentsSettings(
                     appAppleId = appId.toLongOrNull() ?: if (appId.isNotEmpty()) throw StoreConfigException("PAYMENTS_APPLE_APP_APPLE_ID no es numerico") else null,
                     rootCaPaths = required("PAYMENTS_APPLE_ROOT_CA_PATHS", missing).split(',').map { it.trim() }.filter { it.isNotEmpty() },
                     onlineChecks = environment("PAYMENTS_APPLE_ONLINE_CHECKS")?.trim()?.lowercase() != "false",
+                    api = appleApiConfig(environment),
                 )
             } else null
             if (missing.isNotEmpty()) throw StoreConfigException("Pagos de tienda activados sin configuracion completa: faltan ${missing.joinToString()}")
@@ -261,6 +271,7 @@ internal data class StorePaymentsSettings(
             google?.let { g -> if (!java.io.File(g.serviceAccountFile).canRead()) throw StoreConfigException("PAYMENTS_GOOGLE_SERVICE_ACCOUNT_FILE no se puede leer") }
             // F8 + NEW-7 (auditorias Control 2026-10-19): cada raiz configurada se LEE como certificado X.509 (DER o PEM) y la huella SHA-256 de su
             // DER tiene que ser la fijada de Apple Root CA - G3; ilegible, no certificado u otra raiz: no arranca.
+            apple?.api?.let { if (!java.io.File(it.keyFile).canRead()) throw StoreConfigException("PAYMENTS_APPLE_API_KEY_FILE no se puede leer") }
             apple?.let { a ->
                 a.rootCaPaths.forEach { path ->
                     val der = readCertificateDer(path) ?: throw StoreConfigException("PAYMENTS_APPLE_ROOT_CA_PATHS: un certificado no se puede leer")
@@ -279,15 +290,23 @@ internal data class StorePaymentsSettings(
                 throw StoreConfigException("PAYMENTS_STORE_SANDBOX=accept solo con APP_ENV=local o APP_ENV=test")
             }
             val jobSeconds = environment("PAYMENTS_STORE_JOB_SECONDS")?.trim()?.toLongOrNull() ?: 300L
-            val deadLetter = environment("PAYMENTS_STORE_DEAD_LETTER_ATTEMPTS")?.trim()?.takeIf { it.isNotEmpty() }?.let {
-                it.toIntOrNull()?.takeIf { n -> n >= 0 } ?: throw StoreConfigException("PAYMENTS_STORE_DEAD_LETTER_ATTEMPTS debe ser un entero >= 0")
-            } ?: 0
-            val retention = environment("PAYMENTS_STORE_INBOX_RETENTION_DAYS")?.trim()?.takeIf { it.isNotEmpty() }?.let {
-                it.toIntOrNull()?.takeIf { n -> n >= 30 } ?: throw StoreConfigException("PAYMENTS_STORE_INBOX_RETENTION_DAYS debe ser un entero >= 30")
-            }
-            return StorePaymentsSettings(google, apple, catalog, sandbox, jobSeconds, deadLetter, retention)
+            val decisions = StorePaymentDecisions.fromEnvironment(environment, anyPlatformEnabled = google != null || apple != null)
+            return StorePaymentsSettings(google, apple, catalog, sandbox, jobSeconds, decisions)
         }
     }
+}
+
+internal const val APPLE_API_KEY_FILE_ENV = "PAYMENTS_APPLE_API_KEY_FILE"
+internal const val APPLE_API_KEY_ID_ENV = "PAYMENTS_APPLE_API_KEY_ID"
+internal const val APPLE_API_ISSUER_ID_ENV = "PAYMENTS_APPLE_API_ISSUER_ID"
+
+/** Clave de la App Store Server API: las tres variables o ninguna (a medias no arranca). Ninguna = solo JWS firmados. */
+private fun appleApiConfig(environment: (String) -> String?): AppStoreApiConfig? {
+    val values = listOf(APPLE_API_KEY_FILE_ENV, APPLE_API_KEY_ID_ENV, APPLE_API_ISSUER_ID_ENV).associateWith { environment(it)?.trim().orEmpty() }
+    if (values.values.all { it.isEmpty() }) return null
+    val missing = values.filterValues { it.isEmpty() }.keys
+    if (missing.isNotEmpty()) throw StoreConfigException("App Store Server API a medias: faltan ${missing.joinToString()}")
+    return AppStoreApiConfig(values.getValue(APPLE_API_KEY_FILE_ENV), values.getValue(APPLE_API_KEY_ID_ENV), values.getValue(APPLE_API_ISSUER_ID_ENV))
 }
 
 /** Se llama en `main()` ANTES de enlazar el puerto: pagos activados sin credenciales = el proceso no arranca (codigo 78). */
@@ -417,6 +436,20 @@ private data class StoreInboxStatsRow(
 internal data class StoreInboxBacklog(val estado: String, val rows: Long, val oldestSeconds: Long, val maxAttempts: Int)
 
 @Serializable
+private data class StoreDueSubscriptionRow(
+    val proveedor: String,
+    @SerialName("identificador_externo") val identificadorExterno: String,
+    @SerialName("tienda_producto_id") val tiendaProductoId: String? = null,
+    val entorno: String? = null,
+)
+
+@Serializable
+private data class StorePollRow(
+    @SerialName("cursor_ms") val cursorMs: Long,
+    @SerialName("ultimo_sondeo_en") val ultimoSondeoEn: String,
+)
+
+@Serializable
 private data class StoreFinalizeRow(
     val tipo: String,
     val proveedor: String,
@@ -461,13 +494,14 @@ internal class StorePaymentsService(
     private val providers: Map<StorePlatform, StorePaymentProvider>,
     private val catalog: StoreCatalog,
     private val sandbox: StoreSandboxPolicy,
-    private val refundsEnabled: Boolean,
+    /** D1..D11 / G1 / N3-6: el defecto es el CONSERVADOR (nada de produccion se acredita, sin suscripciones). */
+    private val decisions: StorePaymentDecisions = StorePaymentDecisions.CONSERVATIVE,
     private val clock: () -> Instant = Instant::now,
     private val log: (String) -> Unit = {},
     private val json: Json = Json { ignoreUnknownKeys = true },
-    /** NEW-4: intentos fallidos tras los que un aviso pasa a `muerto` (0 = nunca). */
-    private val deadLetterAttempts: Int = 0,
 ) {
+    private val refundsEnabled: Boolean get() = decisions.refundsEnabled
+    private val deadLetterAttempts: Int get() = decisions.deadLetterAttempts
     private fun provider(platform: StorePlatform): StorePaymentProvider =
         providers[platform] ?: throw CanonicalErrorCode.PAYMENT_PROVIDER_UNAVAILABLE.exception()
 
@@ -481,7 +515,7 @@ internal class StorePaymentsService(
     }
 
     fun products(): StoreProductsResponse = StoreProductsResponse(
-        catalog.products.filter { it.platform in providers.keys }.map { StoreProductDto(it.storeProductId.substringBefore('/'), it.platform.name, it.kind.name, it.productCode, it.storeProductId.substringAfter('/', "").ifEmpty { null }) },
+        catalog.products.filter { it.platform in providers.keys && (it.kind != StoreKind.SUBSCRIPTION || decisions.subscriptionsEnabled) }.map { StoreProductDto(it.storeProductId.substringBefore('/'), it.platform.name, it.kind.name, it.productCode, it.storeProductId.substringAfter('/', "").ifEmpty { null }) },
     )
 
     suspend fun entitlements(userId: CanonicalUserId): StoreEntitlementsResponse {
@@ -505,7 +539,14 @@ internal class StorePaymentsService(
         if (!sandbox.allows(facts.environment, userId.value)) throw CanonicalErrorCode.STORE_SANDBOX_REJECTED.exception()
         if (facts.accountToken == null || !facts.accountToken.isUuid()) throw CanonicalErrorCode.STORE_ACCOUNT_MISMATCH.exception()
         if (request.accountToken != null && !request.accountToken.trim().equals(facts.accountToken, ignoreCase = true)) throw CanonicalErrorCode.STORE_ACCOUNT_MISMATCH.exception()
-        val result = apply(facts, userId)
+        val result = try {
+            apply(facts, userId)
+        } catch (e: StoreDeferred) {
+            // G1 / D8 apagados: la compra es autentica pero hoy no se acredita. 503: el cliente NO la termina y reintenta (Play la reembolsa sola
+            // a los 3 dias sin acknowledge); nunca un 4xx que el cliente pudiera tomar por definitivo.
+            log("store verify gated (${platform.provider}): ${e.reason}")
+            throw CanonicalErrorCode.UPSTREAM_UNAVAILABLE.exception()
+        }
         val ent = entitlements(userId)
         val code = catalog.find(platform, facts.storeProductId)?.productCode ?: product.productCode
         return StoreVerifyResponse(result, kind.name, code, ent.balance, ent.premium, ent.premium.until.takeIf { ent.premium.active })
@@ -538,6 +579,7 @@ internal class StorePaymentsService(
                 ?: catalog.find(facts.platform, facts.storeProductId.substringBefore('/'))
         }?.takeIf { it.kind == facts.kind } ?: throw CanonicalErrorCode.STORE_PRODUCT_UNKNOWN.exception()
         if (facts.state == StorePurchaseState.PENDING) return "PENDING"
+        gate(facts)
         val token = facts.accountToken?.takeIf { it.isUuid() }?.lowercase()
         return when (facts.kind) {
             StoreKind.CONSUMABLE -> {
@@ -592,6 +634,20 @@ internal class StorePaymentsService(
                 if (row.outcome == "STALE") "STALE" else "GRANTED"
             }
         }
+    }
+
+    /**
+     * G1 / D8: solo frena lo que DARIA algo (un pack comprado o una suscripcion con acceso). Quitar acceso (caducada, revocada) nunca se frena.
+     * [StoreDeferred]: el aviso queda `pendiente` con espera creciente y se aplica cuando el propietario enciende la decision.
+     */
+    private fun gate(facts: StorePurchaseFacts) {
+        val grants = when (facts.kind) {
+            StoreKind.CONSUMABLE -> facts.state == StorePurchaseState.PURCHASED
+            StoreKind.SUBSCRIPTION -> facts.subscription?.estado in ACCESS_STATES
+        }
+        if (!grants) return
+        if (facts.kind == StoreKind.SUBSCRIPTION && !decisions.subscriptionsEnabled) throw StoreDeferred("SUBSCRIPTIONS_DISABLED")
+        if (facts.environment == StoreEnvironment.PRODUCTION && !decisions.liveCredit) throw StoreDeferred("LIVE_CREDIT_DISABLED")
     }
 
     /** Play: consumir / reconocer DESPUES del credito. Si falla, queda en `app_store_pending_finalize` para el trabajo (3 dias de Play). */
@@ -679,8 +735,10 @@ internal class StorePaymentsService(
                 apply(facts, null)
             }
             StoreEventType.REFUND -> {
-                if (!refundsEnabled) throw StoreDeferred("REFUNDS_DISABLED")
                 val kind = row.datos["kind"]?.jsonPrimitive?.contentOrNull
+                // D11 (propuesta, apagada por defecto): la revocacion de una suscripcion es un hecho de ACCESO y no toca el libro mayor.
+                val immediate = kind == StoreKind.SUBSCRIPTION.name && decisions.subscriptionRevocationImmediate
+                if (!refundsEnabled && !immediate) throw StoreDeferred("REFUNDS_DISABLED")
                 if (kind == StoreKind.SUBSCRIPTION.name) {
                     val facts = provider(platform).factsFor(type, row.claveCompra, row.datos) ?: return "IGNORED"
                     apply(facts, null)
@@ -742,6 +800,40 @@ internal class StorePaymentsService(
             }
         }
         return done
+    }
+
+    /**
+     * Tarea 3 (ciclo de vida): las suscripciones que siguen dando acceso y ya llegaron a su fin (o no tienen fin) se releen de la tienda y se
+     * aplican como un aviso (renovacion, caducidad, gracia / reintento de cobro, revocacion). Sin la API de Apple las de App Store esperan al aviso.
+     * Devuelve cuantas se aplicaron.
+     */
+    suspend fun syncSubscriptions(limit: Int = 50): Int {
+        val rows = rpc<StoreDueSubscriptionRow>("app_store_subscriptions_due", buildJsonObject { put("p_limit", limit) }.toString())
+        var applied = 0
+        rows.forEach { r ->
+            val platform = StorePlatform.fromProvider(r.proveedor) ?: return@forEach
+            val environment = StoreEnvironment.entries.firstOrNull { it.db == r.entorno } ?: return@forEach
+            try {
+                val facts = providers[platform]?.currentSubscription(r.identificadorExterno, environment) ?: return@forEach
+                apply(facts, null)
+                applied++
+            } catch (e: StoreDeferred) {
+                log("store subscription sync deferred (${platform.provider}): ${e.reason}")
+            } catch (e: Exception) {
+                log("store subscription sync failed (${platform.provider}): ${(e as? BackendDomainException)?.errorCode ?: e::class.simpleName}")
+            }
+        }
+        return applied
+    }
+
+    /** Cursor persistido de un sondeo (tienda_sondeo): (cursor ms, ultimo sondeo) o null si nunca se sondeo. */
+    suspend fun pollCursor(platform: StorePlatform, source: String): Pair<Long, Instant>? =
+        rpc<StorePollRow>("app_store_poll_get", buildJsonObject { put("p_proveedor", platform.provider); put("p_fuente", source) }.toString()).singleOrNull()
+            ?.let { row -> row.cursorMs to (runCatching { OffsetDateTime.parse(row.ultimoSondeoEn).toInstant() }.getOrNull() ?: Instant.EPOCH) }
+
+    /** Avanza el cursor (la base nunca lo mueve hacia atras). Solo tras guardar en la bandeja TODO lo leido. */
+    suspend fun advancePollCursor(platform: StorePlatform, source: String, cursorMillis: Long) {
+        rpcScalar("app_store_poll_advance", buildJsonObject { put("p_proveedor", platform.provider); put("p_fuente", source); put("p_cursor_ms", cursorMillis) }.toString())
     }
 
     /** Pone en la bandeja un evento descubierto por sondeo (Voided Purchases) y lo procesa como un aviso. */

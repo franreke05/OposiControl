@@ -103,3 +103,19 @@ internal class GoogleTestKeys {
         fun otherKey(): RSAPrivateKey = KeyPairGenerator.getInstance("RSA").apply { initialize(2048) }.generateKeyPair().private as RSAPrivateKey
     }
 }
+
+/**
+ * Servicio de tienda para pruebas con las decisiones de negocio ABIERTAS en su valor permisivo (G1 credito real y D8 suscripciones encendidos),
+ * para probar la mecanica. Los defectos CONSERVADORES de produccion los prueba `StoreDecisionsTest`.
+ */
+internal fun testStoreService(
+    upstream: EconomyUpstream,
+    providers: Map<StorePlatform, StorePaymentProvider>,
+    catalog: StoreCatalog,
+    sandbox: StoreSandboxPolicy,
+    refunds: Boolean,
+    clock: () -> Instant = Instant::now,
+    deadLetterAttempts: Int = 0,
+    decisions: StorePaymentDecisions = StorePaymentDecisions(liveCredit = true, refundsEnabled = refunds, subscriptionsEnabled = true, deadLetterAttempts = deadLetterAttempts),
+    log: (String) -> Unit = {},
+): StorePaymentsService = StorePaymentsService(upstream, providers, catalog, sandbox, decisions, clock = clock, log = log)
