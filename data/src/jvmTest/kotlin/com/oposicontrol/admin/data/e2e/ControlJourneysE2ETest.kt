@@ -209,7 +209,9 @@ class ControlJourneysE2ETest {
         val edited = p.content.upsertExam(exam.copy(title = "E2E J02 editado", status = ExamStatus.DRAFT)).ok("editar")
         assertEquals("E2E J02 editado", edited.title)
         assertEquals("E2E J02 editado", sql("select titulo from public.examenes where id = '${exam.id}'"))
-        println("E2E J02 audit rows for update (gap if 0): " + sql("select count(*) from public.auditoria_log where registro_id::text = '${exam.id}' and accion <> 'examen_creado'"))
+        // Antes no se auditaba la edición (corregido 2026-10-20): una fila con los NOMBRES de los campos tocados.
+        assertEquals(1, auditCount("examen_actualizado", exam.id))
+        assertTrue(sql("select despues::text from public.auditoria_log where accion = 'examen_actualizado' and registro_id::text = '${exam.id}'").contains("titulo"))
         // Error: comunidad inexistente.
         p.content.upsertExam(newExam("E2E J02 sin comunidad").copy(communityId = UUID.randomUUID().toString())).failure("comunidad desconocida")
         assertEquals("0", sql("select count(*) from public.examenes where titulo = 'E2E J02 sin comunidad'"))
@@ -282,6 +284,7 @@ class ControlJourneysE2ETest {
         assertEquals("3", sql("select total_preguntas from public.examenes where id = '$id'"))
         val lote = sql("select id from public.lotes_importacion_preguntas where examen_id = '$id' order by creado_en desc limit 1")
         assertEquals(1, auditCount("lote_importado", lote))
+        assertEquals(1, auditCount("lote_creado", lote), "crear el lote también queda auditado (2026-10-20)")
         assertIs<AppError.Authorization>(Panel("Q1").content.importQuestions(id, listOf(question(id, 9))).failure("usuario importa"))
     }
 
@@ -413,6 +416,9 @@ class ControlJourneysE2ETest {
         val channel = p.control.createForumChannel(ForumChannelDraft("Canal E2E", slug, "Canal de prueba E2E", true, "95", specialty, false)).ok("crear canal")
         assertEquals(1, auditCount("foro_canal_creado", channel.id))
         val premod = sql("select valor_integer from public.configuracion_v1 where clave = 'foro_premoderacion_posts'")
+        // Límite anti-spam de publicaciones por hora (lado Bot): las ejecuciones repetidas del E2E lo agotan; se sube y se restaura.
+        val postsHora = sql("select valor_integer from public.configuracion_v1 where clave = 'foro_posts_hora'")
+        sql("update public.configuracion_v1 set valor_integer = 1000 where clave = 'foro_posts_hora'")
         sql("update auth.users set email_confirmed_at = now() - interval '3 days', created_at = now() - interval '3 days' where id = '$q1'; update public.configuracion_v1 set valor_integer = 1 where clave = 'foro_premoderacion_posts'")
         try {
         val body = "Duda E2E de moderacion ${UUID.randomUUID().toString().take(8)} sobre el tema 3"
@@ -444,6 +450,7 @@ class ControlJourneysE2ETest {
         assertIs<AppError.Authorization>(Panel("Q1").control.moderateForum(ForumContentType.POST, postId, ForumAction.RESTORE, "", null).failure("usuario modera"))
         } finally {
             sql("update public.configuracion_v1 set valor_integer = ${premod.ifEmpty { "0" }} where clave = 'foro_premoderacion_posts'")
+            if (postsHora.isNotEmpty()) sql("update public.configuracion_v1 set valor_integer = $postsHora where clave = 'foro_posts_hora'")
         }
     }
 

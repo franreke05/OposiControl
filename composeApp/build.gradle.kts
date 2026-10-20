@@ -214,6 +214,14 @@ kotlin {
             implementation(libs.kotlinx.coroutines.swing)
             implementation("io.sentry:sentry:8.57.0")
         }
+        // E2E de interfaz contra el stack aislado oposi-control-e2e (ControlPanelUiE2ETest): la app entera con su Koin real.
+        jvmTest.dependencies {
+            @OptIn(org.jetbrains.compose.ExperimentalComposeLibrary::class)
+            implementation(compose.uiTest)
+            implementation(libs.sqldelight.sqlite.driver)
+            implementation(projects.core.database)
+            implementation(libs.kotlinx.serialization.json)
+        }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
         }

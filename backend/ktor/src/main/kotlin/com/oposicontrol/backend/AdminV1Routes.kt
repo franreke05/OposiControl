@@ -4302,12 +4302,15 @@ class AdminV1Gateway private constructor(
     fun updateExamen(id: String, raw: JsonObject): AdminExamenDto? {
         val patch = examenPatchFrom(raw)
         if (patch.isEmpty()) return getExamen(id)
-        return request(
+        val saved = request(
             "PATCH",
             "/rest/v1/examenes?id=eq.$id",
             sbJson.encodeToString(JsonObject.serializer(), patch),
             prefer = "return=representation",
-        ).decodeList<AdminExamenRow>().firstOrNull()?.toDto().withSignedCover()
+        ).decodeList<AdminExamenRow>().firstOrNull()?.toDto()
+        // E2E 2026-10-20: editar un examen no dejaba rastro (solo crear/publicar/archivar). Se registran los CAMPOS cambiados.
+        if (saved != null) registrarAuditoria("examen_actualizado", "examenes", id, despues = auditFields(patch.keys))
+        return saved.withSignedCover()
     }
 
     /**
@@ -5426,6 +5429,11 @@ class AdminV1Gateway private constructor(
                 throw error
             }
         }
+        // E2E 2026-10-20: crear un lote (JSON o PDF, que acaba aquí) no se auditaba; solo su publicación.
+        registrarAuditoria(
+            "lote_creado", "lotes_importacion_preguntas", loteId,
+            despues = buildJsonObject { put("examen_id", JsonPrimitive(examenId)); put("filas", JsonPrimitive(rows.size)) },
+        )
         return getLote(loteId) ?: error("No se pudo leer el lote creado.")
     }
 
@@ -5617,12 +5625,22 @@ class AdminV1Gateway private constructor(
             anulada = item.anulada,
             motivoAnulacion = motivoAnulacion?.let { JsonPrimitive(it) } ?: JsonNull,
         )
-        return request(
+        val saved = request(
             "PATCH", "/rest/v1/preguntas_parseadas_staging?id=eq.$id",
             patch.toJson().toString(),
             prefer = "return=representation",
         ).decodeList<StagingRow>().firstOrNull()?.toDto()
             ?: throw domainError("IMPORT_STAGING_NOT_FOUND")
+        // E2E 2026-10-20: la revisión humana (aprobar, omitir, vincular, anular) no se auditaba. Sin el contenido de la pregunta.
+        registrarAuditoria(
+            "staging_revisado", "preguntas_parseadas_staging", id,
+            despues = buildJsonObject {
+                put("estado", JsonPrimitive(estado))
+                put("anulada", JsonPrimitive(item.anulada))
+                put("vinculada", JsonPrimitive(vincular != null))
+            },
+        )
+        return saved
     }
 
     /**
@@ -8698,6 +8716,10 @@ class AdminV1Gateway private constructor(
      * - [duplicateMeansAudited]: un 23505 (UNIQUE_VIOLATION) al insertar significa que la fila YA existe (indice unico
      *   parcial); se registra y no es un fallo.
      */
+    /** Solo los NOMBRES de los campos tocados (ordenados): qué cambió, sin copiar el contenido al registro de auditoría. */
+    private fun auditFields(keys: Collection<String>): JsonElement =
+        buildJsonObject { put("campos", JsonArray(keys.sorted().map { JsonPrimitive(it) })) }
+
     fun registrarAuditoria(
         accion: String,
         tabla: String?,
