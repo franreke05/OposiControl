@@ -188,4 +188,66 @@ SQL
 }
 store_race
 echo "ok:   carreras de tienda con dos conexiones reales (R1..R4, S1..S3, D1 x2): cerrojo por clave, sin 40P01, libro = saldo"
+# 7. H-04 (docs/qa/EXAM_TIMER_H04.md): carreras REALES del cierre del intento con dos conexiones. CARACTERIZAN el comportamiento de hoy
+#    (sin limite de tiempo): cierre y respuesta se serializan por el FOR UPDATE de la fila del intento. F1 doble cierre -> uno cierra y el
+#    otro ve `already`; F2 cierre (abierto) || respuesta -> la respuesta espera, se rechaza y no escribe; F3 respuesta (abierta) || cierre ->
+#    el cierre espera y la cuenta; F4 cierre (abierto) || abandono -> el abandono se rechaza; F5 tras el cierre nada mueve la fila.
+exam_race() {
+  local i a bad=0 snap ex='e4040000-0000-0000-0000-000000000002'
+  rq() { psqlc -At -c "$1" 2>&1; }
+  bg() { psqlc -At >"$tmp/race.$1.out" 2>"$tmp/race.$1.err" <<<"$2" & }
+  held() { echo "begin; $1 do \$\$ begin perform pg_sleep(1.5); end \$\$; commit;"; }
+  expect() { [ "$2" = "$3" ] || { echo "  race $1: '$2' (esperado '$3')"; bad=1; }; }
+  noerr() { local f; for f in "$@"; do [ ! -s "$tmp/race.$f.err" ] || { echo "  race $f: $(head -1 "$tmp/race.$f.err")"; bad=1; }; done; }
+  u() { printf 'a0000000-0000-0000-0000-0000000004a%d' "$1"; }
+  q() { printf 'f4040000-0000-0000-0000-00000000001%d' "$1"; }
+  ok() { printf '0a404000-0000-0000-001%d-000000000001' "$1"; }
+  start() { rq "select public.app_start_exam_attempt('$(u "$1")', '$ex') ->> 'intento_id'"; }
+  fin() { echo "select public.app_finish_exam_attempt('$(u "$1")', '$2') ->> 'already';"; }
+  ans() { echo "select public.app_record_attempt_answer('$(u "$1")', '$2', '$(q "$3")', '$(ok "$3")', 1000, 0, null) ->> 'outcome';"; }
+  row() { rq "select estado || '|' || coalesce(motivo_fin, '-') || '|' || total_respondidas || '|' || total_correctas || '|' || (select count(*) from public.respuestas_intento r where r.intento_id = ie.id) from public.intentos_examen ie where id = '$1'"; }
+  fp() { rq "select md5((to_jsonb(ie) - 'actualizado_en')::text) from public.intentos_examen ie where id = '$1'"; }
+  psqlc >/dev/null 2>"$err" <<'SQL' || { cat "$err"; fail "carreras del intento: no se siembran los datos"; }
+insert into auth.users (id, email, aud, role) select ('a0000000-0000-0000-0000-0000000004a' || n)::uuid, 'h04race' || n || '@test.local', 'authenticated', 'authenticated' from generate_series(1, 4) n;
+insert into public.especialidades (id, codigo, nombre, slug, activa) values ('e1000000-0000-0000-0000-000000000405', 'H4R', 'H4R', 'h4r', true);
+insert into public.comunidades_autonomas (id, codigo, nombre, slug) values ('c1000000-0000-0000-0000-000000000405', 'H4R', 'Com H4R', 'com-h4r');
+insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta, especialidad_principal_id)
+  select ('a0000000-0000-0000-0000-0000000004a' || n)::uuid, 'h04race' || n, 'h04_race_' || n, true, 'activa', 'e1000000-0000-0000-0000-000000000405' from generate_series(1, 4) n
+  on conflict (usuario_id) do update set especialidad_principal_id = excluded.especialidad_principal_id;
+begin;
+set local session_replication_role = replica;
+insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en, duracion_minutos)
+  values ('e4040000-0000-0000-0000-000000000002', 'H04-RACE', 'e1000000-0000-0000-0000-000000000405', 'c1000000-0000-0000-0000-000000000405', 'H04 race', 'rafaga', 'gratuito', true, now() - interval '1 day', 1);
+insert into public.preguntas (id, codigo_pregunta, tipo_pregunta, titulo, activa)
+  select ('f4040000-0000-0000-0000-00000000001' || n)::uuid, 'H04-R' || n, 'rafaga', 'Pregunta ' || n, true from generate_series(1, 3) n;
+insert into public.opciones_pregunta (id, pregunta_id, letra, texto_opcion, posicion)
+  select ('0a404000-0000-0000-001' || n || '-00000000000' || o)::uuid, ('f4040000-0000-0000-0000-00000000001' || n)::uuid, chr(64 + o), 'Opcion', o
+  from generate_series(1, 3) n, generate_series(1, 2) o;
+insert into public.soluciones_pregunta (pregunta_id, opcion_correcta_id, razonamiento)
+  select ('f4040000-0000-0000-0000-00000000001' || n)::uuid, ('0a404000-0000-0000-001' || n || '-000000000001')::uuid, 'x' from generate_series(1, 3) n;
+insert into public.preguntas_examen (examen_id, pregunta_id, posicion, numero_en_examen)
+  select 'e4040000-0000-0000-0000-000000000002', ('f4040000-0000-0000-0000-00000000001' || n)::uuid, n, n from generate_series(1, 3) n;
+commit;
+SQL
+  for i in 1 2; do
+    a="$(start 1)"; rq "$(ans 1 "$a" 1)" >/dev/null
+    bg a "$(held "$(fin 1 "$a")")"; sleep 0.4; bg b "$(fin 1 "$a")"; wait; noerr a b
+    expect "F1.$i" "$(cat "$tmp/race.a.out")|$(cat "$tmp/race.b.out")|$(row "$a")" "false|true|finalizado|USER|1|1|1"
+    a="$(start 2)"; rq "$(ans 2 "$a" 1)" >/dev/null
+    bg a "$(held "$(fin 2 "$a")")"; sleep 0.4; bg b "$(ans 2 "$a" 2)"; wait; noerr a b
+    expect "F2.$i" "$(cat "$tmp/race.b.out")|$(row "$a")" "ATTEMPT_NOT_IN_PROGRESS|finalizado|USER|1|1|1"
+    a="$(start 3)"
+    bg a "$(held "$(ans 3 "$a" 1)")"; sleep 0.4; bg b "$(fin 3 "$a")"; wait; noerr a b
+    expect "F3.$i" "$(cat "$tmp/race.a.out")|$(cat "$tmp/race.b.out")|$(row "$a")" "OK|false|finalizado|USER|1|1|1"
+    a="$(start 4)"
+    bg a "$(held "$(fin 4 "$a")")"; sleep 0.4; bg b "select public.app_abandon_exam_attempt('$(u 4)', '$a', 1, 'salida_usuario') ->> 'outcome';"; wait; noerr a b
+    expect "F4.$i" "$(cat "$tmp/race.b.out")|$(row "$a")" "ATTEMPT_ALREADY_FINISHED|finalizado|USER|0|0|0"
+    snap="$(fp "$a")"
+    expect "F5.$i" "$(rq "$(fin 4 "$a")")|$(rq "$(ans 4 "$a" 1)")|$(fp "$a")" "true|ATTEMPT_NOT_IN_PROGRESS|$snap"
+  done
+  expect "TIMEOUT" "$(rq "select count(*) from public.intentos_examen where motivo_fin = 'TIMEOUT'")" 0
+  [ "$bad" = 0 ] || fail "carreras del intento con dos conexiones (H-04)"
+}
+exam_race
+echo "ok:   carreras del intento con dos conexiones reales (F1..F5 x2): cierre serializado, nada tras el cierre, sin TIMEOUT"
 echo "db-pg17-gate OK"

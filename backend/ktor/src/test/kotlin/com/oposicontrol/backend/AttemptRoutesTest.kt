@@ -944,6 +944,65 @@ class AttemptRoutesTest {
         assertEquals(2, upstream.sent.size, "solo las dos RPC")
     }
 
+    // =================================================================== H-04 (caracterizacion, docs/qa/EXAM_TIMER_H04.md)
+    // Fijan lo que el servidor hace HOY: ningun examen tiene limite de tiempo (DEC-014 abierta). Si el dueno decide un limite,
+    // estas pruebas DEBEN cambiar con esa decision; no son una regla de producto.
+
+    @Test
+    fun h04AnOpenAttemptLongPastTheExamDurationHasNoDeadlineAndIsStillOpen() = testApplication {
+        application { attemptModule() }
+        // el examen dura 60 min (examRow) y el intento empezo 3 h antes del reloj del servidor
+        upstream.examById = examRow()
+        upstream.attemptRow = attemptRow().replace("2026-10-08T11:00:00.123456+00:00", "2026-10-08T09:00:00+00:00")
+        upstream.frozen = "[${(1..4).joinToString(",") { frozenRow(it) }}]"
+        upstream.answers = "[${answerRow(1, 1)}]"
+        val response = client.call(HttpMethod.Get, base)
+        val body = response.bodyAsText()
+        assertEquals(HttpStatusCode.OK, response.status, body)
+        val intento = obj(body)["intento"]!!.jsonObject
+        assertEquals("en_progreso", intento["estado"]!!.jsonPrimitive.content, "sin expiracion perezosa")
+        assertNull(intento["deadline"], "deadline siempre null: duracion_minutos no se aplica")
+        assertNull(intento["motivoFin"])
+        assertEquals(now.toString(), intento["serverNow"]!!.jsonPrimitive.content)
+        assertTrue(upstream.rpcBodies("app_finish_exam_attempt").isEmpty(), "leer no finaliza nada")
+        // y una respuesta a esa hora llega a la RPC tal cual: ningun parametro de tiempo limite viaja
+        val answer = client.call(HttpMethod.Put, "$base/respuestas/${q(1)}", answerBody(1, 1), key1)
+        assertEquals(HttpStatusCode.OK, answer.status, answer.bodyAsText())
+        assertEquals(
+            setOf("p_usuario_id", "p_intento_id", "p_pregunta_id", "p_opcion_id", "p_tiempo_respuesta_ms", "p_base_revision", "p_nivel_confianza"),
+            upstream.rpcBodies("app_record_attempt_answer").single().keys,
+        )
+    }
+
+    @Test
+    fun h04TheRpcsNeverEmitAttemptExpiredSoKtorTreatsItAsAnUpstreamContractError() = testApplication {
+        application { attemptModule() }
+        // ATTEMPT_EXPIRED existe en el catalogo de errores y en el OpenAPI, pero ningun outcome de la base lo produce y el servicio
+        // no lo traduce: si una base futura lo devolviera sin cambiar Ktor, el cliente veria 502, no 409.
+        upstream.answerOutcome = """{"outcome":"ATTEMPT_EXPIRED"}"""
+        val answer = client.call(HttpMethod.Put, "$base/respuestas/${q(1)}", answerBody(1, 1), key1)
+        assertEquals(HttpStatusCode.BadGateway, answer.status)
+        assertEquals("UPSTREAM_CONTRACT_ERROR", code(answer.bodyAsText()))
+        upstream.finishOutcome = """{"outcome":"ATTEMPT_EXPIRED"}"""
+        val finish = client.call(HttpMethod.Post, "$base/finalizar")
+        assertEquals(HttpStatusCode.BadGateway, finish.status)
+        assertEquals("UPSTREAM_CONTRACT_ERROR", code(finish.bodyAsText()))
+    }
+
+    @Test
+    fun h04TwoFinishesWithDifferentKeysBothReachTheRpcAndReturnTheSameFrozenResult() = testApplication {
+        application { attemptModule() }
+        finishedFixture()
+        val first = client.call(HttpMethod.Post, "$base/finalizar", key = key1)
+        upstream.finishOutcome = """{"outcome":"OK","already":true}"""
+        val second = client.call(HttpMethod.Post, "$base/finalizar", key = key2)
+        assertEquals(HttpStatusCode.OK, first.status)
+        assertEquals(HttpStatusCode.OK, second.status)
+        assertNull(second.headers[IdempotencyHeaders.REPLAYED], "otra clave no es una repeticion: vuelve a la RPC")
+        assertEquals(2, upstream.rpcBodies("app_finish_exam_attempt").size)
+        assertEquals(obj(first.bodyAsText()), obj(second.bodyAsText()), "idempotente por estado: el mismo resultado")
+    }
+
     @Test
     fun resultIsOnlyForAFinishedAttemptAndConformsToTheFrozenWire() = testApplication {
         application { attemptModule() }

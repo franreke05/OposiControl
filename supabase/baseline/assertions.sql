@@ -4194,3 +4194,76 @@ begin
   raise notice 'OK store round 3 (N3-1 single session, N3-2, N3-4, N3-7, subscription replay / due, poll cursors)';
 end $$;
 rollback;
+
+-- H-04 (exam timer, docs/qa/EXAM_TIMER_H04.md): CHARACTERIZATION of what the server does TODAY with examenes.duracion_minutos. These
+-- assertions pin current behaviour, they are not a product rule: no exam is timed (DEC-014 / 10_EXAM_ENGINE_CONTRACT open question),
+-- so an attempt far past its exam duration is still resumable, answerable and finishable with motivo_fin USER, and nothing emits
+-- TIMEOUT. If the owner decides a time limit, these assertions are EXPECTED to change with that migration. The two-connection races
+-- (finish || finish, finish || answer, answer || finish) are step 7 of scripts/db-pg17-gate.sh.
+begin;
+insert into auth.users (id, email, aud, role) values ('a0000000-0000-0000-0000-000000000404', 'h04@test.local', 'authenticated', 'authenticated');
+insert into public.especialidades (id, codigo, nombre, slug, activa) values ('e1000000-0000-0000-0000-000000000404', 'H04', 'H04', 'h04', true);
+insert into public.comunidades_autonomas (id, codigo, nombre, slug) values ('c1000000-0000-0000-0000-000000000404', 'H4C', 'Com H04', 'com-h04');
+insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta, especialidad_principal_id)
+  values ('a0000000-0000-0000-0000-000000000404', 'h04', 'h04_user', true, 'activa', 'e1000000-0000-0000-0000-000000000404')
+  on conflict (usuario_id) do update set especialidad_principal_id = excluded.especialidad_principal_id;
+set local session_replication_role = replica;
+insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en, duracion_minutos)
+  values ('e4040000-0000-0000-0000-000000000001', 'H04-EX', 'e1000000-0000-0000-0000-000000000404', 'c1000000-0000-0000-0000-000000000404', 'H04 timed?', 'rafaga', 'gratuito', true, now() - interval '1 day', 1);
+insert into public.preguntas (id, codigo_pregunta, tipo_pregunta, titulo, activa)
+  select ('f4040000-0000-0000-0000-00000000000' || n)::uuid, 'H04-P' || n, 'rafaga', 'Pregunta ' || n, true from generate_series(1, 3) n;
+insert into public.opciones_pregunta (id, pregunta_id, letra, texto_opcion, posicion)
+  select ('0a404000-0000-0000-000' || n || '-00000000000' || o)::uuid, ('f4040000-0000-0000-0000-00000000000' || n)::uuid, chr(64 + o), 'Opcion', o
+  from generate_series(1, 3) n, generate_series(1, 2) o;
+insert into public.soluciones_pregunta (pregunta_id, opcion_correcta_id, razonamiento)
+  select ('f4040000-0000-0000-0000-00000000000' || n)::uuid, ('0a404000-0000-0000-000' || n || '-000000000001')::uuid, 'x' from generate_series(1, 3) n;
+insert into public.preguntas_examen (examen_id, pregunta_id, posicion, numero_en_examen)
+  select 'e4040000-0000-0000-0000-000000000001', ('f4040000-0000-0000-0000-00000000000' || n)::uuid, n, n from generate_series(1, 3) n;
+set local session_replication_role = origin;
+
+do $$
+declare
+  u constant uuid := 'a0000000-0000-0000-0000-000000000404';
+  ex constant uuid := 'e4040000-0000-0000-0000-000000000001';
+  p1 constant uuid := 'f4040000-0000-0000-0000-000000000001';
+  p2 constant uuid := 'f4040000-0000-0000-0000-000000000002';
+  p3 constant uuid := 'f4040000-0000-0000-0000-000000000003';
+  r jsonb; a uuid; snap jsonb;
+begin
+  r := public.app_start_exam_attempt(u, ex);
+  assert r ->> 'outcome' = 'CREATED', 'H04 start: ' || r;
+  a := (r ->> 'intento_id')::uuid;
+  -- the exam lasts 1 minute; the attempt started 2 hours ago (server clock)
+  set local session_replication_role = replica;
+  update public.intentos_examen set iniciado_en = now() - interval '2 hours' where id = a;
+  set local session_replication_role = origin;
+  assert (select duracion_minutos from public.examenes where id = ex) = 1, 'H04 fixture: exam duration 1 min';
+
+  -- CURRENT: no lazy expiry on resume, the overdue attempt is the same open attempt
+  r := public.app_start_exam_attempt(u, ex);
+  assert r ->> 'outcome' = 'RESUMED' and (r ->> 'intento_id')::uuid = a, 'H04 CURRENT: an attempt past duracion_minutos is RESUMED, not expired: ' || r;
+  assert (select estado = 'en_progreso' and motivo_fin is null from public.intentos_examen where id = a), 'H04 CURRENT: no lazy TIMEOUT on start/resume';
+  -- CURRENT: an answer 119 minutes past the duration is accepted (no ATTEMPT_EXPIRED outcome exists in the RPC)
+  r := public.app_record_attempt_answer(u, a, p1, '0a404000-0000-0000-0001-000000000001', 1000, 0, null);
+  assert r ->> 'outcome' = 'OK' and r ->> 'estado' = 'ANSWERED', 'H04 CURRENT: late answer accepted: ' || r;
+  r := public.app_record_attempt_answer(u, a, p2, '0a404000-0000-0000-0002-000000000002', 1000, 0, null);
+  assert r ->> 'outcome' = 'OK', 'H04 CURRENT: second late answer accepted: ' || r;
+  -- CURRENT: finish is always USER; duracion_segundos is the real server elapsed time, not capped at the exam duration
+  assert public.app_finish_exam_attempt(u, a) = '{"outcome":"OK","already":false}'::jsonb, 'H04 finish';
+  assert (select motivo_fin = 'USER' and duracion_segundos >= 7200 and duracion_segundos > 60 * 1 from public.intentos_examen where id = a),
+    'H04 CURRENT: motivo_fin USER and duracion_segundos (>= 7200) beyond duracion_minutos * 60';
+  assert not exists (select 1 from public.intentos_examen where motivo_fin = 'TIMEOUT'), 'H04 CURRENT: nothing ever writes TIMEOUT';
+
+  -- the frozen result does not move: a repeated finish is a no-op and a late answer is refused
+  select to_jsonb(ie) - 'actualizado_en' into snap from public.intentos_examen ie where id = a;
+  assert public.app_finish_exam_attempt(u, a) = '{"outcome":"OK","already":true}'::jsonb, 'H04 second finish is idempotent by state';
+  assert public.app_record_attempt_answer(u, a, p3, '0a404000-0000-0000-0003-000000000001', 0, 0, null)
+         = '{"outcome":"ATTEMPT_NOT_IN_PROGRESS","estado":"finalizado"}'::jsonb, 'H04 answer after finish refused';
+  assert public.app_record_attempt_answer(u, a, p1, '0a404000-0000-0000-0001-000000000001', 0, 1, null) ->> 'outcome' = 'ATTEMPT_NOT_IN_PROGRESS',
+    'H04 replay of an answered question after finish refused too';
+  assert (select to_jsonb(ie) - 'actualizado_en' from public.intentos_examen ie where id = a) = snap, 'H04 grade, totals, finalizado_en and duration unchanged';
+  assert (select count(*) from public.respuestas_intento where intento_id = a) = 2, 'H04 no answer row written after finish';
+  assert public.app_abandon_exam_attempt(u, a, 1, 'salida_usuario') ->> 'outcome' = 'ATTEMPT_ALREADY_FINISHED', 'H04 no abandon after finish';
+  raise notice 'OK H-04 timer characterization (no time limit enforced; finish idempotent; nothing accepted after finish)';
+end $$;
+rollback;
