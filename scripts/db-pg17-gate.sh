@@ -212,6 +212,14 @@ SQL
   expect "N4-2 stats" "$(rq "select string_agg(estado || ':' || n, ',' order by estado) from public.app_store_inbox_stats() where estado like 'retenido%'")|$(rq "select coalesce((select n from public.app_store_inbox_stats() where estado = 'pendiente'), 0)")" "retenido_decision:1|$out"
   expect "N4-2 interruptor apagado" "$(rq "select count(*) from public.app_store_inbox_pending(200, array['REFUNDS_DISABLED', 'SUBSCRIPTIONS_DISABLED']) where evento_id = 'n42-1'")" 0
   expect "N4-2 interruptor encendido" "$(rq "select count(*) from public.app_store_inbox_pending(200, array['LIVE_CREDIT_DISABLED']) where evento_id = 'n42-1'")" 1
+  # N5-1: una lectura de Notification History a medias guarda el token y su ventana SIN mover el cursor; al acabar la ventana el cursor avanza y
+  # el token se olvida. N5-2: la sobrecarga booleana de app_store_inbox_pending ya no existe.
+  rq "select public.app_store_poll_advance('app_store', 'notification_history', 1000)" >/dev/null
+  out="$(rq "select public.app_store_poll_page('app_store', 'notification_history', 'tok-2', 900, 5000)")"
+  expect "N5-1 pagina" "$out|$(rq "select cursor_ms || '|' || pagina_token || '|' || ventana_inicio_ms || '|' || ventana_fin_ms from public.app_store_poll_get('app_store', 'notification_history')")" "t|1000|tok-2|900|5000"
+  out="$(rq "select public.app_store_poll_advance('app_store', 'notification_history', 5000)")"
+  expect "N5-1 fin" "$out|$(rq "select cursor_ms || '|' || coalesce(pagina_token, '-') || '|' || coalesce(ventana_fin_ms::text, '-') from public.app_store_poll_get('app_store', 'notification_history')")" "5000|5000|-|-"
+  expect "N5-2 sobrecarga" "$(rq "select to_regprocedure('public.app_store_inbox_pending(integer,boolean)') is null")" t
   # N4-5: con 300k avisos procesados, app_store_inbox_stats lee el indice parcial del atasco (contador de escaneos del indice, no el texto del plan)
   psqlc >/dev/null 2>"$err" <<'SQL' || { cat "$err"; fail "N4-5: no se siembra la bandeja"; }
 insert into public.tienda_bandeja (proveedor, evento_id, tipo, clave_compra, entorno, huella, estado, resultado, procesado_en)

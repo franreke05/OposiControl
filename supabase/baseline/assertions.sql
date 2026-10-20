@@ -3833,7 +3833,7 @@ begin
   select * into r from public.app_store_inbox_put('app_store', 'n-1', 'COMPRA', 'as-tx-9', 'sandbox', pg_temp.h('y'), '{"k":2}');
   assert not r.nuevo and not r.misma_huella, 'same id, other body: detected';
   update public.tienda_bandeja set reclamado_hasta = null where evento_id = 'n-1';  -- 20261022102900: the put claims the row; let the claim expire
-  assert exists (select 1 from public.app_store_inbox_pending(10, false) where evento_id = 'n-1'), 'pending row listed';
+  assert exists (select 1 from public.app_store_inbox_pending(10, '{}'::text[]) where evento_id = 'n-1'), 'pending row listed';
   perform public.app_store_inbox_mark('app_store', 'n-1', 'pendiente', null, 'UPSTREAM_UNAVAILABLE', (select reclamado_por from public.tienda_bandeja where evento_id = 'n-1'), 0);
   assert (select intentos from public.tienda_bandeja where evento_id = 'n-1') = 1 and (select ultimo_error from public.tienda_bandeja where evento_id = 'n-1') = 'UPSTREAM_UNAVAILABLE', 'deferral recorded';
   -- 20261022103000 (N3-4): mark needs a claim (null is refused); the row is claimed again before each mark, as the job would.
@@ -3842,7 +3842,7 @@ begin
   update public.tienda_bandeja set reclamado_por = 'assert-claim' where evento_id = 'n-1';
   perform public.app_store_inbox_mark('app_store', 'n-1', 'pendiente', null, 'late failure', 'assert-claim', 0);
   assert (select estado from public.tienda_bandeja where evento_id = 'n-1') = 'procesado', 'processed stays processed';
-  assert not exists (select 1 from public.app_store_inbox_pending(10, false) where evento_id = 'n-1'), 'processed row not listed';
+  assert not exists (select 1 from public.app_store_inbox_pending(10, '{}'::text[]) where evento_id = 'n-1'), 'processed row not listed';
 
   -- ---- 9. Play finish bookkeeping: a credited google pack is listed until marked; apple and uncredited never listed; entitlements read
   select * into r from pg_temp.buy(pg_temp.u(7), 'gp-token-7');
@@ -3924,7 +3924,7 @@ begin
   assert not has_function_privilege('authenticated', 'public.app_store_credit_purchase(uuid,uuid,text,text,text,text,text,jsonb)', 'execute')
      and not has_function_privilege('anon', 'public.app_store_inbox_put(text,text,text,text,text,text,jsonb)', 'execute')
      and not has_function_privilege('authenticated', 'public.app_store_refund_reversed(text,text,text)', 'execute')
-     and not has_function_privilege('authenticated', 'public.app_store_inbox_pending(integer,boolean)', 'execute')
+     and not has_function_privilege('authenticated', 'public.app_store_inbox_pending(integer,text[])', 'execute')
      and not has_function_privilege('anon', 'public.app_store_inbox_stats()', 'execute'), 'S4 function grants';
   assert (select relrowsecurity from pg_class where oid = 'public.tienda_bandeja'::regclass) and (select relrowsecurity from pg_class where oid = 'public.tienda_cuentas'::regclass), 'S4 RLS on';
   assert not has_table_privilege('service_role', 'public.compras_usuario', 'truncate') and not has_table_privilege('service_role', 'public.suscripciones', 'update'), 'S4 ECO-11';
@@ -3938,8 +3938,8 @@ begin
   end loop;
   assert (select estado from public.tienda_bandeja where evento_id = 'assn:poison') = 'retenido'
      and (select intentos from public.tienda_bandeja where evento_id = 'assn:poison') = 0, 'S5 FIXED: retained rows do not count attempts';
-  assert not exists (select 1 from public.app_store_inbox_pending(200, false) where evento_id = 'assn:poison'), 'S5 retained rows wait while refunds are off';
-  assert exists (select 1 from public.app_store_inbox_pending(200, true) where evento_id = 'assn:poison'), 'S5 FIXED: listed again once refunds are on';
+  assert not exists (select 1 from public.app_store_inbox_pending(200, '{}'::text[]) where evento_id = 'assn:poison'), 'S5 retained rows wait while refunds are off';
+  assert exists (select 1 from public.app_store_inbox_pending(200, array['REFUNDS_DISABLED']) where evento_id = 'assn:poison'), 'S5 FIXED: listed again once refunds are on';
   perform pg_temp.inbox('assn:flaky', 'COMPRA', 'au-tx-y');
   for i in 1..250 loop  -- 20261022103000 (N3-4): claimed before each mark, as the job would
     update public.tienda_bandeja set reclamado_por = 'assert-claim' where evento_id = 'assn:flaky';
@@ -3949,10 +3949,10 @@ begin
      and (select proximo_intento_en from public.tienda_bandeja where evento_id = 'assn:flaky') > now(), 'S5 failures back off';
   perform pg_temp.inbox('assn:fresh', 'COMPRA', 'au-tx-z');
   update public.tienda_bandeja set reclamado_hasta = null where evento_id = 'assn:fresh';  -- 20261022102900: the put claimed it; the claim expired
-  assert exists (select 1 from public.app_store_inbox_pending(1, false) where evento_id = 'assn:fresh'), 'S5 FIXED: a new row is not starved by a backed-off one';
+  assert exists (select 1 from public.app_store_inbox_pending(1, '{}'::text[]) where evento_id = 'assn:fresh'), 'S5 FIXED: a new row is not starved by a backed-off one';
   update public.tienda_bandeja set proximo_intento_en = now() - interval '1 second', reclamado_hasta = null where evento_id = 'assn:flaky';
-  assert exists (select 1 from public.app_store_inbox_pending(200, false) where evento_id = 'assn:flaky'), 'S5 FIXED: never dropped after many attempts';
-  assert not exists (select 1 from public.app_store_inbox_pending(200, false) where evento_id = 'assn:flaky'), 'S5 a claimed row is not handed out twice (lease)';
+  assert exists (select 1 from public.app_store_inbox_pending(200, '{}'::text[]) where evento_id = 'assn:flaky'), 'S5 FIXED: never dropped after many attempts';
+  assert not exists (select 1 from public.app_store_inbox_pending(200, '{}'::text[]) where evento_id = 'assn:flaky'), 'S5 a claimed row is not handed out twice (lease)';
   assert (select count(*) from public.app_store_inbox_stats() where estado = 'retenido' and n >= 1) = 1, 'S5 stats expose the retained backlog';
 
   -- S6: ECO-04 on the refund function (unchanged).
@@ -4069,7 +4069,7 @@ begin
   tok := pg_temp.inbox('l-1', 'COMPRA', 'l-key');
   assert tok is not null, 'NEW-3 a new row is claimed by its put';
   assert pg_temp.inbox('l-1', 'COMPRA', 'l-key') is null, 'NEW-3 a redelivery while claimed is not claimed again';
-  assert not exists (select 1 from public.app_store_inbox_pending(200, true) where evento_id = 'l-1'), 'NEW-3 the job does not take a claimed row';
+  assert not exists (select 1 from public.app_store_inbox_pending(200, array['REFUNDS_DISABLED']) where evento_id = 'l-1'), 'NEW-3 the job does not take a claimed row';
   assert not public.app_store_inbox_mark('app_store', 'l-1', 'procesado', 'CREDITED', null, 'not-the-claim', 0), 'NEW-3 a stale claim cannot mark';
   assert public.app_store_inbox_renew('app_store', 'l-1', tok), 'NEW-3 the holder renews its lease';
   assert public.app_store_inbox_mark('app_store', 'l-1', 'procesado', 'CREDITED', null, tok, 0), 'NEW-3 the holder marks';
@@ -4081,7 +4081,7 @@ begin
   for i in 1..3 loop
     assert public.app_store_inbox_mark('app_store', 'dl-1', 'pendiente', null, 'UPSTREAM_UNAVAILABLE', tok, 3), 'NEW-4 mark ' || i;
     update public.tienda_bandeja set proximo_intento_en = null where evento_id = 'dl-1';
-    select p.reclamo into tok from public.app_store_inbox_pending(200, false) p where p.evento_id = 'dl-1';
+    select p.reclamo into tok from public.app_store_inbox_pending(200, '{}'::text[]) p where p.evento_id = 'dl-1';
   end loop;
   assert (select estado from public.tienda_bandeja where evento_id = 'dl-1') = 'muerto', 'NEW-4 dead letter after 3 attempts';
   assert exists (select 1 from public.app_store_inbox_stats() s where s.estado = 'muerto' and s.n >= 1), 'NEW-4 dead letters in the stats';
