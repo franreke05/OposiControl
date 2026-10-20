@@ -2,7 +2,11 @@
 
 ## Control panel E2E — 2026-10-20 (`develop` ae62375 + este ciclo, panel `c655116`)
 
-Estado: **CONTROL_PANEL_READY no declarado**. Las 12 funciones admin pasan de punta a punta en la capa de datos; faltan las pruebas de interfaz (en curso), la decisión sobre el rol moderador y las latencias medidas en reposo. NO APTO PARA PRODUCCIÓN mientras sigan abiertos los RB P1 (MAIN sin tocar; ningún GO aplicado).
+Estado: **CONTROL_PANEL_READY_LOCAL (condicionado)**. Las 12 funciones admin están verificadas de punta a punta en la capa de datos (12/12) y hay pruebas de interfaz de login/roles, publicación, pedidos/reembolsos y auditoría (17, panel `95b5b1e`). Latencias en reposo: lecturas con p95 ≤ 67 ms y escrituras auditadas ≤ 63 ms, sin ningún cuello. Condiciones antes de pasar a READY:
+(1) el propietario decide si el moderador tiene acceso al panel y si el motivo de anulación es obligatorio;
+(2) volver a ejecutar `ControlJourneysE2ETest` sobre el candidato integrado con develop actual (E7 `cb50ee3` es anterior al límite de mutaciones admin y a las migraciones `security_*`);
+(3) las pruebas de interfaz usan repositorios falsos, así que la cadena interfaz→Ktor solo está cubierta por la capa de datos.
+NO APTO PARA PRODUCCIÓN mientras sigan abiertos los RB P1 (MAIN sin tocar; ningún GO aplicado).
 - **E2E de capa de datos (LIVE_VERIFIED en local aislado):** `ControlJourneysE2ETest` 12/12. Repositorios reales del panel → Ktor `control` real → PG17 (stack `oposi-control-e2e`, árbol E7 `cb50ee3`). Comprueba la base, `auditoria_log` y la matriz de roles. Evidencia: `docs/audit-v1/evidence/CONTROL-E2E/`.
 - **Corregido en el panel:** 502 de `/especialidades` con `descripcion` NULL. Hacía fallar en el panel un guardado de examen que el servidor ya había hecho, y al reintentar se duplicaba.
 - **MAIN, solo lectura (alcance autorizado):** RB-16 ampliada a 14 políticas (`news-images` vía `can_manage_content`). Nuevo RB-18 / SEC-V1-24: un moderador o admin bloqueado sigue siendo staff en RLS (migración local `20261023100300`). Las 21 tablas con RLS sin políticas son 21/21 server-only intencionales. Evidencia: `evidence/SEC-V1-01/MAIN-readonly-2026-10-20.md`.

@@ -1,0 +1,14 @@
+GET /sesion                        n=100 p50=22.3ms p95=44.9ms max=66.9ms errors=0
+GET /examenes                      n=100 p50=15.6ms p95=39.3ms max=51.3ms errors=0
+GET /especialidades                n=100 p50=12.7ms p95=42.3ms max=142.1ms errors=0
+GET /pedidos?estado=en_revision    n=100 p50=34.2ms p95=67.4ms max=93.6ms errors=0
+GET /pedidos/en-revision/total     n=100 p50=11.4ms p95=17.2ms max=34.8ms errors=0
+GET /auditoria/movimientos         n=100 p50=24.1ms p95=54.0ms max=81.4ms errors=0
+GET /foro/cola publicacion         n=100 p50=33.4ms p95=52.2ms max=74.8ms errors=0
+GET /accesos                       n=100 p50=24.2ms p95=33.9ms max=62.7ms errors=0
+GET /examenes-economia             n=100 p50=14.2ms p95=30.6ms max=87.8ms errors=0
+GET /comercial/productos           n=100 p50=20.8ms p95=31.4ms max=44.3ms errors=0
+GET /examenes/{id}/reglas-puntuacion n=100 p50=26.2ms p95=49.4ms max=74.7ms errors=0
+GET /examenes/{id}/preguntas-oficiales n=100 p50=27.9ms p95=60.8ms max=85.5ms errors=0
+PUT reglas-puntuacion (audit)      n=50 p50=48.7ms p95=63.2ms max=101.2ms errors=0
+POST pedidos/{id}/nota (audit)     n=50 p50=24.4ms p95=55.0ms max=93.4ms errors=0

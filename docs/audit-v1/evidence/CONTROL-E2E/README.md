@@ -34,6 +34,14 @@
 - **CP-E2E-05 (P3, herramientas de Bot).** `ops/local-exam` en `cb50ee3` no levanta desde cero: falla el orden de las migraciones (100300 y 100900 antes de sus overlays), el seed multifila del libro (WALLET_INCONSISTENT) y 102200 no es idempotente. Además, varios scripts fijan el contenedor `oposi-exam-local-db-1` y los puertos 8089/8090/9999, así que una copia con otro nombre de proyecto seguiría escribiendo en el QA de Bot. Comunicado a Bot el 2026-10-20; arreglado solo en la copia aislada.
 - La inventaria previa daba «`updateExamen` sin auditoría» como hueco: **falso**, la edición deja filas de auditoría (J02).
 
-## Latencias (P3), medición preliminar con ruido
+## Latencias (P3)
 
-`latency-run1-noisy.txt`: 60 peticiones secuenciales por operación contra :18190, con dos builds de Gradle en marcha en la misma máquina. Las p50 están entre 16 y 42 ms y las p95 por debajo de 110 ms, salvo `GET /examenes` (p95 237 ms, máx. 1,6 s). Hay que repetirla en reposo antes de sacar conclusiones; no se optimiza nada sin un cuello demostrado. FK `productos_comerciales_plan_fk` sin índice: un seq scan de 1,4 ms con 5.016 filas, unas 300 veces el catálogo; **no se propone índice**.
+- `latency-run2.txt` (válida): 100 lecturas secuenciales por operación y 50 escrituras auditadas contra :18190, sin builds propios en marcha, 80 exámenes. **Lecturas: p50 de 11 a 34 ms y p95 de 17 a 67 ms** (la peor es `GET /pedidos?estado=en_revision`, con p95 de 67 ms). **Escrituras: `PUT reglas-puntuacion` p95 63 ms y `POST pedidos/{id}/nota` p95 55 ms.** No hay ningún cuello demostrado, así que no se optimiza nada. Scripts: `latency.mjs` y `writes.mjs`.
+- `latency-run1-noisy.txt` (descartada): con dos builds de Gradle en paralelo; el p95 de 237 ms de `GET /examenes` era ruido (39 ms en reposo).
+- Límite: 1 operador y una base local con volumen sintético pequeño; no mide la latencia de red a Supabase cloud ni la concurrencia.
+- El árbol E7 `cb50ee3` es anterior al límite de mutaciones admin de develop (`a301ea7`/`2cab55b`): 100 escrituras en menos de un minuto no dieron 429. La integración debe llevar develop actual (plan v2); el límite ya se verificó con Ktor real en SEC-V1-02.
+- FK `productos_comerciales_plan_fk` sin índice: el seq scan tarda 1,4 ms con 5.016 filas (unas 300 veces el catálogo). **No se propone índice.**
+
+## Pruebas de interfaz (panel `95b5b1e`)
+
+17 pruebas de interfaz de escritorio con las pantallas y los ViewModels REALES y repositorios falsos (no hay red): `AuthLoginUiTest` 4, `ExamPublicationFlowUiTest` 4, `OrdersResolveUiTest` 5 (el primer jvmTest de control-v1) y `AuditScreenUiTest` 4. Corrección encontrada: un login con 403 (no admin o admin bloqueado) enseñaba un texto genérico; ahora muestra el del servidor. Ejecuciones: auth 42/0, exams 334/0, control-v1 36/0, audit 35/0.
