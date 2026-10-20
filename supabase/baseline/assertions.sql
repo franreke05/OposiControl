@@ -3836,8 +3836,11 @@ begin
   assert exists (select 1 from public.app_store_inbox_pending(10, false) where evento_id = 'n-1'), 'pending row listed';
   perform public.app_store_inbox_mark('app_store', 'n-1', 'pendiente', null, 'UPSTREAM_UNAVAILABLE', (select reclamado_por from public.tienda_bandeja where evento_id = 'n-1'), 0);
   assert (select intentos from public.tienda_bandeja where evento_id = 'n-1') = 1 and (select ultimo_error from public.tienda_bandeja where evento_id = 'n-1') = 'UPSTREAM_UNAVAILABLE', 'deferral recorded';
-  perform public.app_store_inbox_mark('app_store', 'n-1', 'procesado', 'CREDITED', null, (select reclamado_por from public.tienda_bandeja where evento_id = 'n-1'), 0);
-  perform public.app_store_inbox_mark('app_store', 'n-1', 'pendiente', null, 'late failure', (select reclamado_por from public.tienda_bandeja where evento_id = 'n-1'), 0);
+  -- 20261022103000 (N3-4): mark needs a claim (null is refused); the row is claimed again before each mark, as the job would.
+  update public.tienda_bandeja set reclamado_por = 'assert-claim' where evento_id = 'n-1';
+  perform public.app_store_inbox_mark('app_store', 'n-1', 'procesado', 'CREDITED', null, 'assert-claim', 0);
+  update public.tienda_bandeja set reclamado_por = 'assert-claim' where evento_id = 'n-1';
+  perform public.app_store_inbox_mark('app_store', 'n-1', 'pendiente', null, 'late failure', 'assert-claim', 0);
   assert (select estado from public.tienda_bandeja where evento_id = 'n-1') = 'procesado', 'processed stays processed';
   assert not exists (select 1 from public.app_store_inbox_pending(10, false) where evento_id = 'n-1'), 'processed row not listed';
 
@@ -3929,13 +3932,19 @@ begin
   -- S5 (INVERTED, F4): a refund deferred because refunds are off is RETAINED: it never counts as an attempt, is never dropped, and is listed
   -- again when refunds are on. Real failures back off but are never dropped either, and new rows are not starved by old failing ones.
   perform pg_temp.inbox('assn:poison', 'REEMBOLSO', 'au-tx-x');
-  for i in 1..250 loop perform public.app_store_inbox_mark('app_store', 'assn:poison', 'retenido', null, 'REFUNDS_DISABLED', (select reclamado_por from public.tienda_bandeja where evento_id = 'assn:poison'), 0); end loop;
+  for i in 1..250 loop  -- 20261022103000 (N3-4): claimed before each mark, as the job would
+    update public.tienda_bandeja set reclamado_por = 'assert-claim' where evento_id = 'assn:poison';
+    perform public.app_store_inbox_mark('app_store', 'assn:poison', 'retenido', null, 'REFUNDS_DISABLED', 'assert-claim', 0);
+  end loop;
   assert (select estado from public.tienda_bandeja where evento_id = 'assn:poison') = 'retenido'
      and (select intentos from public.tienda_bandeja where evento_id = 'assn:poison') = 0, 'S5 FIXED: retained rows do not count attempts';
   assert not exists (select 1 from public.app_store_inbox_pending(200, false) where evento_id = 'assn:poison'), 'S5 retained rows wait while refunds are off';
   assert exists (select 1 from public.app_store_inbox_pending(200, true) where evento_id = 'assn:poison'), 'S5 FIXED: listed again once refunds are on';
   perform pg_temp.inbox('assn:flaky', 'COMPRA', 'au-tx-y');
-  for i in 1..250 loop perform public.app_store_inbox_mark('app_store', 'assn:flaky', 'pendiente', null, 'UPSTREAM_UNAVAILABLE', (select reclamado_por from public.tienda_bandeja where evento_id = 'assn:flaky'), 0); end loop;
+  for i in 1..250 loop  -- 20261022103000 (N3-4): claimed before each mark, as the job would
+    update public.tienda_bandeja set reclamado_por = 'assert-claim' where evento_id = 'assn:flaky';
+    perform public.app_store_inbox_mark('app_store', 'assn:flaky', 'pendiente', null, 'UPSTREAM_UNAVAILABLE', 'assert-claim', 0);
+  end loop;
   assert (select intentos from public.tienda_bandeja where evento_id = 'assn:flaky') = 250
      and (select proximo_intento_en from public.tienda_bandeja where evento_id = 'assn:flaky') > now(), 'S5 failures back off';
   perform pg_temp.inbox('assn:fresh', 'COMPRA', 'au-tx-z');
@@ -4099,5 +4108,89 @@ begin
   assert public.app_store_reconcile_orphans(50, true) = 0, 'NEW-2 re-scan is idempotent';
   assert (select count(*) from public.app_wallet_reconcile(null)) = 0, 'global reconcile clean';
   raise notice 'OK store concurrency / inbox lifecycle (N1, NEW-3, NEW-4, NEW-6)';
+end $$;
+rollback;
+
+-- 20261022103000: OposiControl round-3 re-audit (N3-1..N3-7) + subscription replay / due list + poll cursors. N3-3 and N3-1 need two real
+-- connections: they are step 6 of scripts/db-pg17-gate.sh (a race that fails when the per-key lock is removed).
+begin;
+create function pg_temp.ae(p_sql text, p_msg text) returns void language plpgsql as $$
+declare v_msg text;
+begin
+  begin execute p_sql; exception when others then get stacked diagnostics v_msg = message_text; end;
+  if v_msg is distinct from p_msg then raise exception 'ASSERT FAILED: % -> expected % got %', p_sql, p_msg, v_msg; end if;
+end $$;
+create function pg_temp.u(n int) returns uuid language sql as $$ select ('a0000000-0000-0000-0000-' || lpad((960 + n)::text, 12, '0'))::uuid $$;
+create function pg_temp.inbox(p_evento text, p_tipo text, p_clave text) returns text language sql as $$
+  select i.reclamo from public.app_store_inbox_put('app_store', p_evento, p_tipo, p_clave, 'produccion', encode(sha256(convert_to(p_evento, 'utf8')), 'hex'), '{}'::jsonb) i $$;
+insert into auth.users (id, email, aud, role) select pg_temp.u(n), 'r3' || n || '@test.local', 'authenticated', 'authenticated' from generate_series(1, 3) n;
+insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta)
+  select pg_temp.u(n), 'r3' || n, 'r3_user_' || n, true, 'activa' from generate_series(1, 3) n
+  on conflict (usuario_id) do update set username = excluded.username;
+insert into public.productos_comerciales (id, codigo, tipo_producto, nombre, precio_centimos, moneda, cantidad_tickets, activo, visible)
+  values ('b9960000-0000-0000-0000-000000000001', 'r3-pack-100', 'pack_tickets', 'R3 100', 99, 'EUR', 100, true, true),
+         ('b9960000-0000-0000-0000-000000000002', 'r3-premium', 'suscripcion', 'R3 Premium', 999, 'EUR', null, true, true);
+do $$
+declare tok text; r record;
+begin
+  -- N3-4: a mark without a claim is refused (it could otherwise mark a released row)
+  tok := pg_temp.inbox('r3-null', 'COMPRA', 'r3-null-key');
+  perform pg_temp.ae($q$select public.app_store_inbox_mark('app_store', 'r3-null', 'procesado', 'CREDITED', null, null, 0)$q$, 'STORE_REQUEST_INVALID');
+  update public.tienda_bandeja set reclamado_por = null, reclamado_hasta = null where evento_id = 'r3-null';
+  perform pg_temp.ae($q$select public.app_store_inbox_mark('app_store', 'r3-null', 'procesado', 'CREDITED', null, null, 0)$q$, 'STORE_REQUEST_INVALID');
+  assert (select estado from public.tienda_bandeja where evento_id = 'r3-null') = 'pendiente', 'N3-4 a released row is not marked by a null claim';
+
+  -- N3-2: the refund is processed as an orphan, the purchase re-links it (REFUND_HELD) before the worker marks: the stale ORPHAN result never wins
+  tok := pg_temp.inbox('r3-ref', 'REEMBOLSO', 'r3-key');
+  assert (select r2.outcome from public.app_store_refund_purchase('app_store', 'r3-ref', 'r3-key') r2) = 'REFUND_ORPHAN_HELD', 'N3-2 fixture orphan';
+  assert (select c.outcome from public.app_store_credit_purchase(pg_temp.u(1), public.app_store_account_token(pg_temp.u(1)), 'app_store', 'produccion', 'r3-pack-100', 'com.x.ot100', 'r3-key', '{}'::jsonb) c) = 'EN_REVISION', 'N3-2 purchase after the orphan refund: review';
+  assert (select resultado from public.tienda_bandeja where evento_id = 'r3-ref') = 'REFUND_HELD', 'N3-2 re-linked by the credit';
+  assert public.app_store_inbox_mark('app_store', 'r3-ref', 'procesado', 'REFUND_ORPHAN_HELD', null, tok, 0), 'N3-2 the holder marks';
+  assert (select estado || '|' || resultado from public.tienda_bandeja where evento_id = 'r3-ref') = 'procesado|REFUND_HELD', 'N3-2 FIXED: REFUND_HELD is kept';
+  assert not exists (select 1 from public.tienda_bandeja b where b.evento_id like 'r3-%' and b.resultado = 'REFUND_ORPHAN_HELD'), 'N3-2 no false orphan';
+
+  -- N3-7: no *_HELD row is ever purged, however old; an ordinary old processed row is
+  tok := pg_temp.inbox('r3-old', 'COMPRA', 'r3-old-key');
+  assert public.app_store_inbox_mark('app_store', 'r3-old', 'procesado', 'CREDITED', null, tok, 0), 'N3-7 fixture';
+  update public.tienda_bandeja set procesado_en = now() - interval '900 days' where evento_id in ('r3-ref', 'r3-old');
+  perform public.app_store_inbox_purge(30);
+  assert exists (select 1 from public.tienda_bandeja where evento_id = 'r3-ref'), 'N3-7 a REFUND_HELD row is never purged';
+  assert not exists (select 1 from public.tienda_bandeja where evento_id = 'r3-old'), 'N3-7 an old ordinary row is purged on request';
+
+  -- N3-1 (single-session part): the re-scan re-links under the key lock and is idempotent
+  perform public.app_store_credit_purchase(pg_temp.u(2), public.app_store_account_token(pg_temp.u(2)), 'app_store', 'produccion', 'r3-pack-100', 'com.x.ot100', 'r3-rs', '{}'::jsonb);
+  perform pg_temp.inbox('r3-rev', 'REEMBOLSO_REVERTIDO', 'r3-rs');
+  update public.tienda_bandeja set resultado = 'REVERSAL_ORPHAN_HELD', estado = 'procesado' where evento_id = 'r3-rev';
+  assert public.app_store_reconcile_orphans(50, false) = 1, 'N3-1 re-linked';
+  assert (select resultado from public.tienda_bandeja where evento_id = 'r3-rev') = 'REVERSAL_RECORDED', 'N3-1 result of the re-link';
+  assert public.app_store_reconcile_orphans(50, false) = 0, 'N3-1 idempotent';
+
+  -- subscriptions: exact replay writes nothing (REPLAY), older is STALE, newer UPDATED; the due list returns an ended active subscription
+  select * into r from public.app_store_upsert_subscription(pg_temp.u(3), public.app_store_account_token(pg_temp.u(3)), 'app_store', 'produccion', 'r3-premium', 'com.x.premium',
+                                                            'r3-sub', 'activa', now() - interval '31 days', now() - interval '1 day', null, null, 1000, null);
+  assert r.outcome = 'CREATED', 'sub created';
+  select * into r from public.app_store_upsert_subscription(null, null, 'app_store', 'produccion', 'r3-premium', 'com.x.premium',
+                                                            'r3-sub', 'activa', null, (select s.fin_en from public.suscripciones s where s.identificador_externo = 'r3-sub'), null, null, 1000, null);
+  assert r.outcome = 'REPLAY', 'exact replay: ' || r.outcome;
+  assert (select count(*) from public.auditoria_log where accion = 'suscripcion_tienda'
+            and registro_id = (select s.id from public.suscripciones s where s.identificador_externo = 'r3-sub')) = 1, 'a replay is not audited again';
+  update public.suscripciones set actualizado_en = now() - interval '2 hours' where identificador_externo = 'r3-sub';
+  assert exists (select 1 from public.app_store_subscriptions_due(50) d where d.identificador_externo = 'r3-sub'), 'ended active subscription is due';
+  select * into r from public.app_store_upsert_subscription(null, null, 'app_store', 'produccion', 'r3-premium', 'com.x.premium',
+                                                            'r3-sub', 'caducada', null, now() - interval '1 day', null, 'expiro', 2000, null);
+  assert r.outcome = 'UPDATED' and r.estado = 'caducada', 'expired from the store';
+  assert not exists (select 1 from public.app_store_subscriptions_due(50) d where d.identificador_externo = 'r3-sub'), 'expired is not due';
+  select * into r from public.app_store_upsert_subscription(null, null, 'app_store', 'produccion', 'r3-premium', 'com.x.premium',
+                                                            'r3-sub', 'activa', null, now() + interval '30 days', null, null, 1500, null);
+  assert r.outcome = 'STALE' and r.estado = 'caducada', 'a renewal older than the expiry is STALE';
+
+  -- poll cursors: persisted and forward-only
+  assert not exists (select 1 from public.app_store_poll_get('google_play', 'voided_purchases')), 'no cursor yet';
+  assert public.app_store_poll_advance('google_play', 'voided_purchases', 5000) = 5000, 'cursor set';
+  assert public.app_store_poll_advance('google_play', 'voided_purchases', 1000) = 5000, 'cursor never moves back';
+  assert (select g.cursor_ms from public.app_store_poll_get('google_play', 'voided_purchases') g) = 5000, 'cursor read';
+  perform pg_temp.ae($q$select public.app_store_poll_advance('google_play', 'other', 1)$q$, 'new row for relation "tienda_sondeo" violates check constraint "tienda_sondeo_fuente_check"');
+  assert (select count(*) from public.app_wallet_reconcile(null)) = 0, 'reconcile clean';
+  raise notice 'OK store round 3 (N3-1 single session, N3-2, N3-4, N3-7, subscription replay / due, poll cursors)';
 end $$;
 rollback;

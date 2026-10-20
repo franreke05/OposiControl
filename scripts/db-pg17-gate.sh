@@ -10,6 +10,7 @@
 #      `<check>|0|...`; un valor distinto de 0, un resultado vacio o un bloque ausente FALLA. Huella F1.
 #   4. supabase/baseline/assertions.sql (transaccion con ROLLBACK): comportamiento + matriz de grants/RLS (ASSERT = fallo).
 #   5. ROLLBACK de cada pendiente en orden inverso -> la huella debe volver a F0; re-aplicar + VERIFY -> debe volver a F1.
+#   6. Carreras REALES de pagos de tienda con dos/tres conexiones psql (N3-3, N3-1): fallan si se quita o se mueve el cerrojo por clave.
 # Cobertura y limites (frente al gate local completo): supabase/baseline/README.md.
 # MIG_ROOT apunta el gate a otro arbol (lo usa db-pg17-gate.test.sh); PG17_IMAGE permite fijar otra imagen.
 set -uo pipefail
@@ -115,4 +116,76 @@ fingerprint "$tmp/f2"; same "$tmp/f0" "$tmp/f2" "tras los ROLLBACK el catalogo n
 apply_all
 fingerprint "$tmp/f3"; same "$tmp/f1" "$tmp/f3" "re-aplicar tras el rollback no reproduce el mismo catalogo (< primera, > re-aplicada)"
 echo "ok:   rollback inverso == bootstrap; re-aplicacion == primera aplicacion (VERIFY = 0)"
+# 6. N3-3 / N3-1 (re-auditoria Control ronda 3) + tarea 4: carreras REALES con dos/tres conexiones psql sobre la base ya migrada. La primera
+#    transaccion hace su trabajo y se queda ABIERTA (pg_sleep); la segunda empieza mientras tanto. Sin el cerrojo por clave de tienda la segunda no
+#    ve el pedido (o el huerfano) sin confirmar y los dos hechos nunca se ligan: el paso FALLA. Lo prueba db-pg17-gate.test.sh moviendo el cerrojo.
+store_race() {
+  local u k i bad=0 out
+  rq() { psqlc -At -c "$1" 2>&1; }                                       # una lectura de comprobacion
+  bg() { psqlc -At >"$tmp/race.$1.out" 2>"$tmp/race.$1.err" <<<"$2" & }   # una conexion en segundo plano
+  held() { echo "begin; $1 do \$\$ begin perform pg_sleep(1.5); end \$\$; commit;"; }
+  expect() { [ "$2" = "$3" ] || { echo "  race $1: '$2' (esperado '$3')"; bad=1; }; }
+  noerr() { local f; for f in "$@"; do [ ! -s "$tmp/race.$f.err" ] || { echo "  race $f: $(head -1 "$tmp/race.$f.err")"; bad=1; }; done; }
+  u() { printf 'a0000000-0000-0000-0000-%012d' $((950 + $1)); }
+  credit() { echo "select outcome from public.app_store_credit_purchase('$(u "$1")', public.app_store_account_token('$(u "$1")'), 'app_store', 'produccion', 'race-pack-100', 'com.x.ot100', '$2', '{}'::jsonb);"; }
+  inbox() { rq "select nuevo from public.app_store_inbox_put('app_store', '$1', '$2', '$3', 'produccion', encode(sha256(convert_to('$1', 'utf8')), 'hex'), '{}'::jsonb)" >/dev/null; }
+  reversal() { echo "select public.app_store_refund_reversed('app_store', '$1', '$2');"; }
+  refund() { echo "select outcome from public.app_store_refund_purchase('app_store', '$1', '$2');"; }
+  sub() { echo "select outcome from public.app_store_upsert_subscription('$(u "$1")', public.app_store_account_token('$(u "$1")'), 'app_store', 'produccion', 'race-premium', 'com.x.premium', '$2', 'activa', '2026-10-01T00:00:00Z', '2026-11-01T00:00:00Z', null, null, 100, null);"; }
+  st() { rq "select estado || '|' || (select count(*) from public.transacciones_cartera t where t.compra_id = c.id and t.tipo = 'pack_tickets') || '|' || (select count(*) from public.transacciones_cartera t where t.compra_id = c.id and t.tipo = 'devolucion') from public.compras_usuario c where identificador_transaccion = '$1'"; }
+  psqlc >/dev/null 2>"$err" <<'SQL' || { cat "$err"; fail "carreras de tienda: no se siembran los datos"; }
+insert into auth.users (id, email, aud, role) select ('a0000000-0000-0000-0000-' || lpad((950 + n)::text, 12, '0'))::uuid, 'race' || n || '@test.local', 'authenticated', 'authenticated' from generate_series(1, 9) n;
+insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta)
+  select ('a0000000-0000-0000-0000-' || lpad((950 + n)::text, 12, '0'))::uuid, 'race' || n, 'race_user_' || n, true, 'activa' from generate_series(1, 9) n
+  on conflict (usuario_id) do update set username = excluded.username;
+insert into public.productos_comerciales (id, codigo, tipo_producto, nombre, precio_centimos, moneda, cantidad_tickets, activo, visible)
+  values ('b9950000-0000-0000-0000-000000000001', 'race-pack-100', 'pack_tickets', 'Race 100', 99, 'EUR', 100, true, true),
+         ('b9950000-0000-0000-0000-000000000002', 'race-premium', 'suscripcion', 'Race Premium', 999, 'EUR', null, true, true);
+SQL
+  for i in 1 2; do
+    # R1 credito (abierto) || REFUND_REVERSED de la misma clave -> la reversion se registra en el pedido, nunca huerfana
+    k="r1-$i"; inbox "r1-rev-$i" REEMBOLSO_REVERTIDO "$k"
+    bg a "$(held "$(credit 1 "$k")")"; sleep 0.4; bg b "$(reversal "r1-rev-$i" "$k")"; wait; noerr a b
+    expect "R1.$i" "$(cat "$tmp/race.b.out")" REVERSAL_RECORDED
+    # R2 credito (abierto) || reembolso de la misma clave -> el reembolso se aplica al pedido
+    k="r2-$i"; inbox "r2-ref-$i" REEMBOLSO "$k"
+    bg a "$(held "$(credit 2 "$k")")"; sleep 0.4; bg b "$(refund "r2-ref-$i" "$k")"; wait; noerr a b
+    expect "R2.$i" "$(cat "$tmp/race.b.out")|$(st "$k")" "REFUNDED|reembolsada|1|1"
+    # R3 reversion huerfana (abierta) || credito -> el credito la ve y la liga
+    k="r3-$i"; inbox "r3-rev-$i" REEMBOLSO_REVERTIDO "$k"
+    bg a "$(held "$(reversal "r3-rev-$i" "$k")")"; sleep 0.4; bg b "$(credit 3 "$k")"; wait; noerr a b
+    expect "R3.$i" "$(rq "select resultado from public.tienda_bandeja where evento_id = 'r3-rev-$i'")" REVERSAL_HELD
+    # R4 reembolso huerfano (abierto) || credito -> pedido a revision, nada acreditado
+    k="r4-$i"; inbox "r4-ref-$i" REEMBOLSO "$k"
+    bg a "$(held "$(refund "r4-ref-$i" "$k")")"; sleep 0.4; bg b "$(credit 4 "$k")"; wait; noerr a b
+    expect "R4.$i" "$(st "$k")" "en_revision|0|0"
+    # S1 la MISMA compra verificada a la vez por dos conexiones -> un credito y un REPLAY
+    k="s1-$i"
+    bg a "$(held "$(credit 5 "$k")")"; sleep 0.4; bg b "$(credit 5 "$k")"; wait; noerr a b
+    expect "S1.$i" "$(sort "$tmp/race.a.out" "$tmp/race.b.out" | tr '\n' ' ')|$(st "$k")" "CREDITED REPLAY |pagada|1|0"
+    # S2 el MISMO aviso de reembolso entregado dos veces a la vez -> un debito y un REPLAY
+    k="s2-$i"; rq "$(credit 6 "$k")" >/dev/null; inbox "s2-ref-$i" REEMBOLSO "$k"
+    bg a "$(held "$(refund "s2-ref-$i" "$k")")"; sleep 0.4; bg b "$(refund "s2-ref-$i" "$k")"; wait; noerr a b
+    expect "S2.$i" "$(sort "$tmp/race.a.out" "$tmp/race.b.out" | tr '\n' ' ')|$(st "$k")" "REFUNDED REPLAY |reembolsada|1|1"
+    # S3 la primera entrega de una suscripcion dos veces a la vez -> una fila, sin violar el indice unico
+    k="s3-$i"
+    bg a "$(held "$(sub 7 "$k")")"; sleep 0.4; bg b "$(sub 7 "$k")"; wait; noerr a b
+    expect "S3.$i" "$(sort "$tmp/race.a.out" "$tmp/race.b.out" | tr '\n' ' ')|$(rq "select count(*) from public.suscripciones where identificador_externo = '$k'")" "CREATED REPLAY |1"
+    # D1 (N3-1) reconcile || reintento de credito con contencion en la cartera -> sin 40P01: el reconcile salta la clave ocupada
+    k="d1-$i"; rq "$(credit 8 "$k")" >/dev/null; inbox "d1-rev-$i" REEMBOLSO_REVERTIDO "$k"
+    rq "update public.tienda_bandeja set resultado = 'REVERSAL_ORPHAN_HELD', estado = 'procesado' where evento_id = 'd1-rev-$i'" >/dev/null
+    bg c "begin; select null from pg_advisory_xact_lock(hashtextextended('wallet:$(u 8)', 0)); do \$\$ begin perform pg_sleep(2); end \$\$; commit;"
+    sleep 0.4; bg a "$(credit 8 "$k")"; sleep 0.4; bg b "select public.app_store_reconcile_orphans(50, false);"; wait; noerr a b c
+    expect "D1.$i" "$(rq "select resultado from public.tienda_bandeja where evento_id = 'd1-rev-$i'")" REVERSAL_HELD
+  done
+  out="$(rq "select count(*) from public.tienda_bandeja b where b.resultado in ('REFUND_ORPHAN_HELD', 'REVERSAL_ORPHAN_HELD') and exists (select 1 from public.compras_usuario c where c.proveedor = b.proveedor and c.identificador_transaccion = b.clave_compra)")"
+  expect "huerfanos con pedido" "$out" 0
+  for i in 1 2 3 4 5 6 8; do
+    expect "libro=saldo u$i" "$(rq "select coalesce(sum(cantidad), 0) = coalesce((select saldo_tickets from public.carteras_usuario where usuario_id = '$(u "$i")'), 0) from public.transacciones_cartera where usuario_id = '$(u "$i")'")" t
+  done
+  expect "app_wallet_reconcile" "$(rq 'select count(*) from public.app_wallet_reconcile(null)')" 0
+  [ "$bad" = 0 ] || fail "carreras de tienda con dos conexiones (cerrojo por clave / orden de cerrojos)"
+}
+store_race
+echo "ok:   carreras de tienda con dos conexiones reales (R1..R4, S1..S3, D1 x2): cerrojo por clave, sin 40P01, libro = saldo"
 echo "db-pg17-gate OK"

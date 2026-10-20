@@ -10,6 +10,9 @@
 #   (d) ROLLBACK de la pendiente sin borrar revisiones_pregunta -> la huella tras el rollback no es la del bootstrap
 #   (e) SELECT de cliente sobre revisiones_pregunta -> su VERIFY
 #   (f) el congelado deja de ligar las preguntas a su revision -> la asercion de comportamiento de assertions.sql
+#   (g) N3-3 / tarea 4: el cerrojo por clave de tienda MOVIDO por debajo de la busqueda (el texto sigue, el VERIFY de 102900 pasa) en la reversion
+#       (mutA), el reembolso (mutA2) y el credito -> la carrera REAL de dos conexiones del paso 6 (R1 / R2 / R3-R4)
+#   (h) N3-1: reconcile vuelve a bloquear la fila antes que la clave (texto de 103000 intacto) -> 40P01 en la carrera D1 del paso 6
 set -uo pipefail
 cd "$(dirname "$0")/.."
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
@@ -50,4 +53,31 @@ grep -q 'VERIFY revisions_client_privileges = 1' "$tmp/out" || { echo "TEST FAIL
 fresh; sed -i 's/^      insert into public.preguntas_intento (intento_id, pregunta_id, posicion, revision_pregunta_id)$/      insert into public.preguntas_intento (intento_id, pregunta_id, posicion)/; s/^      select p_intento_id, u.pregunta_id, u.ord::integer, r.id$/      select p_intento_id, u.pregunta_id, u.ord::integer/' "$w/$rev"; mutated "$w/$rev"
 expect_fail "(f) el congelado no liga la revision" "assertions.sql"
 grep -q 'every frozen question bound to a revision' "$tmp/out" || { echo "TEST FAIL: (f) sin la asercion de la revision"; exit 1; }
+# (g) Mueve la linea del cerrojo `store-key:` de la funcion $2 justo antes de la primera linea de esa funcion que empieza por $3.
+store_mig=supabase/migrations/20261022102900_v1_store_payments_concurrency.sql
+move_lock() {
+  awk -v fn="function public.$2(" -v marker="$3" '
+    /^create (or replace )?function public\./ { cur = $0 }
+    index(cur, fn) && /^  perform pg_advisory_xact_lock\(hashtextextended\(.store-key:/ && held == "" { held = $0; next }
+    held != "" && !done && index(cur, fn) && index($0, marker) == 1 { print held; done = 1 }
+    { print }
+    END { if (held == "" || !done) exit 1 }' "$1" > "$1.mut" && mv "$1.mut" "$1"
+}
+fresh; move_lock "$w/$store_mig" app_store_refund_reversed "  perform pg_advisory_xact_lock(hashtextextended('wallet:'" || { echo "TEST FAIL: mutA no aplica"; exit 1; }; mutated "$w/$store_mig"
+expect_fail "(g) mutA: cerrojo de la reversion movido bajo la busqueda" "carreras de tienda con dos conexiones"
+grep -q "race R1\.1" "$tmp/out" || { echo "TEST FAIL: (g) mutA no la detecta R1"; exit 1; }
+fresh; move_lock "$w/$store_mig" app_store_refund_purchase "  return query select r.outcome" || { echo "TEST FAIL: mutA2 no aplica"; exit 1; }; mutated "$w/$store_mig"
+expect_fail "(g2) mutA2: cerrojo del reembolso movido bajo la busqueda" "carreras de tienda con dos conexiones"
+grep -q "race R2\.1" "$tmp/out" || { echo "TEST FAIL: (g2) mutA2 no la detecta R2"; exit 1; }
+fresh; move_lock "$w/$store_mig" app_store_credit_purchase "  return query select * from public.app_credit_payment_order(" || { echo "TEST FAIL: mutC no aplica"; exit 1; }; mutated "$w/$store_mig"
+expect_fail "(g3) cerrojo del credito movido tras los huerfanos" "carreras de tienda con dos conexiones"
+grep -q "race R[34]\.1" "$tmp/out" || { echo "TEST FAIL: (g3) no la detecta R3/R4"; exit 1; }
+r3=supabase/migrations/20261022103000_v1_store_payments_round3.sql
+fresh
+{ sed -n '1,/^-- 4\. N3-1:/p' "$w/$r3" | sed '$d'
+  sed -n '/^create function public.app_store_reconcile_orphans/,/^\$\$;/p' "$w/$store_mig" \
+    | sed 's/^create function/create or replace function/; s/^begin$/begin\n  -- mutante: pg_try_advisory_xact_lock solo en el texto; la fila se bloquea antes que la clave/'
+  sed -n '/^-- 5\. Subscriptions:/,$p' "$w/$r3"; } > "$w/$r3.mut" && mv "$w/$r3.mut" "$w/$r3"; mutated "$w/$r3"
+expect_fail "(h) N3-1: reconcile fila-antes-que-clave" "carreras de tienda con dos conexiones"
+grep -q "race D1\.[12]: .*40P01\|deadlock" "$tmp/out" || { grep "race" "$tmp/out"; echo "TEST FAIL: (h) sin el 40P01 de D1"; exit 1; }
 echo "db-pg17-gate.test OK ($n escenarios)"
