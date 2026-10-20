@@ -140,10 +140,26 @@ class ExamOfficialQuestionsViewModelTest {
         val vm = loaded(repo)
         vm.dispatch(OfficialQuestionsIntent.Select("a"))
         vm.dispatch(OfficialQuestionsIntent.SetAnnulled(true))
+        vm.dispatch(OfficialQuestionsIntent.SetReason("Anulada por el tribunal"))
         vm.dispatch(OfficialQuestionsIntent.Save)
         advanceUntilIdle()
         assertIs<UiAsync.Error>(vm.state.value.save)
         assertFalse(vm.state.value.current!!.questions.single().annulled)
+    }
+
+    /** Decisión del propietario 2026-10-20: anular sin motivo no se envía; el formulario lo pide en el campo. */
+    @Test
+    fun annullingWithoutAReasonAsksForItAndSendsNothing() = runTest {
+        val repo = ExamsFakeControlRepo(official = data(q("a", 1)))
+        val vm = loaded(repo)
+        vm.dispatch(OfficialQuestionsIntent.Select("a"))
+        vm.dispatch(OfficialQuestionsIntent.SetAnnulled(true))
+        vm.dispatch(OfficialQuestionsIntent.SetReason("   "))
+        vm.dispatch(OfficialQuestionsIntent.Save)
+        advanceUntilIdle()
+        assertEquals(OfficialQuestionValidator.REASON_REQUIRED, vm.state.value.errors["reason"])
+        assertIs<UiAsync.Idle>(vm.state.value.save)
+        assertFalse(vm.state.value.current!!.questions.single().annulled, "nada cambia")
     }
 
     @Test

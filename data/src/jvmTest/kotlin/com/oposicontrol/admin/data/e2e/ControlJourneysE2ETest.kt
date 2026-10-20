@@ -242,6 +242,10 @@ class ControlJourneysE2ETest {
         val id = examWithQuestions(p, "E2E J04 oficial", 3)
         val qs = p.control.officialQuestions(id).ok("leer oficiales")
         val first = qs.questions.first()
+        // Decisión del propietario 2026-10-20: anular exige el motivo del tribunal. Sin él, el servidor responde 422 y nada cambia.
+        val sinMotivo = p.control.saveOfficialQuestion(id, first.questionId, OfficialQuestionDraft(true, "   ", false, "")).failure("anular sin motivo")
+        assertTrue(sinMotivo is AppError.Validation && sinMotivo.message.contains("motivo del tribunal"), sinMotivo.toString())
+        assertEquals("f", sql("select anulada from public.preguntas_examen where examen_id = '$id' and pregunta_id = '${first.questionId}'"), "nada cambia")
         p.control.saveOfficialQuestion(id, first.questionId, OfficialQuestionDraft(true, "Anulada por el tribunal E2E", false, "")).ok("anular")
         assertEquals("t", sql("select anulada from public.preguntas_examen where examen_id = '$id' and pregunta_id = '${first.questionId}'").take(1))
         assertTrue(sql("select count(*) from public.auditoria_log where registro_id::text in ('$id', '${first.questionId}') and creado_en > now() - interval '5 minutes'").toInt() >= 1)

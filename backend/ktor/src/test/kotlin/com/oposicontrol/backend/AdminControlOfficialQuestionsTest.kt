@@ -42,7 +42,12 @@ class AdminControlOfficialQuestionsTest {
         }.errorCode)
         val ok = OfficialQuestionFlags.parse(obj("""{"anulada":true,"esReserva":false,"motivoAnulacion":"  Anulada por el tribunal "}"""))
         assertEquals("Anulada por el tribunal", ok.motivo)
-        assertNull(OfficialQuestionFlags.parse(obj("""{"anulada":true,"esReserva":false,"motivoAnulacion":""}""")).motivo)
+        // Decisión del propietario 2026-10-20: anular sin motivo (vacío, en blanco o ausente) es 422 ANNULMENT_REASON_REQUIRED.
+        for (sinMotivo in listOf("""{"anulada":true,"esReserva":false,"motivoAnulacion":""}""", """{"anulada":true,"esReserva":false,"motivoAnulacion":"   "}""", """{"anulada":true,"esReserva":false}""")) {
+            val e = assertFailsWith<BackendDomainException> { OfficialQuestionFlags.parse(obj(sinMotivo)) }
+            assertEquals("ANNULMENT_REASON_REQUIRED", e.errorCode, sinMotivo)
+            assertEquals(HttpStatusCode.UnprocessableEntity, e.status)
+        }
     }
 
     @Test
@@ -119,7 +124,7 @@ class AdminControlOfficialQuestionsTest {
             if (uri.contains("/rpc/")) V1StubResponse(404, """{"code":"PGRST202"}""") else V1StubResponse(200, """[{"id":"${ControlFake.EXAM}"}]""")
         }
         installControlRoutes(f.gateway())
-        val r = sendJson(HttpMethod.Put, "/api/v1/admin/examenes/${ControlFake.EXAM}/preguntas-oficiales/$q1", """{"anulada":true,"esReserva":false}""")
+        val r = sendJson(HttpMethod.Put, "/api/v1/admin/examenes/${ControlFake.EXAM}/preguntas-oficiales/$q1", """{"anulada":true,"esReserva":false,"motivoAnulacion":"Anulada por el tribunal"}""")
         assertEquals(HttpStatusCode.NotImplemented, r.status)
     }
 
@@ -156,7 +161,7 @@ class AdminControlOfficialQuestionsTest {
             } else V1StubResponse(200, """[{"id":"${ControlFake.EXAM}"}]""")
         }
         installControlRoutes(f.gateway())
-        val r = sendJson(HttpMethod.Put, "/api/v1/admin/examenes/${ControlFake.EXAM}/preguntas-oficiales/$q1", """{"anulada":true,"esReserva":false}""")
+        val r = sendJson(HttpMethod.Put, "/api/v1/admin/examenes/${ControlFake.EXAM}/preguntas-oficiales/$q1", """{"anulada":true,"esReserva":false,"motivoAnulacion":"Anulada por el tribunal"}""")
         assertEquals(HttpStatusCode.UnprocessableEntity, r.status)
         assertTrue(r.bodyAsText().contains("FLAGS_OFFICIAL_RULES_INVALID") && !r.bodyAsText().contains("secreto"), r.bodyAsText())
     }

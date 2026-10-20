@@ -44,6 +44,7 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import java.net.URLEncoder
@@ -5584,6 +5585,10 @@ class AdminV1Gateway private constructor(
         }
         val vincular = item.vincularPreguntaId?.takeIf { it.isNotBlank() }?.validatedUuid("vincularPreguntaId")
         val motivoAnulacion = normalizedAnnulmentReason(item.anulada, item.motivoAnulacion)
+        // Decisión 2026-10-20: el revisor no aprueba una fila anulada sin el motivo del tribunal (el parser puede traerla sin él).
+        if (estado == "aprobada" && item.anulada && motivoAnulacion == null) {
+            controlReject(OfficialQuestionFlags.ANNULMENT_REASON_REQUIRED, OfficialQuestionFlags.ANNULMENT_REASON_REQUIRED_MESSAGE)
+        }
         require(vincular == null || estado == "aprobada") {
             "Para vincular con una pregunta existente, la fila tiene que quedar aprobada."
         }
@@ -5659,6 +5664,20 @@ class AdminV1Gateway private constructor(
         confirmarExamenPublicado: Boolean = false,
         actorId: String? = null,
     ): AdminLoteImportResponse {
+        // Decisión 2026-10-20: ninguna pregunta llega anulada al examen sin el motivo del tribunal. El lote se crea igual (el
+        // parser puede detectar ANULADA sin motivo); es la publicación la que se para y dice qué filas lo necesitan.
+        val sinMotivo = request(
+            "GET",
+            "/rest/v1/preguntas_parseadas_staging?select=posicion&lote_id=eq.${loteId.validatedUuid("loteId")}&anulada=is.true" +
+                "&estado_parseo=neq.omitida&or=(motivo_anulacion.is.null,motivo_anulacion.eq.)&order=posicion.asc&limit=50",
+            null,
+        ).decodeList<JsonObject>().mapNotNull { it["posicion"]?.jsonPrimitive?.intOrNull }
+        if (sinMotivo.isNotEmpty()) {
+            controlReject(
+                OfficialQuestionFlags.ANNULMENT_REASON_REQUIRED,
+                "Hay preguntas anuladas sin el motivo del tribunal (posiciones ${sinMotivo.joinToString(", ")}). Indícalo en la revisión antes de publicar.",
+            )
+        }
         val body = rpcOrUnavailable(
             "admin_import_lote_preguntas",
             sbJson.encodeToString(AdminImportLoteRpc(loteId, confirmarExamenPublicado, actorId)),

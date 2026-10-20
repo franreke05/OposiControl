@@ -23,7 +23,7 @@ class ImportReservesPreflightTest {
         ContentImportStagingItem(
             id = id, position = position, title = "Pregunta $position", optionA = "A", optionB = "B", optionC = "C", optionD = "D",
             correctAnswer = "A", reasoning = "", sourceText = "", tagText = "", originalBlock = "", parseStatus = status,
-            annulled = annulled, block = block,
+            annulled = annulled, annulmentReason = if (annulled) "Anulada por el tribunal" else null, block = block,
         )
 
     private fun batch(rows: List<ContentImportStagingItem>, duplicateOf: String? = null, status: String = "parseado") =

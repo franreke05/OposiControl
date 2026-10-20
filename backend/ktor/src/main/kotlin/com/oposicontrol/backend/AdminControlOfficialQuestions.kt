@@ -34,6 +34,8 @@ import kotlinx.serialization.json.jsonObject
  */
 internal object OfficialQuestionFlags {
     const val MOTIVO_MAX = 500
+    const val ANNULMENT_REASON_REQUIRED = "ANNULMENT_REASON_REQUIRED"
+    const val ANNULMENT_REASON_REQUIRED_MESSAGE = "Para anular una pregunta indica el motivo del tribunal."
     const val ORDEN_MAX = 10
     private val KEYS = setOf("anulada", "motivoAnulacion", "esReserva", "ordenReserva")
 
@@ -46,6 +48,10 @@ internal object OfficialQuestionFlags {
         val motivo = raw.optionalString("motivoAnulacion")?.controlSanitized(MOTIVO_MAX, allowNewlines = true)?.ifEmpty { null }
         if (motivo != null && !anulada) {
             controlReject("ANNULMENT_REASON_WITHOUT_ANNULMENT", "El motivo de anulación solo se admite si la pregunta está anulada.")
+        }
+        // Decisión del propietario 2026-10-20: anular una pregunta oficial exige el motivo del tribunal.
+        if (anulada && motivo == null) {
+            controlReject(ANNULMENT_REASON_REQUIRED, ANNULMENT_REASON_REQUIRED_MESSAGE)
         }
         val rawOrden = raw.optionalInt("ordenReserva")
         if (esReserva) {

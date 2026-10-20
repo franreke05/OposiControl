@@ -434,6 +434,9 @@ enum class ImportPreflightKind {
     /** Aviso: las reservas se numeran y se añaden tras las principales. */
     RESERVES_NOTE,
 
+    /** Hay filas anuladas sin el motivo del tribunal (decisión 2026-10-20; el servidor responde ANNULMENT_REASON_REQUIRED). */
+    ANNULMENT_REASON_MISSING,
+
     /** La explicación de alguna fila lleva marcado que el servidor rechazaría (gramática de razonados, FA38). */
     MARKUP_INVALID,
 }
@@ -553,6 +556,16 @@ fun importPublishPreflight(
         when {
             errors == 1 -> blocker(ImportPreflightKind.ROW_ERRORS, "Corrige el error antes de publicar.")
             errors > 1 -> blocker(ImportPreflightKind.ROW_ERRORS, "Corrige los $errors errores antes de publicar.")
+        }
+
+        // Decisión del propietario 2026-10-20: una pregunta no se publica anulada sin el motivo del tribunal.
+        val annulledWithoutReason = pending.filter { tone(it) != ReviewFilter.OMITIDA && it.annulled && it.annulmentReason.isNullOrBlank() }
+        if (annulledWithoutReason.isNotEmpty()) {
+            blocker(
+                ImportPreflightKind.ANNULMENT_REASON_MISSING,
+                plural(annulledWithoutReason.size, "pregunta anulada no tiene", "preguntas anuladas no tienen") +
+                    " el motivo del tribunal: indícalo en la revisión antes de publicar.",
+            )
         }
 
         val warnings = pending.count { tone(it) == ReviewFilter.ADVERTENCIA }

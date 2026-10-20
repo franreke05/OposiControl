@@ -399,6 +399,7 @@ data class OfficialQuestionDraft(
 object OfficialQuestionValidator {
     const val REASON_MAX = 500
     const val ORDER_MAX = 10
+    const val REASON_REQUIRED = "Para anular una pregunta indica el motivo del tribunal."
 
     /** Mapa campo → mensaje; vacío = válido. Mismas reglas que el servidor (la guarda real es la base de datos). */
     fun check(draft: OfficialQuestionDraft, question: OfficialQuestion, all: List<OfficialQuestion>): Map<String, String> = buildMap {
@@ -406,6 +407,8 @@ object OfficialQuestionValidator {
             put("demo", "Una pregunta de demostración no puede estar anulada ni ser reserva.")
         }
         if (draft.reason.isNotBlank() && !draft.annulled) put("reason", "El motivo solo se admite si la pregunta está anulada.")
+        // Decisión del propietario 2026-10-20: anular exige el motivo del tribunal (el servidor responde ANNULMENT_REASON_REQUIRED).
+        if (draft.annulled && draft.reason.isBlank()) put("reason", REASON_REQUIRED)
         if (draft.reason.trim().length > REASON_MAX) put("reason", "El motivo no puede superar $REASON_MAX caracteres.")
         val order = draft.order.trim().toIntOrNull()
         if (draft.isReserve) {
