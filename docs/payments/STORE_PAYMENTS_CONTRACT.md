@@ -72,7 +72,7 @@ consume then answers `ITEM_NOT_OWNED` (settled), as E4 already handles.
 
 Answers: `200 {result}` once the event is in the inbox (also when processing is deferred: `result = DEFERRED`); 401 bad auth (nothing written); 503 only
 if the inbox write itself failed (nothing stored, the store retries). Apple retries V2 5 times (1, 12, 24, 48, 72 h) and only in production; missed
-notifications are recovered with Get Notification History (pending: needs the App Store API key, D9).
+notifications are recovered with Get Notification History when the In-App Purchase key is configured (section "Round 3", below).
 
 ## 5. State machine mapping
 
@@ -189,8 +189,7 @@ one batch call (S-04, <= 20 items), optional for the client; (5) a purchase held
 
 - Edge routing: `ops/caddy` does not yet send `/api/v1/webhooks/store/*` to the bot pool (deny by default), so W-02/W-03 are unreachable in
   production until infra adds that path (not changed here).
-- OpenAPI amendment for S-01..S-05 / W-02 / W-03 (contract-first files under `openapi/`), and Notification History / Consumption API calls (need the
-  App Store API key, D7/D9).
+- OpenAPI amendment for S-01..S-05 / W-02 / W-03 (contract-first files under `openapi/`). Consumption API calls stay off (D7).
 
 ## Audit fixes (OposiControl audit of 8859ee4, 2026-10-19; migration `20261022102800`)
 
@@ -227,3 +226,31 @@ one batch call (S-04, <= 20 items), optional for the client; (5) a purchase held
 - NEW-7: Apple roots are read as X.509 (DER or PEM) and the pin is over the certificate DER; the duplicated check is merged.
 - Regression: `StoreReauditRegressionTest` (R-K1..R-K5, R-K3 inverted) and the `20261022102900` block of `supabase/baseline/assertions.sql`
   (Control's n1_orders.sql scenarios A..E as assertions).
+
+## Round 3 (OposiControl re-audit of 1cabc65 + ad88bc0, 2026-10-19; migration `20261022103000`) and server-side verification
+
+- N3-3: the per-key lock is proven by a REAL race in the PG17 gate (`scripts/db-pg17-gate.sh` step 6, two/three psql connections, transaction held
+  open): R1..R4 (credit vs refund / reversal in both orders), S1 (same purchase verified twice at once: one credit), S2 (same refund event
+  delivered twice at once: one debit), S3 (first delivery of a subscription twice at once: one row), D1 (reconcile vs a credit retry with wallet
+  contention: no 40P01). `scripts/db-pg17-gate.test.sh` (g)/(g2)/(g3)/(h) move the lock below the lookup (text kept, VERIFY green) or restore the
+  row-first reconcile, and the race must fail.
+- N3-1: `app_store_reconcile_orphans` takes the store-key lock first (try-lock: a key held by a live call is skipped for the next run), then the
+  row `FOR UPDATE SKIP LOCKED`, one subtransaction per row.
+- N3-2 / N3-4: `app_store_inbox_mark` refuses a null claim and never replaces a `REFUND_HELD` / `REVERSAL_HELD` set by the database.
+- N3-5: partial index `ix_tienda_bandeja_huerfano`. N3-6: owner decision (DECISIONS_PENDING.md), gauge `store_payments_enabled` and alert
+  `StoreInboxMetricsAbsent`. N3-7: the purge never deletes any `*_HELD` row (purging them after review is an owner / legal decision, not taken).
+- Subscriptions: same per-key lock as packs; an exact replay (same version and state) answers `REPLAY` and writes nothing.
+- App Store Server API (optional, `PAYMENTS_APPLE_API_KEY_FILE` / `_KEY_ID` / `_ISSUER_ID`, all or none), with Apple's App Store Server Library
+  client (`BaseAppStoreServerAPIClient`, transport = the server's `StoreHttp`): verify / restore re-read the purchase from Apple (Get Transaction
+  Info for a pack, Get All Subscription Statuses for a subscription) and Apple's signed answer wins (a refund since the client JWS = revoked); a
+  subscription notification is re-read (current status, read time as version), so delivery order does not matter; Get Notification History every
+  6 h (production) recovers missed notifications into the inbox. Without the key nothing changes: signed JWS only.
+- Google Play: the job re-reads due subscriptions with `subscriptionsv2` (`app_store_subscriptions_due`: still giving access and at / past their
+  end, not refreshed for an hour); Voided Purchases daily with a persisted window.
+- Poll cursors live in `tienda_sondeo` (`app_store_poll_get` / `app_store_poll_advance`, forward only): they survive restarts and are shared by the
+  replicas; a window overlaps the previous one (1 day Google, 1 h Apple), the inbox deduplicates by event id, and the cursor moves only after
+  everything read is in the inbox.
+- Business decisions: `StoreDecisions.kt` + [`DECISIONS_PENDING.md`](DECISIONS_PENDING.md). Production crediting is OFF by default (G1).
+  Owner checklist: [`STORE_OWNER_SETUP.md`](STORE_OWNER_SETUP.md).
+- Apple endpoint paths used (`/inApps/v1/transactions/{id}`, `/inApps/v1/subscriptions/{id}`, `/inApps/v1/notifications/history`) are the ones
+  the official library 5.2.0 builds (asserted in `StoreServerSyncTest`); no Apple page was opened for them in this round.
