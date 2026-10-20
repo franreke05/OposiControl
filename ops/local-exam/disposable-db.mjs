@@ -22,10 +22,10 @@ export function startDisposable(name) {
     if (r.status !== 0) throw new Error((r.stderr || '').slice(0, 600));
     return r.stdout;
   };
-  must(read('supabase/baseline/main_shape_subset.sql'), ['-v', 'ON_ERROR_STOP=1', '-1']);
-  spawnSync('docker', ['exec', '-i', name, 'psql', '-U', 'supabase_admin', '-h', 'localhost', '-d', 'postgres', '-X', '-q', '-v', 'ON_ERROR_STOP=1'], { input: read('supabase/baseline/main_shape_auth_users.sql'), encoding: 'utf8' });
-  for (const f of ['main_shape_subset_extra.sql', 'main_shape_subset_extra_plans.sql', 'main_shape_subset_extra_engagement.sql']) must(read('supabase/baseline/' + f));
-  for (const v of read('supabase/baseline/PENDING_MIGRATIONS.txt').split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'))) must(read(`supabase/migrations/${v}.sql`));
+  try { bootstrap(name, must); } catch (e) {   // a failed bootstrap must not leave the container behind (the caller never gets stop())
+    try { execFileSync('docker', ['rm', '-f', name], { stdio: 'pipe' }); } catch { /* ya no esta */ }
+    throw e;
+  }
   return {
     name,
     psql,
@@ -34,4 +34,14 @@ export function startDisposable(name) {
       try { execFileSync('docker', ['rm', '-f', name], { stdio: 'pipe' }); } catch { /* ya no esta */ }
     },
   };
+}
+
+function bootstrap(name, must) {
+  must(read('supabase/baseline/main_shape_subset.sql'), ['-v', 'ON_ERROR_STOP=1', '-1']);
+  // same files and order as scripts/db-pg17-gate.sh: extra, extra_plans, auth.users shape (as supabase_admin, checked), engagement, import
+  for (const f of ['main_shape_subset_extra.sql', 'main_shape_subset_extra_plans.sql']) must(read('supabase/baseline/' + f));
+  const auth = spawnSync('docker', ['exec', '-i', name, 'psql', '-U', 'supabase_admin', '-h', 'localhost', '-d', 'postgres', '-X', '-q', '-v', 'ON_ERROR_STOP=1'], { input: read('supabase/baseline/main_shape_auth_users.sql'), encoding: 'utf8' });
+  if (auth.status !== 0) throw new Error('main_shape_auth_users.sql: ' + (auth.stderr || '').slice(0, 600));
+  for (const f of ['main_shape_subset_extra_engagement.sql', 'main_shape_subset_extra_import.sql']) must(read('supabase/baseline/' + f));
+  for (const v of read('supabase/baseline/PENDING_MIGRATIONS.txt').split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'))) must(read(`supabase/migrations/${v}.sql`));
 }

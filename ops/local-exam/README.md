@@ -9,6 +9,7 @@ node ops/local-exam/run-ktor.mjs      # Ktor de este worktree en http://127.0.0.
 node ops/local-exam/run-ktor.mjs --detach   # igual, en segundo plano e independiente de la terminal (log .local/ktor.log)
 node ops/local-exam/run-ktor.mjs --stop     # para el de --detach
 node ops/local-exam/e2e.mjs           # E2E: versionado X->Y, seguridad, recursos, concurrencia, metricas (necesita Ktor recien arrancado: el limitador es en memoria)
+                                      # exit 0 = todo PASS; 1 = algun FAIL; 5 = sin FAIL pero algun NOT_RUN (p. ej. REGISTER_J6 sin stub de GoTrue: e2e intenta arrancarlo con run-gotrue-stub.mjs --detach y lo para al terminar; E2E_NO_STUB_START=1 lo evita). NOT_RUN nunca cuenta como PASS.
 docker compose --env-file ops/local-exam/.local/compose.env -f ops/local-exam/docker-compose.yaml exec -T db \
   psql -U postgres -h localhost -X -f - < ops/local-exam/sql/95_explain_volume.sql   # volumen sintetico + EXPLAIN
 docker compose --env-file ops/local-exam/.local/compose.env -f ops/local-exam/docker-compose.yaml down -v   # borrar todo

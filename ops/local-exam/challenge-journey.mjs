@@ -31,6 +31,15 @@ const app = (method, p, body, user = 'Q1') => http(tokens[user], method, p, body
 const results = [];
 const check = (id, ok, detail = '') => { results.push(ok); console.log(`${ok ? 'PASS' : 'FAIL'}  ${id}${detail ? '  ' + detail : ''}`); };
 
+// preflight (E5 live run 2026-10-19): the claim reads auth.users.confirmed_at (private.user_auth_facts); in GoTrue it is GENERATED from
+// email_confirmed_at, which is what this journey sets. A stack whose confirmed_at is still a plain column answers 403 EMAIL_UNVERIFIED to every claim.
+const confirmedAt = sql("select coalesce((select is_generated from information_schema.columns where table_schema = 'auth' and table_name = 'users' and column_name = 'confirmed_at'), 'MISSING')");
+if (confirmedAt !== 'ALWAYS') {
+  console.error(`J17 NOT_RUN: auth.users.confirmed_at is ${confirmedAt === 'MISSING' ? 'missing' : 'a plain column'}, not GoTrue's generated column. `
+    + 'Apply supabase/baseline/main_shape_auth_users.sql (up.mjs / up.mjs --converge do it, as supabase_admin) and re-run.');
+  process.exit(5);
+}
+
 // repeatable: no challenge record for Q1 today, e-mail not verified yet, no deferrals left over
 sql(`delete from public.respuestas_reto_diario where usuario_id = '${Q1}';
 delete from public.registros_reto_diario where usuario_id = '${Q1}';

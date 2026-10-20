@@ -1896,7 +1896,7 @@ begin
   begin execute p_sql; exception when others then get stacked diagnostics v_msg = message_text; end;
   if v_msg is distinct from p_msg then raise exception 'ASSERT FAILED: % -> expected % got %', p_sql, p_msg, v_msg; end if;
 end $$;
-insert into auth.users (id, email, aud, role, confirmed_at) values
+insert into auth.users (id, email, aud, role, email_confirmed_at) values   -- confirmed_at is GENERATED from email_confirmed_at (GoTrue shape, main_shape_auth_users.sql)
   ('a0000000-0000-0000-0000-0000000000e1','ch-nat@test.local','authenticated','authenticated', now()), ('a0000000-0000-0000-0000-0000000000e2','ch-a@test.local','authenticated','authenticated', now()),
   ('a0000000-0000-0000-0000-0000000000e3','ch-sub@test.local','authenticated','authenticated', now()), ('a0000000-0000-0000-0000-0000000000e4','ch-nospec@test.local','authenticated','authenticated', null);
 insert into public.especialidades (id, codigo, nombre, slug, activa) values ('e1000000-0000-0000-0000-0000000000e1','CH','CH','ch',true);
@@ -1993,9 +1993,9 @@ begin
   -- ---- claim: only the own, passed row; gates; idempotent; ledger-first
   perform pg_temp.expect_e(format($q$select public.app_claim_daily_challenge(%L, %L)$q$, ua, reto_a), 'RETO_NOT_PASSED');
   perform pg_temp.expect_e(format($q$select public.app_claim_daily_challenge(%L, %L)$q$, un, reto_a), 'NOT_FOUND');
-  update auth.users set confirmed_at = null where id = un;
+  update auth.users set email_confirmed_at = null where id = un;
   perform pg_temp.expect_e(format($q$select public.app_claim_daily_challenge(%L, %L)$q$, un, reto_n), 'EMAIL_UNVERIFIED');
-  update auth.users set confirmed_at = now() where id = un;
+  update auth.users set email_confirmed_at = now() where id = un;
   j := public.app_claim_daily_challenge(un, reto_n);
   assert (j -> 'recompensa' ->> 'total')::int = 5 and (j -> 'recompensa' ->> 'reclamada')::boolean and not (j -> 'recompensa' ->> 'pendiente')::boolean and (j ->> 'saldo')::int = 5, 'claim pays the frozen amount: ' || j::text;
   assert public.app_claim_daily_challenge(un, reto_n) = j and (select count(*) from public.transacciones_cartera where usuario_id = un and tipo = 'reto_diario') = 1, 'a second claim pays nothing more';

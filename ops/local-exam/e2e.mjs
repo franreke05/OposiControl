@@ -74,7 +74,10 @@ const answer = (user, attempt, question, option, base = 0, k = key()) =>
   call(user, 'PUT', `/api/v1/app/intentos/${attempt}/respuestas/${question}`, { opcionSeleccionadaId: option, tiempoRespuestaMs: 1500, baseRevision: base }, k);
 
 const results = [];
+let stubStartedHere = false, stubStartError = '';
 function check(id, ok, detail = '') { results.push({ id, status: ok ? 'PASS' : 'FAIL', detail }); console.log(`${ok ? 'PASS' : 'FAIL'}  ${id}${detail ? '  ' + detail : ''}`); }
+// A prerequisite that could not be met: never a PASS. Counted apart; the run exits 5 (not 0) when nothing FAILED but something was NOT_RUN.
+function notRun(id, detail) { results.push({ id, status: 'NOT_RUN', detail }); console.log(`NOT_RUN  ${id}  ${detail}`); }
 async function scenario(id, fn) { try { await fn(); } catch (e) { check(id, false, `exception: ${e.message}`); } }
 
 function resetAttempts() {
@@ -361,7 +364,20 @@ await scenario('REGISTER_J6', async () => {
   const MAIL = 'j6@exam.local', PASS = 'Local-Pass-0123456789';
   const ING = 'e1000000-0000-4000-8000-000000000002';
   const stub = 'http://127.0.0.1:9999';
-  if (!(await fetch(stub + '/__local/health').then((r) => r.ok).catch(() => false))) { check('REGISTER_J6.gotrue_stub_running', false, 'start ops/local-exam/run-gotrue-stub.mjs --detach'); return; }
+  const stubUp = () => fetch(stub + '/__local/health').then((r) => r.ok).catch(() => false);
+  if (!(await stubUp()) && process.env.E2E_NO_STUB_START !== '1') {
+    // start the LOCAL stub with the same guards as by hand (STACK_LOCK holder and APP_ENV=local|test are inherited, never forced); stopped again at the end
+    try {
+      execFileSync(process.execPath, [path.join(here, 'run-gotrue-stub.mjs'), '--detach'], { env: process.env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+      stubStartedHere = true;
+    } catch (e) { stubStartError = String(e.stderr || e.message).trim().split(/\r?\n/).pop(); }
+  }
+  if (!(await stubUp())) {
+    const why = stubStartError ? ` (auto-start failed: ${stubStartError})` : process.env.E2E_NO_STUB_START === '1' ? ' (E2E_NO_STUB_START=1)' : '';
+    notRun('REGISTER_J6', `GoTrue stub not reachable on ${stub}${why}; start it: STACK_HOLDER=<holder> APP_ENV=local node ops/local-exam/run-gotrue-stub.mjs --detach`);
+    return;
+  }
+  check('REGISTER_J6.gotrue_stub_running', true, stubStartedHere ? 'started by e2e' : 'already running');
   sql(`delete from auth.users where lower(email) = '${MAIL}'`); // el usuario del e2e; el perfil cae en cascada
   const post = (p, body, token) => fetch(KTOR + p, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body) })
     .then(async (r) => ({ status: r.status, json: await r.json().catch(() => null) }));
@@ -607,7 +623,10 @@ await scenario('ECONOMY', async () => {
   // --- D6-11 paquetes ---
   const packs = await call('Q4', 'GET', '/api/v1/app/wallet/paquetes');
   const codes = (packs.json?.items ?? []).map((p) => p.code);
-  check('ECONOMY.D6_11_packs', packs.status === 200 && codes.join(',') === 'LOCAL_PACK_10,LOCAL_PACK_50' && packs.json.items[1].tickets === 50 && packs.json.items[1].priceCents === 449 && packs.json.items[1].currency === 'EUR',
+  // every visible pack_tickets fixture, in the server order (posicion asc, codigo asc): sql/98 (LOCAL_PACK_10 pos 1, LOCAL_PACK_50 pos 2)
+  // + sql/98b (LOCAL_RECARGA_100..1000 pos 20..23, LOCAL_PACK_1300 pos 24). The old 2-pack expectation predates sql/98b (E5 live run 2026-10-19).
+  const PACKS = 'LOCAL_PACK_10,LOCAL_PACK_50,LOCAL_RECARGA_100,LOCAL_RECARGA_200,LOCAL_RECARGA_500,LOCAL_RECARGA_1000,LOCAL_PACK_1300';
+  check('ECONOMY.D6_11_packs', packs.status === 200 && codes.join(',') === PACKS && packs.json.items[1].tickets === 50 && packs.json.items[1].priceCents === 449 && packs.json.items[1].currency === 'EUR',
     packs.status + ' ' + codes.join(','));
 
   // --- pagos: pedido, aviso firmado, repeticion, importes, caducidad, reembolso ---
@@ -777,7 +796,10 @@ async function scrape() {
 }
 
 resetAttempts();
+if (stubStartedHere) { try { execFileSync(process.execPath, [path.join(here, 'run-gotrue-stub.mjs'), '--stop'], { env: process.env, stdio: 'ignore' }); } catch { /* best effort: leave the stack as found */ } }
 const failed = results.filter((r) => r.status === 'FAIL');
-fs.writeFileSync(path.join(local, 'e2e-result.json'), JSON.stringify({ at: new Date().toISOString(), pass: results.length - failed.length, fail: failed.length, results }, null, 2));
-console.log(`\nE2E: ${results.length - failed.length} PASS, ${failed.length} FAIL`);
-process.exit(failed.length ? 1 : 0);
+const skipped = results.filter((r) => r.status === 'NOT_RUN');
+const passed = results.filter((r) => r.status === 'PASS');
+fs.writeFileSync(path.join(local, 'e2e-result.json'), JSON.stringify({ at: new Date().toISOString(), pass: passed.length, fail: failed.length, notRun: skipped.length, results }, null, 2));
+console.log(`\nE2E: ${passed.length} PASS, ${failed.length} FAIL, ${skipped.length} NOT_RUN${skipped.length ? ' (' + skipped.map((r) => r.id).join(', ') + ')' : ''}`);
+process.exit(failed.length ? 1 : skipped.length ? 5 : 0);
