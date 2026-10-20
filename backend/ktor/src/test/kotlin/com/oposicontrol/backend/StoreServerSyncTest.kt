@@ -234,6 +234,42 @@ class StoreServerSyncTest {
         assertEquals(before, http.calls.size)
     }
 
+    /**
+     * N4-3 (re-auditoria Control ronda 4): Get Notification History se corta a las 100 paginas. Si Apple aun dice que hay mas (`hasMore`), el cursor
+     * NO avanza hasta `now` (los avisos de las paginas siguientes no se pierden): se queda donde estaba (solo cuenta la hora del sondeo) y se avisa.
+     */
+    @Test
+    fun aTruncatedHistoryReadDoesNotMoveTheCursorPastTheUnreadPages() = runTest {
+        val http = RecordingHttp()
+        repeat(100) { i -> http.responses += StoreHttpResponse(200, """{"notificationHistory":[],"hasMore":true,"paginationToken":"p${i + 2}"}""") }
+        val db = Db()
+        val twoDaysAgo = now.minusSeconds(2 * 86_400L)
+        db.cursor = twoDaysAgo.toEpochMilli() to now.minusSeconds(7 * 3_600L).toString()
+        val logs = mutableListOf<String>()
+        StorePaymentsJob.pollAppleHistory(runtime(db, apple = provider(http)), now) { logs += it }
+        assertEquals(100, http.calls.count { it.url.contains("/notifications/history") })
+        assertEquals(twoDaysAgo.toEpochMilli(), db.cursor!!.first, "the cursor stays where the unread pages start")
+        assertTrue(logs.any { it.startsWith("ALERT store apple history") }, logs.toString())
+    }
+
+    /** N4-4: el mismo aviso por el webhook y por Notification History da la MISMA huella (sha256 del signedPayload en los dos caminos). */
+    @Test
+    fun theSameNotificationHasTheSameFingerprintFromTheWebhookAndFromHistory() = runTest {
+        val signed = assn("same-1")
+        val http = RecordingHttp()
+        val db = Db()
+        val rt = runtime(db, apple = provider(http))
+        rt.service.webhook(StorePlatform.APP_STORE, { null }, """{"signedPayload":"$signed"}""".toByteArray())
+        http.responses.clear()   // el proceso del aviso (relectura de la suscripcion) fallo y queda pendiente: no importa aqui
+        http.responses += StoreHttpResponse(200, """{"notificationHistory":[{"signedPayload":"$signed"}],"hasMore":false}""")
+        StorePaymentsJob.pollAppleHistory(rt, now)
+        val prints = db.calls("app_store_inbox_put").map { it["p_evento_id"]!!.jsonPrimitive.content to it["p_huella"]!!.jsonPrimitive.content }
+        assertEquals(2, prints.size, prints.toString())
+        assertEquals(setOf("assn:same-1"), prints.map { it.first }.toSet())
+        assertEquals(prints[0].second, prints[1].second, "webhook and history fingerprints differ: $prints")
+        assertEquals(sha256Hex(signed.toByteArray(Charsets.UTF_8)), prints[0].second)
+    }
+
     @Test
     fun aFailedHistoryReadDoesNotMoveTheCursor() = runTest {
         val http = RecordingHttp().apply { responses += StoreHttpResponse(503, "{}") }

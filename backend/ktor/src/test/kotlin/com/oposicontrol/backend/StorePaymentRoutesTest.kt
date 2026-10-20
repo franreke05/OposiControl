@@ -520,15 +520,15 @@ class StorePaymentRoutesTest {
         assertTrue(pending.isEmpty())
     }
 
-    /** F4: con reembolsos encendidos el trabajo pide tambien los retenidos; apagados, no. */
+    /** F4 + N4-2: con reembolsos encendidos el trabajo pide tambien los retenidos por reembolsos; apagados, no (cada motivo con su interruptor). */
     @Test
     fun theJobAsksForRetainedRowsOnlyWhenRefundsAreOn() = runTest {
         upstream.handlers["app_store_inbox_pending"] = { ok("[]") }
         service().reprocessPending()
-        assertEquals("true", upstream.args("app_store_inbox_pending")["p_incluir_retenidos"]!!.jsonPrimitive.content)
+        assertTrue(upstream.args("app_store_inbox_pending")["p_retenidos"].toString().contains("\"REFUNDS_DISABLED\""))
         refundsEnabled = false
         service().reprocessPending()
-        assertEquals("false", upstream.args("app_store_inbox_pending")["p_incluir_retenidos"]!!.jsonPrimitive.content)
+        assertFalse(upstream.args("app_store_inbox_pending")["p_retenidos"].toString().contains("\"REFUNDS_DISABLED\""))
     }
 
     /** NEW-3 (re-auditoria Control 2026-10-19): un reenvio mientras OTRO trabajador tiene el aviso reclamado no se procesa en paralelo. */
@@ -572,12 +572,12 @@ class StorePaymentRoutesTest {
         service().webhook(StorePlatform.GOOGLE_PLAY, { null }, "{}".toByteArray())
         assertEquals("0", upstream.args("app_store_inbox_mark")["p_max_intentos"]!!.jsonPrimitive.content, "default: never dead-letter")
         upstream.rpcs.clear()
-        upstream.handlers["app_store_reconcile_orphans"] = { ok("0") }
+        upstream.handlers["app_store_reconcile_orphan_step"] = { ok("[]") }
         upstream.handlers["app_store_inbox_purge"] = { ok("0") }
         refundsEnabled = false
         service().maintenance(retentionDays = null)
-        assertEquals(listOf("app_store_reconcile_orphans"), upstream.names(), "no retention configured: nothing is deleted")
-        assertEquals("false", upstream.args("app_store_reconcile_orphans")["p_reembolsos_habilitados"]!!.jsonPrimitive.content)
+        assertEquals(listOf("app_store_reconcile_orphan_step"), upstream.names(), "no retention configured: nothing is deleted")
+        assertEquals("false", upstream.args("app_store_reconcile_orphan_step")["p_reembolsos_habilitados"]!!.jsonPrimitive.content)
         service().maintenance(retentionDays = 400)
         assertEquals("400", upstream.args("app_store_inbox_purge")["p_dias"]!!.jsonPrimitive.content)
     }

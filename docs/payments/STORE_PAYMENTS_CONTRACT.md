@@ -31,7 +31,7 @@ recomputed from a leaked user id and matches E4's contract ("opaque UUID issued 
 | Id | Route | Notes |
 |---|---|---|
 | S-01 | `GET /api/v1/app/store/account-token` | `{accountToken}` |
-| S-02 | `GET /api/v1/app/store/products` | `{items:[{storeProductId, platform, kind, productCode, basePlanId?}]}` from config; only platforms that are enabled |
+| S-02 | `GET /api/v1/app/store/products` | `{items:[{storeProductId, platform, kind, productCode, basePlanId?}]}` from config; only platforms that are enabled. N4-1: with G1 off (`PAYMENTS_STORE_LIVE_CREDIT_ENABLED=false`) the list is empty except for a sandbox tester (allowlist user, or `accept` in local/test); subscriptions also need D8 |
 | S-03 | `POST /api/v1/app/store/purchases/verify` | `Idempotency-Key` required. Body `{platform, storeProductId, kind, token, transactionId?, accountToken?}` (`token` = Play `purchaseToken` or StoreKit 2 `jwsRepresentation`, max 32 KiB, PAY-R2). `200 {result: GRANTED|PENDING, kind, productCode, balance, premium, premiumUntil?}` |
 | S-04 | `POST /api/v1/app/store/purchases/restore` | Body `{platform, purchases:[{storeProductId, kind, token}]}` (1..20). `200 {items:[{storeProductId, result, code?}]}`; each item = S-03 without its own key |
 | S-05 | `GET /api/v1/app/store/entitlements` | `{balance, premium:{active, state, productCode?, provider?, until?}}` |
@@ -254,3 +254,18 @@ one batch call (S-04, <= 20 items), optional for the client; (5) a purchase held
   Owner checklist: [`STORE_OWNER_SETUP.md`](STORE_OWNER_SETUP.md).
 - Apple endpoint paths used (`/inApps/v1/transactions/{id}`, `/inApps/v1/subscriptions/{id}`, `/inApps/v1/notifications/history`) are the ones
   the official library 5.2.0 builds (asserted in `StoreServerSyncTest`); no Apple page was opened for them in this round.
+
+## Round 4 (OposiControl re-audit of 6987c1b + ae2028a + e9e9b93, 2026-10-20; migration `20261022103100`)
+
+Details, tests and retest steps: [`ROUND4_FIXES.md`](ROUND4_FIXES.md).
+
+- N4-1: `GET /products` lists nothing that verify cannot deliver: with G1 off only a sandbox tester sees the products.
+- N4-2: a deferral by an owner decision (`LIVE_CREDIT_DISABLED`, `SUBSCRIPTIONS_DISABLED`, as `REFUNDS_DISABLED` before) is `retenido`: no attempt,
+  never `muerto`; the job re-asks a retained row only when its switch is on (`app_store_inbox_pending(p_limit, p_retenidos text[])`); stats report
+  those holds as `retenido_decision` (gauge, no alert), so `StoreInboxPendingStuck` / `StoreInboxRefundsRetained` do not fire for them.
+- N4-3: Get Notification History stops at 100 pages; when Apple still has more, the cursor is NOT moved past the unread pages (only the poll time is
+  recorded) and an `ALERT store apple history` log is written.
+- N4-4: the Apple inbox fingerprint is `sha256(signedPayload)` by the webhook and by Notification History alike.
+- N4-5: partial index `ix_tienda_bandeja_atasco (estado, recibido_en) where estado in ('pendiente','retenido','muerto')` for `app_store_inbox_stats`.
+- N4-6: the job re-links orphans with `app_store_reconcile_orphan_step` (one row per call = one transaction: at most one store-key lock and one
+  wallet lock), keyset cursor, at most 50 per run. Lock order unchanged (key try-lock, row `SKIP LOCKED`, wallet).

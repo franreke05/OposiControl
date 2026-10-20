@@ -78,13 +78,13 @@ class StoreDecisionsTest {
     }
 
     @Test
-    fun aProductionPurchaseNotificationIsStoredAndLeftPendingNotCredited() = runTest {
+    fun aProductionPurchaseNotificationIsStoredAndRetainedNotCredited() = runTest {
         val upstream = Upstream()
         val event = StoreEvent(StorePlatform.GOOGLE_PLAY, "rtdn:1", StoreEventType.PURCHASE, "gp-1", null, buildJsonObject { put("kind", "CONSUMABLE") })
         assertEquals("DEFERRED", service(upstream, Provider(pack(), event)).webhook(StorePlatform.GOOGLE_PLAY, { null }, "{}".toByteArray()))
         assertFalse("app_store_credit_purchase" in upstream.names())
         val mark = upstream.rpcs.last { it.first == "app_store_inbox_mark" }.second
-        assertTrue(mark.contains("\"p_estado\":\"pendiente\"") && mark.contains("LIVE_CREDIT_DISABLED"), mark)
+        assertTrue(mark.contains("\"p_estado\":\"retenido\"") && mark.contains("LIVE_CREDIT_DISABLED"), mark)   // N4-2: retenido, no un intento
     }
 
     @Test

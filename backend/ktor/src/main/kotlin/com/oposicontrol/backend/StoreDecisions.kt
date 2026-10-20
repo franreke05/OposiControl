@@ -25,7 +25,7 @@ internal data class StoreDecision(
 
 internal val STORE_DECISIONS: List<StoreDecision> = listOf(
     StoreDecision("G1", "Acreditar compras de produccion (OT y Premium) de verdad", STORE_LIVE_CREDIT_ENV,
-        "false: se verifican y se guardan, no se acreditan (503 al cliente, aviso pendiente)", "Propietario, tras credenciales + evidencia de sandbox"),
+        "false: se verifican y se guardan, no se acreditan (503 al cliente, aviso retenido)", "Propietario, tras credenciales + evidencia de sandbox"),
     StoreDecision("D1", "Credito por SKU o por tolerancia de precio", STORE_CREDIT_POLICY_ENV, "sku (precio del catalogo; el de la tienda solo se audita)", "Propietario + Control"),
     StoreDecision("D2", "Reembolsos activos en produccion", REFUNDS_ENABLED_ENV, "false fuera de local/test: el reembolso se GUARDA (retenido) y se aplica al encenderlo", "Propietario + Control"),
     StoreDecision("D3", "Re-acreditar tras REFUND_REVERSED", null, "nunca automatico: el pedido pasa a revision de Control", "Control"),
@@ -34,7 +34,7 @@ internal val STORE_DECISIONS: List<StoreDecision> = listOf(
     StoreDecision("D6", "Libro mayor y bandeja al borrar la cuenta; retencion de la bandeja", STORE_RETENTION_ENV,
         "sin purga (vacio); el reembolso de una cuenta borrada queda huerfano retenido", "Legal"),
     StoreDecision("D7", "Enviar datos de consumo a Apple (CONSUMPTION_REQUEST)", STORE_CONSUMPTION_ENV, "false (solo se registra); true no esta implementado y no arranca", "Propietario + Legal"),
-    StoreDecision("D8", "Suscripciones de tienda en V1", STORE_SUBSCRIPTIONS_ENV, "false: no se venden ni se aplican (verify 503, aviso pendiente)", "Propietario"),
+    StoreDecision("D8", "Suscripciones de tienda en V1", STORE_SUBSCRIPTIONS_ENV, "false: no se venden ni se aplican (verify 503, aviso retenido)", "Propietario"),
     StoreDecision("D9", "Custodia de secretos de tienda", null, "ficheros 0600 en /etc/oposibots/production, nunca en el repo ni en logs", "Propietario + infra"),
     StoreDecision("D10", "Equivalencia OT/EUR y comision de la tienda", null, "precio y OT del catalogo (productos_comerciales); la comision no cambia el credito", "Propietario"),
     StoreDecision("D11", "La revocacion de una suscripcion quita el acceso al instante aunque los reembolsos esten apagados", STORE_SUB_REVOCATION_ENV,

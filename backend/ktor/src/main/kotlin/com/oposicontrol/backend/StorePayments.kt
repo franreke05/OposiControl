@@ -4,7 +4,9 @@ import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.builtins.ListSerializer
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonObject
@@ -103,6 +105,9 @@ internal data class StoreEvent(
     val purchaseKey: String?,
     val environment: StoreEnvironment?,
     val data: JsonObject,
+    /** N4-4: huella de la bandeja cuando la tienda la define sobre un contenido estable (Apple: sha256 del `signedPayload`, igual por webhook y por
+     *  Notification History). null = sha256 del cuerpo recibido. */
+    val fingerprint: String? = null,
 )
 
 internal interface StorePaymentProvider {
@@ -444,6 +449,15 @@ private data class StoreDueSubscriptionRow(
 )
 
 @Serializable
+private data class StoreOrphanStepRow(
+    val proveedor: String,
+    @SerialName("evento_id") val eventoId: String,
+    /** Se devuelve tal cual (texto de la base, microsegundos incluidos) como cursor del paso siguiente. */
+    @SerialName("recibido_en") val recibidoEn: String,
+    val resultado: String? = null,
+)
+
+@Serializable
 private data class StorePollRow(
     @SerialName("cursor_ms") val cursorMs: Long,
     @SerialName("ultimo_sondeo_en") val ultimoSondeoEn: String,
@@ -484,7 +498,7 @@ internal object StoreRpcErrors {
     }
 }
 
-/** El aviso se guardo pero no se pudo aplicar AHORA (reembolsos apagados, tienda caida): queda `pendiente` para el trabajo. */
+/** El aviso se guardo pero no se pudo aplicar AHORA: por una decision ([StorePaymentsService.HOLD_REASONS]) queda `retenido`; si no, `pendiente`. */
 internal class StoreDeferred(val reason: String) : RuntimeException(reason)
 
 // ---------- servicio ----------
@@ -514,9 +528,18 @@ internal class StorePaymentsService(
         return StoreAccountTokenResponse(token.lowercase())
     }
 
-    fun products(): StoreProductsResponse = StoreProductsResponse(
-        catalog.products.filter { it.platform in providers.keys && (it.kind != StoreKind.SUBSCRIPTION || decisions.subscriptionsEnabled) }.map { StoreProductDto(it.storeProductId.substringBefore('/'), it.platform.name, it.kind.name, it.productCode, it.storeProductId.substringAfter('/', "").ifEmpty { null }) },
-    )
+    /**
+     * S-02. N4-1 (re-auditoria Control ronda 4): solo se ofrece lo que verify puede ENTREGAR. Con G1 apagado una compra de produccion nunca se
+     * acredita (503 para siempre; Apple no la reembolsa sola), asi que no se lista nada salvo al probador de sandbox ([userId] en la allowlist, o
+     * `accept` en local/test), cuyas compras son de sandbox. Las suscripciones ademas necesitan D8.
+     */
+    fun products(userId: CanonicalUserId? = null): StoreProductsResponse {
+        val deliverable = decisions.liveCredit || sandbox.allows(StoreEnvironment.SANDBOX, userId?.value)
+        return StoreProductsResponse(
+            catalog.products.filter { it.platform in providers.keys && deliverable && (it.kind != StoreKind.SUBSCRIPTION || decisions.subscriptionsEnabled) }
+                .map { StoreProductDto(it.storeProductId.substringBefore('/'), it.platform.name, it.kind.name, it.productCode, it.storeProductId.substringAfter('/', "").ifEmpty { null }) },
+        )
+    }
 
     suspend fun entitlements(userId: CanonicalUserId): StoreEntitlementsResponse {
         val row = rpc<StoreEntitlementsRow>("app_store_entitlements", buildJsonObject { put("p_usuario", userId.value) }.toString()).singleOrNull()
@@ -638,7 +661,7 @@ internal class StorePaymentsService(
 
     /**
      * G1 / D8: solo frena lo que DARIA algo (un pack comprado o una suscripcion con acceso). Quitar acceso (caducada, revocada) nunca se frena.
-     * [StoreDeferred]: el aviso queda `pendiente` con espera creciente y se aplica cuando el propietario enciende la decision.
+     * [StoreDeferred]: el aviso queda `retenido` (N4-2: sin contar intento) y se aplica cuando el propietario enciende la decision.
      */
     private fun gate(facts: StorePurchaseFacts) {
         val grants = when (facts.kind) {
@@ -675,7 +698,7 @@ internal class StorePaymentsService(
                 put("p_tipo", event.type.inbox)
                 put("p_clave", event.purchaseKey)
                 put("p_entorno", event.environment?.db)
-                put("p_huella", sha256Hex(rawBody))
+                put("p_huella", event.fingerprint ?: sha256Hex(rawBody))
                 put("p_datos", event.data)
             }.toString(),
         ).singleOrNull() ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
@@ -696,8 +719,9 @@ internal class StorePaymentsService(
             val result = process(row)
             Triple(if (result == "DISCARDED") "descartado" else "procesado", result, null)
         } catch (e: StoreDeferred) {
-            // F4: reembolsos apagados = RETENIDO (no cuenta como intento, nunca se descarta); cualquier otro aplazamiento = fallo con backoff.
-            Triple(if (e.reason == "REFUNDS_DISABLED") "retenido" else "pendiente", null, e.reason)
+            // F4 + N4-2: un aplazamiento por DECISION (reembolsos D2, credito real G1, suscripciones D8) = RETENIDO: no cuenta como intento, nunca
+            // pasa a `muerto` y se vuelve a pedir cuando su interruptor se enciende. Cualquier otro aplazamiento = fallo con backoff.
+            Triple(if (e.reason in HOLD_REASONS) "retenido" else "pendiente", null, e.reason)
         } catch (e: BackendDomainException) {
             if (e.status.value >= 500) Triple("pendiente", null, e.errorCode) else Triple("descartado", e.errorCode, e.errorCode)
         } catch (e: Exception) {
@@ -771,8 +795,14 @@ internal class StorePaymentsService(
 
     /** Reintenta la bandeja `pendiente`. Devuelve cuantas filas se intentaron. */
     suspend fun reprocessPending(limit: Int = 50): Int {
-        // F4: los retenidos (reembolsos apagados) solo se vuelven a pedir cuando los reembolsos estan encendidos.
-        val rows = rpc<StoreInboxRow>("app_store_inbox_pending", buildJsonObject { put("p_limit", limit); put("p_incluir_retenidos", refundsEnabled) }.toString())
+        // F4 + N4-2: un retenido solo se vuelve a pedir cuando el interruptor que lo retuvo esta encendido (la base filtra por su motivo).
+        val reasons = buildList {
+            if (refundsEnabled) add("REFUNDS_DISABLED")
+            if (decisions.liveCredit) add("LIVE_CREDIT_DISABLED")
+            if (decisions.subscriptionsEnabled) add("SUBSCRIPTIONS_DISABLED")
+        }
+        val body = buildJsonObject { put("p_limit", limit); put("p_retenidos", JsonArray(reasons.map { JsonPrimitive(it) })) }.toString()
+        val rows = rpc<StoreInboxRow>("app_store_inbox_pending", body)
         rows.forEach { processInbox(it, renew = true) }
         return rows.size
     }
@@ -868,8 +898,24 @@ internal class StorePaymentsService(
      * encendidos) y, SOLO si se configuro una retencion (decision del propietario / legal), purga la bandeja procesada mas vieja.
      */
     suspend fun maintenance(retentionDays: Int?) {
-        rpcScalar("app_store_reconcile_orphans", buildJsonObject { put("p_limit", 50); put("p_reembolsos_habilitados", refundsEnabled) }.toString())
-            ?.toIntOrNull()?.takeIf { it > 0 }?.let { log("store inbox: $it orphan notification(s) re-linked to their order") }
+        // N4-6: UNA fila por llamada (una transaccion: como mucho un cerrojo de clave y uno de cartera), siguiendo el cursor de la anterior; una clave
+        // ocupada (BUSY) o un fallo (ERROR) no frena a las siguientes y se reintenta en la proxima vuelta. Como mucho 50 filas por vuelta.
+        var cursor: StoreOrphanStepRow? = null
+        var linked = 0
+        for (i in 0 until ORPHAN_STEPS_PER_RUN) {
+            val step = rpc<StoreOrphanStepRow>(
+                "app_store_reconcile_orphan_step",
+                buildJsonObject {
+                    put("p_reembolsos_habilitados", refundsEnabled)
+                    put("p_tras_recibido", cursor?.recibidoEn)
+                    put("p_tras_proveedor", cursor?.proveedor)
+                    put("p_tras_evento", cursor?.eventoId)
+                }.toString(),
+            ).singleOrNull() ?: break
+            if (step.resultado !in ORPHAN_STEP_NOT_LINKED) linked++
+            cursor = step
+        }
+        if (linked > 0) log("store inbox: $linked orphan notification(s) re-linked to their order")
         retentionDays?.let { days -> rpcScalar("app_store_inbox_purge", buildJsonObject { put("p_dias", days) }.toString()) }
     }
 
@@ -900,6 +946,13 @@ internal class StorePaymentsService(
         const val MAX_PRODUCT_ID_LENGTH = 150
         const val MAX_RESTORE_ITEMS = 20
         val ACCESS_STATES = setOf("activa", "periodo_prueba", "cancelada")
+
+        /** F4 + N4-2: motivos de [StoreDeferred] que son una DECISION del propietario (retenido), no un fallo. */
+        val HOLD_REASONS = setOf("REFUNDS_DISABLED", "LIVE_CREDIT_DISABLED", "SUBSCRIPTIONS_DISABLED")
+
+        /** N4-6: filas de huerfanos por vuelta del trabajo (una transaccion cada una) y resultados del paso que no ligan nada. */
+        const val ORPHAN_STEPS_PER_RUN = 50
+        val ORPHAN_STEP_NOT_LINKED = setOf(null, "BUSY", "SKIPPED", "ERROR")
     }
 }
 

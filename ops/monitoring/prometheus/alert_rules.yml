@@ -137,6 +137,8 @@ groups:
           summary: "Avisos de tienda pendientes de procesar desde hace mas de una hora"
           description: "La bandeja reintenta con espera creciente; mirar ultimo_error en tienda_bandeja (API de Google caida, credenciales, base)."
 
+      # N4-2 (re-auditoria Control ronda 4): los avisos retenidos por G1 / D8 apagados se publican como estado="retenido_decision" (estado
+      # esperado mientras el propietario no encienda el credito real o las suscripciones): no cuentan aqui ni en StoreInboxPendingStuck.
       - alert: StoreInboxRefundsRetained
         expr: max(store_inbox_backlog{estado="retenido"}) > 0
         for: 30m

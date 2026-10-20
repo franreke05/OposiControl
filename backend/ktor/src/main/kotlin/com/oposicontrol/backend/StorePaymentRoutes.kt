@@ -106,9 +106,9 @@ internal fun Route.storePaymentRoutes(runtime: StorePaymentsRuntime?) {
         }
         get("/products") {
             val rt = runtime.orStoreMisconfigured()
-            call.storeGate(runtime, EconomyOperation.ORDER_READ)
+            val identity = call.storeGate(runtime, EconomyOperation.ORDER_READ)
             requireOnlyKnownQueryParams(call.request.queryParameters, emptySet())
-            call.respond(rt.service.products())
+            call.respond(rt.service.products(identity.userId))
         }
         get("/entitlements") {
             val rt = runtime.orStoreMisconfigured()
@@ -233,10 +233,17 @@ internal object StorePaymentsJob {
         if (cursor != null && cursor.second.isAfter(now.minusSeconds(6 * 3_600L))) return 0
         val nowMs = now.toEpochMilli()
         val start = maxOf(nowMs - 180 * DAY_MS + DAY_MS, (cursor?.first ?: (nowMs - 3 * DAY_MS)) - 3_600_000L)
-        val events = apple.notificationHistory(StoreEnvironment.PRODUCTION, start, nowMs, log)
-        events.forEach { (event, fingerprint) -> runtime.service.ingest(event, fingerprint) }
-        runtime.service.advancePollCursor(StorePlatform.APP_STORE, HISTORY_SOURCE, nowMs)
-        return events.size
+        val read = apple.notificationHistory(StoreEnvironment.PRODUCTION, start, nowMs, log)
+        read.events.forEach { (event, fingerprint) -> runtime.service.ingest(event, fingerprint) }
+        if (read.complete) {
+            runtime.service.advancePollCursor(StorePlatform.APP_STORE, HISTORY_SOURCE, nowMs)
+        } else {
+            // N4-3: Apple aun tenia paginas (tope de 100): el cursor NO avanza (lo no leido se vuelve a pedir en el siguiente sondeo, la bandeja
+            // deduplica); solo se anota la hora del sondeo (la base nunca mueve el cursor hacia atras) para no repetirlo cada vuelta del trabajo.
+            runtime.service.advancePollCursor(StorePlatform.APP_STORE, HISTORY_SOURCE, cursor?.first ?: start)
+            log("ALERT store apple history: page cap reached with more pages pending; cursor kept, ${read.events.size} notification(s) ingested")
+        }
+        return read.events.size
     }
 }
 
@@ -267,8 +274,9 @@ internal object StoreInboxMetrics {
             }
         }
 
-    /** NEW-4: tambien los muertos (dead letter) y los huerfanos (reembolso / reversion sin compra todavia). */
-    val STATES = listOf("pendiente", "retenido", "muerto", "huerfano_reembolso", "huerfano_reversion")
+    /** NEW-4: tambien los muertos (dead letter) y los huerfanos (reembolso / reversion sin compra todavia). N4-2: `retenido` = reembolsos apagados (D2);
+     *  `retenido_decision` = credito real (G1) o suscripciones (D8) apagados: estado esperado, sin alerta. */
+    val STATES = listOf("pendiente", "retenido", "retenido_decision", "muerto", "huerfano_reembolso", "huerfano_reversion")
 
     fun update(stats: List<StoreInboxBacklog>, log: (String) -> Unit) {
         STATES.forEach { estado ->

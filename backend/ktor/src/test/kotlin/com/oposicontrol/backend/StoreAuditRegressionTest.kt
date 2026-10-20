@@ -244,7 +244,7 @@ class StoreAuditRegressionTest {
         upstream.rpcs.clear()
         assertEquals(1, service(refunds = true).reprocessPending())
         val pending = Json.parseToJsonElement(upstream.rpcs.first { it.first == "app_store_inbox_pending" }.second).jsonObject
-        assertEquals("true", pending["p_incluir_retenidos"]?.jsonPrimitive?.content)
+        assertTrue(pending["p_retenidos"].toString().contains("REFUNDS_DISABLED"), pending.toString())   // N4-2: por motivo
         assertTrue("app_store_refund_purchase" in upstream.names(), upstream.names().toString())
     }
 

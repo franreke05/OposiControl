@@ -92,6 +92,8 @@ internal class AppStoreProvider(
         }
         val uuid = notification.notificationUUID?.takeIf { it.isNotBlank() && it.length <= 150 } ?: throw CanonicalErrorCode.MALFORMED_BODY.exception()
         val eventId = "assn:$uuid"
+        // N4-4: la huella es la del signedPayload (el mismo por webhook y por Notification History), no la del cuerpo HTTP que lo envuelve.
+        val print = sha256Hex(signed.toByteArray(StandardCharsets.UTF_8))
         val type = notification.notificationType
         val eventType = when (type) {
             NotificationTypeV2.TEST -> StoreEventType.TEST
@@ -107,7 +109,7 @@ internal class AppStoreProvider(
         val data = notification.data
         val signedTx = data?.signedTransactionInfo
         if (signedTx == null || eventType == StoreEventType.TEST || eventType == StoreEventType.IGNORED) {
-            return StoreEvent(platform, eventId, eventType, null, null, buildJsonObject { put("notificationType", notification.rawNotificationType) })
+            return StoreEvent(platform, eventId, eventType, null, null, buildJsonObject { put("notificationType", notification.rawNotificationType) }, print)
         }
         val tx = try {
             verifier.verifyAndDecodeTransaction(signedTx)
@@ -130,6 +132,7 @@ internal class AppStoreProvider(
                 put("subtype", notification.rawSubtype)
                 put("facts", json.encodeToJsonElement(StorePurchaseFacts.serializer(), facts))
             },
+            print,
         )
     }
 
@@ -150,9 +153,12 @@ internal class AppStoreProvider(
         return withContext(Dispatchers.IO) { subscriptionFromApi(server, environment, purchaseKey) }
     }
 
-    /** Get Notification History (recuperar huecos): cada `signedPayload` verificado como un aviso. Uno con firma mala se salta (y se cuenta). */
-    suspend fun notificationHistory(environment: StoreEnvironment, startMillis: Long, endMillis: Long, log: (String) -> Unit = {}): List<Pair<StoreEvent, String>> {
-        val server = api ?: return emptyList()
+    /**
+     * Get Notification History (recuperar huecos): cada `signedPayload` verificado como un aviso. Uno con firma mala se salta (y se cuenta).
+     * N4-3: como mucho [maxPages] paginas; [AppleHistoryRead.complete] = false si Apple aun tenia mas (el cursor NO debe pasar de la ventana leida).
+     */
+    suspend fun notificationHistory(environment: StoreEnvironment, startMillis: Long, endMillis: Long, log: (String) -> Unit = {}, maxPages: Int = 100): AppleHistoryRead {
+        val server = api ?: return AppleHistoryRead(emptyList(), complete = true)
         return withContext(Dispatchers.IO) {
             val events = mutableListOf<Pair<StoreEvent, String>>()
             var token: String? = null
@@ -162,7 +168,8 @@ internal class AppStoreProvider(
                 val page = server.notificationHistory(environment, startMillis, endMillis, token)
                 page.signedPayloads.forEach { signed ->
                     try {
-                        events += eventFromSignedPayload(signed) to sha256Hex(signed.toByteArray(StandardCharsets.UTF_8))
+                        val event = eventFromSignedPayload(signed)
+                        events += event to (event.fingerprint ?: sha256Hex(signed.toByteArray(StandardCharsets.UTF_8)))
                     } catch (e: BackendDomainException) {
                         if (e.status.value >= 500) throw e
                         skipped++
@@ -170,9 +177,9 @@ internal class AppStoreProvider(
                 }
                 token = page.nextToken
                 pages++
-            } while (token != null && pages < 100)
+            } while (token != null && pages < maxPages)
             if (skipped > 0) log("store apple history: $skipped notification(s) failed verification and were skipped")
-            events
+            AppleHistoryRead(events, complete = token == null)
         }
     }
 
@@ -286,3 +293,6 @@ internal class AppStoreProvider(
  */
 internal fun appleVerificationFailure(e: VerificationException, definitive: CanonicalErrorCode): BackendDomainException =
     if (e.status == VerificationStatus.RETRYABLE_VERIFICATION_FAILURE) CanonicalErrorCode.UPSTREAM_UNAVAILABLE.exception(cause = e) else definitive.exception()
+
+/** N4-3: lo leido de Get Notification History y si se leyo ENTERO (sin `paginationToken` pendiente). */
+internal data class AppleHistoryRead(val events: List<Pair<StoreEvent, String>>, val complete: Boolean)
