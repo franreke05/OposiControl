@@ -1,0 +1,12 @@
+GET /sesion                        n=60 p50=34.6ms p95=67.9ms max=213.9ms errors=0
+GET /examenes                      n=60 p50=35.8ms p95=237.2ms max=1648.3ms errors=0
+GET /especialidades                n=60 p50=19.4ms p95=44.5ms max=68.0ms errors=0
+GET /pedidos?estado=en_revision    n=60 p50=38.1ms p95=79.7ms max=113.6ms errors=0
+GET /pedidos/en-revision/total     n=60 p50=17.5ms p95=44.2ms max=71.2ms errors=0
+GET /auditoria/movimientos         n=60 p50=27.4ms p95=87.2ms max=104.7ms errors=0
+GET /foro/cola publicacion         n=60 p50=42.0ms p95=89.1ms max=137.7ms errors=0
+GET /accesos                       n=60 p50=29.6ms p95=55.3ms max=87.3ms errors=0
+GET /examenes-economia             n=60 p50=16.5ms p95=25.9ms max=34.8ms errors=0
+GET /comercial/productos           n=60 p50=20.8ms p95=54.3ms max=67.1ms errors=0
+GET /examenes/{id}/reglas-puntuacion n=60 p50=39.1ms p95=105.1ms max=371.7ms errors=0
+GET /examenes/{id}/preguntas-oficiales n=60 p50=32.0ms p95=54.3ms max=65.0ms errors=0

@@ -1,5 +1,16 @@
 # Current State
 
+## Control panel E2E — 2026-10-20 (`develop` ae62375 + este ciclo, panel `c655116`)
+
+Estado: **CONTROL_PANEL_READY no declarado**. Las 12 funciones admin pasan de punta a punta en la capa de datos; faltan las pruebas de interfaz (en curso), la decisión sobre el rol moderador y las latencias medidas en reposo. NO APTO PARA PRODUCCIÓN mientras sigan abiertos los RB P1 (MAIN sin tocar; ningún GO aplicado).
+- **E2E de capa de datos (LIVE_VERIFIED en local aislado):** `ControlJourneysE2ETest` 12/12. Repositorios reales del panel → Ktor `control` real → PG17 (stack `oposi-control-e2e`, árbol E7 `cb50ee3`). Comprueba la base, `auditoria_log` y la matriz de roles. Evidencia: `docs/audit-v1/evidence/CONTROL-E2E/`.
+- **Corregido en el panel:** 502 de `/especialidades` con `descripcion` NULL. Hacía fallar en el panel un guardado de examen que el servidor ya había hecho, y al reintentar se duplicaba.
+- **MAIN, solo lectura (alcance autorizado):** RB-16 ampliada a 14 políticas (`news-images` vía `can_manage_content`). Nuevo RB-18 / SEC-V1-24: un moderador o admin bloqueado sigue siendo staff en RLS (migración local `20261023100300`). Las 21 tablas con RLS sin políticas son 21/21 server-only intencionales. Evidencia: `evidence/SEC-V1-01/MAIN-readonly-2026-10-20.md`.
+- **P2 local:** `20261023100400` (search_path de los triggers de `noticia`) 4/4. El índice del FK `productos_comerciales_plan_fk` no se propone (sin beneficio medible).
+- **Contrato Control↔Bot** de pedidos, reembolsos y accesos: `docs/audit-v1/CONTRACT_CONTROL_BOT_ORDERS_REFUNDS_ACCESS.md` (Q1-Q3 respondidas por Bot; la política P2 de reembolso la decide el propietario).
+- Pendiente del propietario: ¿el moderador tiene acceso al panel? (hoy 403 en todo el panel). ¿El motivo de anulación es obligatorio? Packs de Market (§15.1).
+- Pruebas: dbtest 296/0 + 4 (noticia); panel `:backend:ktor:test` 2129/0 y `:data:jvmTest` 298/0.
+
 ## Auditoría V1 ciclo 1 — 2026-10-19 (`develop` 7fb9000, v1-server 86f0da9, panel 29a019f)
 
 Estado de salida: **NO APTO PARA PRODUCCIÓN**. Entregables en `docs/audit-v1/` (SECURITY_AUDIT, API_PERFORMANCE_AUDIT,

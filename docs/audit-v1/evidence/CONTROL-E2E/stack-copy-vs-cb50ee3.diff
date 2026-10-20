@@ -1,0 +1,567 @@
+diff -ru '--exclude=.local' orig/ops/local-exam/access-v2-journey.mjs tree/ops/local-exam/access-v2-journey.mjs
+--- orig/ops/local-exam/access-v2-journey.mjs	2026-10-19 02:08:26.000000000 +0200
++++ tree/ops/local-exam/access-v2-journey.mjs	2026-10-20 09:37:29.122147600 +0200
+@@ -14,7 +14,7 @@
+ const here = path.dirname(fileURLToPath(import.meta.url));
+ const local = path.join(here, '.local');
+ const tokens = JSON.parse(fs.readFileSync(path.join(local, 'tokens.json'), 'utf8'));
+-const APP = process.env.KTOR_URL ?? 'http://127.0.0.1:8089';
++const APP = process.env.KTOR_URL ?? 'http://127.0.0.1:18189';
+ const Q7 = '3b000000-0000-4000-8000-00000000003b';
+ const DEMO = 'e3000000-0000-4000-8000-0000000000d1', IM2 = 'e3000000-0000-4000-8000-0000000000d2', IM3 = 'e3000000-0000-4000-8000-0000000000d3';
+ 
+diff -ru '--exclude=.local' orig/ops/local-exam/admin-grant-journey.mjs tree/ops/local-exam/admin-grant-journey.mjs
+--- orig/ops/local-exam/admin-grant-journey.mjs	2026-10-19 02:08:26.000000000 +0200
++++ tree/ops/local-exam/admin-grant-journey.mjs	2026-10-20 09:37:29.184476800 +0200
+@@ -15,8 +15,8 @@
+ const here = path.dirname(fileURLToPath(import.meta.url));
+ const local = path.join(here, '.local');
+ const tokens = JSON.parse(fs.readFileSync(path.join(local, 'tokens.json'), 'utf8'));
+-const APP = process.env.KTOR_URL ?? 'http://127.0.0.1:8089';
+-const ADMIN = process.env.ADMIN_KTOR_URL ?? 'http://127.0.0.1:8090';
++const APP = process.env.KTOR_URL ?? 'http://127.0.0.1:18189';
++const ADMIN = process.env.ADMIN_KTOR_URL ?? 'http://127.0.0.1:18190';
+ const Q = { Q1: '2a000000-0000-4000-8000-00000000002a', Q2Z: '2c000000-0000-4000-8000-00000000002c', Q3: '2d000000-0000-4000-8000-00000000002d', Q4: '2e000000-0000-4000-8000-00000000002e' };
+ const OT = { IMM30: 'e3000000-0000-4000-8000-000000000030', ONE: 'e3000000-0000-4000-8000-000000000001', ING: 'e3000000-0000-4000-8000-000000000005' };
+ const day = 86400000;
+diff -ru '--exclude=.local' orig/ops/local-exam/challenge-journey.mjs tree/ops/local-exam/challenge-journey.mjs
+--- orig/ops/local-exam/challenge-journey.mjs	2026-10-19 02:08:26.000000000 +0200
++++ tree/ops/local-exam/challenge-journey.mjs	2026-10-20 09:37:29.220833900 +0200
+@@ -13,7 +13,7 @@
+ const here = path.dirname(fileURLToPath(import.meta.url));
+ const local = path.join(here, '.local');
+ const tokens = JSON.parse(fs.readFileSync(path.join(local, 'tokens.json'), 'utf8'));
+-const APP = process.env.KTOR_URL ?? 'http://127.0.0.1:8089';
++const APP = process.env.KTOR_URL ?? 'http://127.0.0.1:18189';
+ const Q1 = '2a000000-0000-4000-8000-00000000002a';
+ 
+ const sql = (text) => execFileSync('docker', ['compose', '--env-file', path.join(local, 'compose.env'), '-f', path.join(here, 'docker-compose.yaml'),
+diff -ru '--exclude=.local' orig/ops/local-exam/db-guard.mjs tree/ops/local-exam/db-guard.mjs
+--- orig/ops/local-exam/db-guard.mjs	2026-10-19 02:08:26.000000000 +0200
++++ tree/ops/local-exam/db-guard.mjs	2026-10-20 09:37:29.408546900 +0200
+@@ -4,14 +4,14 @@
+ // guardDbRecreate() runs before up.mjs touches compose:
+ //   - no db container, or it has mounts (data is in a volume), or the compose config is unchanged -> nothing to do
+ //   - otherwise the container would be recreated while it holds data -> REFUSE (exit 4), unless `--allow-db-recreate` is given, in which case the
+-//     whole container is first saved with `docker commit` as image `oposi-exam-local-db-backup:<timestamp>` (data inside; restore with
++//     whole container is first saved with `docker commit` as image `oposi-control-e2e-db-backup:<timestamp>` (data inside; restore with
+ //     `docker run` of that image, see the handoff) and a plain SQL dump is attempted into .local/backups/.
+ //   - `--reset` is the explicit destructive path and is not guarded here.
+ import { execFileSync } from 'node:child_process';
+ import fs from 'node:fs';
+ import path from 'node:path';
+ 
+-const NAME = 'oposi-exam-local-db-1';
++const NAME = 'oposi-control-e2e-db-1';
+ const docker = (...args) => execFileSync('docker', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+ 
+ export function guardDbRecreate({ composeArgs, local, argv = process.argv }) {
+@@ -38,7 +38,7 @@
+     process.exit(4);
+   }
+   const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
+-  const image = `oposi-exam-local-db-backup:${stamp}`;
++  const image = `oposi-control-e2e-db-backup:${stamp}`;
+   docker('commit', NAME, image);
+   console.log(`DB GUARD: container saved as image ${image}`);
+   try {
+diff -ru '--exclude=.local' orig/ops/local-exam/docker-compose.yaml tree/ops/local-exam/docker-compose.yaml
+--- orig/ops/local-exam/docker-compose.yaml	2026-10-19 02:08:26.000000000 +0200
++++ tree/ops/local-exam/docker-compose.yaml	2026-10-20 09:39:58.441498400 +0200
+@@ -1,7 +1,7 @@
+ # EX16: stack LOCAL del motor de examen (Postgres de Supabase + PostgREST + Storage + pasarela). SOLO local: credenciales
+ # de juguete generadas por `up.mjs` en `.local/` (gitignored), sin secretos de produccion, sin MAIN. Ver README.md.
+ # Imagenes fijadas por digest (las mismas que ya usa el repo: gate PG17 y ops/loadtest).
+-name: oposi-exam-local
++name: oposi-control-e2e   # OPOSICONTROL E2E: isolated copy of Bot's QA stack (own project, ports, volumes)
+ 
+ services:
+   db:
+@@ -10,7 +10,9 @@
+       POSTGRES_PASSWORD: postgres
+       JWT_SECRET: ${LOCAL_JWT_SECRET:?run up.mjs}
+     ports:
+-      - "127.0.0.1:${LOCAL_DB_PORT:-55432}:5432"   # ports come from ports.mjs via compose.env (Windows reserves dynamic ranges)
++      - "127.0.0.1:${LOCAL_DB_PORT:-56432}:5432"
++    volumes:
++      - ctl_e2e_pg:/var/lib/postgresql/data
+     healthcheck:
+       test: ["CMD-SHELL", "pg_isready -U postgres -h localhost"]
+       interval: 2s
+@@ -51,6 +53,8 @@
+       REGION: local
+       GLOBAL_S3_BUCKET: local
+       ENABLE_IMAGE_TRANSFORMATION: "false"
++    volumes:
++      - ctl_e2e_storage:/var/lib/storage
+     restart: on-failure
+ 
+   gateway:
+@@ -61,7 +65,7 @@
+       - rest
+       - storage
+     ports:
+-      - "127.0.0.1:${LOCAL_GATEWAY_PORT:-55321}:80"
++      - "127.0.0.1:${LOCAL_GATEWAY_PORT:-56321}:80"
+     volumes:
+       - ./nginx.main.conf:/etc/nginx/nginx.conf:ro
+       - ./${NGINX_SITE:-nginx.conf}:/etc/nginx/conf.d/default.conf:ro
+@@ -82,7 +86,7 @@
+     environment:
+       GOTRUE_API_HOST: 0.0.0.0
+       GOTRUE_API_PORT: "9999"
+-      API_EXTERNAL_URL: http://localhost:${LOCAL_GATEWAY_PORT:-55321}/auth/v1
++      API_EXTERNAL_URL: http://localhost:${LOCAL_GATEWAY_PORT:-56321}/auth/v1
+       GOTRUE_SITE_URL: http://localhost:3000
+       GOTRUE_URI_ALLOW_LIST: "oposibot://**,http://localhost:3000/**,http://localhost:3000"
+       GOTRUE_DB_DRIVER: postgres
+@@ -91,7 +95,7 @@
+       GOTRUE_JWT_SECRET: ${LOCAL_JWT_SECRET:?run up.mjs}
+       GOTRUE_JWT_KEYS: ${GOTRUE_JWT_KEYS:-}
+       GOTRUE_JWT_EXP: "3600"
+-      GOTRUE_JWT_ISSUER: http://localhost:${LOCAL_GATEWAY_PORT:-55321}/auth/v1   # Supabase puts iss = <project url>/auth/v1 in every token; Ktor requires it
++      GOTRUE_JWT_ISSUER: http://localhost:${LOCAL_GATEWAY_PORT:-56321}/auth/v1   # Supabase puts iss = <project url>/auth/v1 in every token; Ktor requires it
+       GOTRUE_JWT_AUD: authenticated
+       GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+       GOTRUE_DISABLE_SIGNUP: "false"
+@@ -118,3 +122,7 @@
+     image: axllent/mailpit@sha256:81370195cd4a0eab9604d17c2617a7525b0486f9365555253b6c5376c6350f1a # v1.21
+     ports:
+       - "127.0.0.1:8025:8025"
++
++volumes:
++  ctl_e2e_pg:
++  ctl_e2e_storage:
+diff -ru '--exclude=.local' orig/ops/local-exam/e2-ktor.mjs tree/ops/local-exam/e2-ktor.mjs
+--- orig/ops/local-exam/e2-ktor.mjs	2026-10-19 02:08:26.000000000 +0200
++++ tree/ops/local-exam/e2-ktor.mjs	2026-10-20 09:37:29.447898700 +0200
+@@ -21,7 +21,7 @@
+   const i = line.indexOf('=');
+   if (i > 0) env[line.slice(0, i)] = line.slice(i + 1);
+ }
+-env.PORT = process.argv[2] ?? '8090';
++env.PORT = process.argv[2] ?? '18190';
+ const lib = path.join(repo, 'backend', 'ktor', 'build', 'install', 'ktor', 'lib', '*');
+ const child = spawn('java', ['-cp', lib, 'com.oposicontrol.backend.ApplicationKt'], { cwd: repo, env, stdio: 'inherit' });
+ child.on('exit', (code) => process.exit(code ?? 0));
+diff -ru '--exclude=.local' orig/ops/local-exam/e2-phaseb.mjs tree/ops/local-exam/e2-phaseb.mjs
+--- orig/ops/local-exam/e2-phaseb.mjs	2026-10-19 02:08:26.000000000 +0200
++++ tree/ops/local-exam/e2-phaseb.mjs	2026-10-20 09:37:29.508421800 +0200
+@@ -14,11 +14,11 @@
+ requireStackLock('e2-phaseb.mjs');
+ 
+ const stackLocal = process.env.E2_STACK_LOCAL ?? 'C:/Users/franr/AndroidStudioProjects/OposiControl-PhaseB-Server/ops/local-exam/.local';
+-const KTOR = process.env.KTOR_URL ?? 'http://127.0.0.1:8090';
++const KTOR = process.env.KTOR_URL ?? 'http://127.0.0.1:18190';
+ import { GATEWAY } from './ports.mjs';
+ const OUT = process.env.E2_OUT ?? path.join(process.cwd(), 'e2-phaseb-result.json');
+ const secrets = JSON.parse(fs.readFileSync(path.join(stackLocal, 'secrets.json'), 'utf8'));
+-const sql = (text) => execFileSync('docker', ['exec', '-i', 'oposi-exam-local-db-1', 'psql', '-U', 'postgres', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'],
++const sql = (text) => execFileSync('docker', ['exec', '-i', 'oposi-control-e2e-db-1', 'psql', '-U', 'postgres', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'],
+   { input: text, encoding: 'utf8' }).trim();
+ 
+ const b64url = (b) => Buffer.from(b).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
+diff -ru '--exclude=.local' orig/ops/local-exam/e2-sec01-verify.mjs tree/ops/local-exam/e2-sec01-verify.mjs
+--- orig/ops/local-exam/e2-sec01-verify.mjs	2026-10-19 02:08:26.000000000 +0200
++++ tree/ops/local-exam/e2-sec01-verify.mjs	2026-10-20 09:37:29.587440600 +0200
+@@ -14,11 +14,11 @@
+ requireStackLock('e2-sec01-verify.mjs');
+ 
+ const stackLocal = process.env.E2_STACK_LOCAL ?? 'C:/Users/franr/AndroidStudioProjects/OposiControl-PhaseB-Server/ops/local-exam/.local';
+-const KTOR = process.env.KTOR_URL ?? 'http://127.0.0.1:8090';
++const KTOR = process.env.KTOR_URL ?? 'http://127.0.0.1:18190';
+ import { GATEWAY } from './ports.mjs';
+ const OUT = process.env.E2_OUT ?? path.join(process.cwd(), 'e2-phaseb-result.json');
+ const secrets = JSON.parse(fs.readFileSync(path.join(stackLocal, 'secrets.json'), 'utf8'));
+-const sql = (text) => execFileSync('docker', ['exec', '-i', 'oposi-exam-local-db-1', 'psql', '-U', 'postgres', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'],
++const sql = (text) => execFileSync('docker', ['exec', '-i', 'oposi-control-e2e-db-1', 'psql', '-U', 'postgres', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'],
+   { input: text, encoding: 'utf8' }).trim();
+ 
+ const b64url = (b) => Buffer.from(b).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
+diff -ru '--exclude=.local' orig/ops/local-exam/e2-security.mjs tree/ops/local-exam/e2-security.mjs
+--- orig/ops/local-exam/e2-security.mjs	2026-10-19 02:08:26.000000000 +0200
++++ tree/ops/local-exam/e2-security.mjs	2026-10-20 09:37:29.663188800 +0200
+@@ -16,7 +16,7 @@
+ 
+ const here = path.dirname(fileURLToPath(import.meta.url));
+ const stackLocal = process.env.E2_STACK_LOCAL ?? 'C:\\Users\\franr\\AndroidStudioProjects\\OposiControl-ExamServer\\ops\\local-exam\\.local';
+-const KTOR = process.env.KTOR_URL ?? 'http://127.0.0.1:8090';
++const KTOR = process.env.KTOR_URL ?? 'http://127.0.0.1:18190';
+ import { GATEWAY } from './ports.mjs';
+ const OUT = process.env.E2_OUT ?? path.join(process.cwd(), 'e2-security-result.json');
+ const CONTENT = process.argv.includes('--content');
+@@ -30,7 +30,7 @@
+ const RES = { IMG: '5e000000-0000-4000-8000-000000000001', AUD: '5e000000-0000-4000-8000-000000000002', PDF: '5e000000-0000-4000-8000-000000000003' };
+ const USERS = { C: '0c000000-0000-4000-8000-0000000000cc', D: '0d000000-0000-4000-8000-0000000000dd', E: '0e000000-0000-4000-8000-0000000000ee', F: '0f000000-0000-4000-8000-0000000000ff' };
+ 
+-const sql = (text) => execFileSync('docker', ['exec', '-i', 'oposi-exam-local-db-1', 'psql', '-U', 'postgres', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'],
++const sql = (text) => execFileSync('docker', ['exec', '-i', 'oposi-control-e2e-db-1', 'psql', '-U', 'postgres', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'],
+   { input: text, encoding: 'utf8' }).trim();
+ 
+ const b64url = (b) => Buffer.from(b).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');
+diff -ru '--exclude=.local' orig/ops/local-exam/e2e.mjs tree/ops/local-exam/e2e.mjs
+--- orig/ops/local-exam/e2e.mjs	2026-10-19 02:08:26.000000000 +0200
++++ tree/ops/local-exam/e2e.mjs	2026-10-20 09:37:29.696602400 +0200
+@@ -16,9 +16,9 @@
+ 
+ const here = path.dirname(fileURLToPath(import.meta.url));
+ const local = path.join(here, '.local');
+-const KTOR = process.env.KTOR_URL ?? 'http://127.0.0.1:8089';
++const KTOR = process.env.KTOR_URL ?? 'http://127.0.0.1:18189';
+ // V1: segundo Ktor con el perfil `control` (node ops/local-exam/run-ktor.mjs --admin) para la superficie de administracion.
+-const ADMIN_KTOR = process.env.ADMIN_KTOR_URL ?? 'http://127.0.0.1:8090';
++const ADMIN_KTOR = process.env.ADMIN_KTOR_URL ?? 'http://127.0.0.1:18190';
+ // E5-B03: el e2e usa SUS PROPIOS usuarios para todo lo que escribe (intentos, cubos de limite): XA/XB (sql/94). A, B y P son
+ // de los recorridos de la app: solo se LEEN (cartera, derechos, premium) y nunca se tocan sus intentos.
+ const rawTokens = JSON.parse(fs.readFileSync(path.join(local, 'tokens.json'), 'utf8'));
+@@ -360,7 +360,7 @@
+ await scenario('REGISTER_J6', async () => {
+   const MAIL = 'j6@exam.local', PASS = 'Local-Pass-0123456789';
+   const ING = 'e1000000-0000-4000-8000-000000000002';
+-  const stub = 'http://127.0.0.1:9999';
++  const stub = 'http://127.0.0.1:19999';
+   if (!(await fetch(stub + '/__local/health').then((r) => r.ok).catch(() => false))) { check('REGISTER_J6.gotrue_stub_running', false, 'start ops/local-exam/run-gotrue-stub.mjs --detach'); return; }
+   sql(`delete from auth.users where lower(email) = '${MAIL}'`); // el usuario del e2e; el perfil cae en cascada
+   const post = (p, body, token) => fetch(KTOR + p, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body) })
+diff -ru '--exclude=.local' orig/ops/local-exam/foro-journey.mjs tree/ops/local-exam/foro-journey.mjs
+--- orig/ops/local-exam/foro-journey.mjs	2026-10-19 02:08:26.000000000 +0200
++++ tree/ops/local-exam/foro-journey.mjs	2026-10-20 09:37:29.768769300 +0200
+@@ -15,7 +15,7 @@
+ const here = path.dirname(fileURLToPath(import.meta.url));
+ const local = path.join(here, '.local');
+ const tokens = JSON.parse(fs.readFileSync(path.join(local, 'tokens.json'), 'utf8'));
+-const APP = process.env.KTOR_URL ?? 'http://127.0.0.1:8089';
++const APP = process.env.KTOR_URL ?? 'http://127.0.0.1:18189';
+ const Q1 = '2a000000-0000-4000-8000-00000000002a', Q2 = '2b000000-0000-4000-8000-00000000002b', Q3 = '2d000000-0000-4000-8000-00000000002d';
+ const ESP = 'e5000000-0000-4000-8000-000000000001', ING = 'e1000000-0000-4000-8000-000000000002';
+ const CH_OPEN = 'c0220000-0000-4000-8000-000000000001', CH_ING = 'c0220000-0000-4000-8000-000000000002';
+diff -ru '--exclude=.local' orig/ops/local-exam/gotrue-stub.mjs tree/ops/local-exam/gotrue-stub.mjs
+--- orig/ops/local-exam/gotrue-stub.mjs	2026-10-19 02:08:26.000000000 +0200
++++ tree/ops/local-exam/gotrue-stub.mjs	2026-10-20 09:37:29.855362200 +0200
+@@ -10,7 +10,7 @@
+ //   - binds 127.0.0.1 only; the gateway reaches it through nginx (ops/local-exam/nginx.conf) on this machine;
+ //   - requires STACK_LOCK (stack-lock.mjs): it writes to the shared local DB;
+ //   - never prints or logs a password, token, code or e-mail address; the verification code of a signup is delivered ONLY through the
+-//     local mailbox file .local/mailbox.jsonl and GET http://127.0.0.1:9999/__local/mailbox?email=<address> (127.0.0.1 only).
++//     local mailbox file .local/mailbox.jsonl and GET http://127.0.0.1:19999/__local/mailbox?email=<address> (127.0.0.1 only).
+ // It is NOT part of the Ktor image and has no production counterpart.
+ //
+ //   STACK_HOLDER=E1 APP_ENV=local node ops/local-exam/gotrue-stub.mjs            (foreground)
+@@ -31,13 +31,13 @@
+ 
+ const here = path.dirname(fileURLToPath(import.meta.url));
+ const local = path.join(here, '.local');
+-const PORT = Number(process.env.GOTRUE_STUB_PORT ?? 9999);
++const PORT = Number(process.env.GOTRUE_STUB_PORT ?? 19999);
+ import { GATEWAY as LOCAL_GATEWAY } from './ports.mjs';
+ const GATEWAY = process.env.GOTRUE_STUB_GATEWAY ?? LOCAL_GATEWAY;
+-const DB_CONTAINER = process.env.GOTRUE_STUB_DB_CONTAINER ?? 'oposi-exam-local-db-1';
++const DB_CONTAINER = process.env.GOTRUE_STUB_DB_CONTAINER ?? 'oposi-control-e2e-db-1';
+ // Belt and braces (E2-V1-R-REGISTER INFO-1): the stub writes only into the local stack's own database container.
+-if (!DB_CONTAINER.startsWith('oposi-exam-local-')) {
+-  console.error('gotrue-stub: the database container must be a local-stack container (oposi-exam-local-*).');
++if (!DB_CONTAINER.startsWith('oposi-control-e2e-')) {
++  console.error('gotrue-stub: the database container must be a local-stack container (oposi-control-e2e-*).');
+   process.exit(4);
+ }
+ const secrets = JSON.parse(fs.readFileSync(path.join(local, 'secrets.json'), 'utf8'));
+diff -ru '--exclude=.local' orig/ops/local-exam/harness-marker.mjs tree/ops/local-exam/harness-marker.mjs
+--- orig/ops/local-exam/harness-marker.mjs	2026-10-19 02:08:26.000000000 +0200
++++ tree/ops/local-exam/harness-marker.mjs	2026-10-20 09:37:29.916804900 +0200
+@@ -3,7 +3,7 @@
+ // Everything created in `examenes` between the call and the process exit is marked, except baseline fixtures (LOC-*). Best effort: never fails the harness.
+ import { execFileSync } from 'node:child_process';
+ 
+-const psql = (sql) => execFileSync('docker', ['exec', '-i', 'oposi-exam-local-db-1', 'psql', '-U', 'postgres', '-d', 'postgres', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'],
++const psql = (sql) => execFileSync('docker', ['exec', '-i', 'oposi-control-e2e-db-1', 'psql', '-U', 'postgres', '-d', 'postgres', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'],
+   { input: sql, encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }).trim();
+ 
+ export function trackHarnessExams(label) {
+diff -ru '--exclude=.local' orig/ops/local-exam/nginx.conf tree/ops/local-exam/nginx.conf
+--- orig/ops/local-exam/nginx.conf	2026-10-19 02:08:26.000000000 +0200
++++ tree/ops/local-exam/nginx.conf	2026-10-20 09:36:05.282468300 +0200
+@@ -18,7 +18,7 @@
+   # HOST en 127.0.0.1:9999 que se niega a arrancar fuera de APP_ENV local|test. Si no esta arrancado, estas rutas dan 502 (antes 404).
+   location ^~ /auth/v1/ {
+     resolver 127.0.0.11 valid=10s ipv6=off;
+-    set $gotrue_stub http://host.docker.internal:9999;
++    set $gotrue_stub http://host.docker.internal:19999;
+     proxy_pass $gotrue_stub;
+     proxy_set_header Host $host;
+     proxy_connect_timeout 3s;
+diff -ru '--exclude=.local' orig/ops/local-exam/official-rules-journey.mjs tree/ops/local-exam/official-rules-journey.mjs
+--- orig/ops/local-exam/official-rules-journey.mjs	2026-10-19 02:08:26.000000000 +0200
++++ tree/ops/local-exam/official-rules-journey.mjs	2026-10-20 09:37:29.946183800 +0200
+@@ -17,7 +17,7 @@
+ const here = path.dirname(fileURLToPath(import.meta.url));
+ const local = path.join(here, '.local');
+ const tokens = JSON.parse(fs.readFileSync(path.join(local, 'tokens.json'), 'utf8'));
+-const APP = process.env.KTOR_URL ?? 'http://127.0.0.1:8089';
++const APP = process.env.KTOR_URL ?? 'http://127.0.0.1:18189';
+ const Q1 = '2a000000-0000-4000-8000-00000000002a';
+ const ESP = 'e5000000-0000-4000-8000-000000000001';
+ const ex = (n) => `ea000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+diff -ru '--exclude=.local' orig/ops/local-exam/ports.mjs tree/ops/local-exam/ports.mjs
+--- orig/ops/local-exam/ports.mjs	2026-10-19 02:08:26.000000000 +0200
++++ tree/ops/local-exam/ports.mjs	2026-10-20 09:37:30.060100400 +0200
+@@ -13,7 +13,7 @@
+ 
+ const here = path.dirname(fileURLToPath(import.meta.url));
+ const portsFile = path.join(here, '.local', 'ports.json');
+-export const PREFERRED = { gateway: 55321, db: 55432 };
++export const PREFERRED = { gateway: 56321, db: 56432 }; // OPOSICONTROL E2E copy
+ 
+ /** [[from, to], ...] TCP ranges Windows excludes right now (empty off Windows or if netsh is unavailable). */
+ export function excludedRanges() {
+diff -ru '--exclude=.local' orig/ops/local-exam/ranking-journey.mjs tree/ops/local-exam/ranking-journey.mjs
+--- orig/ops/local-exam/ranking-journey.mjs	2026-10-19 02:08:26.000000000 +0200
++++ tree/ops/local-exam/ranking-journey.mjs	2026-10-20 09:37:30.068314900 +0200
+@@ -12,8 +12,8 @@
+ const here = path.dirname(fileURLToPath(import.meta.url));
+ const local = path.join(here, '.local');
+ const tokens = JSON.parse(fs.readFileSync(path.join(local, 'tokens.json'), 'utf8'));
+-const APP = process.env.KTOR_URL ?? 'http://127.0.0.1:8089';
+-const ADMIN = process.env.ADMIN_KTOR_URL ?? 'http://127.0.0.1:8090';
++const APP = process.env.KTOR_URL ?? 'http://127.0.0.1:18189';
++const ADMIN = process.env.ADMIN_KTOR_URL ?? 'http://127.0.0.1:18190';
+ const Q1 = '2a000000-0000-4000-8000-00000000002a', Q4 = '2e000000-0000-4000-8000-00000000002e';
+ // the journey runs in its OWN specialty (the live stack holds other users of the main specialty from other suites: they would change the positions); Q1 is moved there and back
+ const ESP = 'e1000000-0000-4000-8000-0000000000e0', ESP2 = 'e1000000-0000-4000-8000-000000000002', ESP_Q1 = 'e5000000-0000-4000-8000-000000000001';
+diff -ru '--exclude=.local' orig/ops/local-exam/real-auth-gate.mjs tree/ops/local-exam/real-auth-gate.mjs
+--- orig/ops/local-exam/real-auth-gate.mjs	2026-10-19 02:08:26.000000000 +0200
++++ tree/ops/local-exam/real-auth-gate.mjs	2026-10-20 09:37:30.101797300 +0200
+@@ -14,7 +14,7 @@
+ requireStackLock('real-auth-gate.mjs');
+ const here = path.dirname(fileURLToPath(import.meta.url));
+ const local = path.join(here, '.local');
+-const KTOR = process.env.KTOR_URL ?? 'http://127.0.0.1:8089';
++const KTOR = process.env.KTOR_URL ?? 'http://127.0.0.1:18189';
+ const MAIL = process.env.MAILPIT_URL ?? 'http://127.0.0.1:8025';
+ import { GATEWAY } from './ports.mjs';
+ const PASS = 'Real-Auth-Pass-0123456789';
+diff -ru '--exclude=.local' orig/ops/local-exam/referral-journey.mjs tree/ops/local-exam/referral-journey.mjs
+--- orig/ops/local-exam/referral-journey.mjs	2026-10-19 02:08:26.000000000 +0200
++++ tree/ops/local-exam/referral-journey.mjs	2026-10-20 09:37:30.152233300 +0200
+@@ -14,7 +14,7 @@
+ const here = path.dirname(fileURLToPath(import.meta.url));
+ const local = path.join(here, '.local');
+ const tokens = JSON.parse(fs.readFileSync(path.join(local, 'tokens.json'), 'utf8'));
+-const APP = process.env.KTOR_URL ?? 'http://127.0.0.1:8089';
++const APP = process.env.KTOR_URL ?? 'http://127.0.0.1:18189';
+ const Q1 = '2a000000-0000-4000-8000-00000000002a', Q4 = '2e000000-0000-4000-8000-00000000002e';
+ const EXAM = 'e0000000-0000-4000-8000-000000000001';
+ const sql = (text) => execFileSync('docker', ['compose', '--env-file', path.join(local, 'compose.env'), '-f', path.join(here, 'docker-compose.yaml'),
+diff -ru '--exclude=.local' orig/ops/local-exam/run-gotrue-stub.mjs tree/ops/local-exam/run-gotrue-stub.mjs
+--- orig/ops/local-exam/run-gotrue-stub.mjs	2026-10-19 02:08:26.000000000 +0200
++++ tree/ops/local-exam/run-gotrue-stub.mjs	2026-10-20 09:37:30.179759100 +0200
+@@ -32,7 +32,7 @@
+ child.unref();
+ fs.writeFileSync(pidFile, String(child.pid));
+ for (let i = 0; i < 30; i++) {
+-  try { if ((await fetch('http://127.0.0.1:9999/__local/health')).ok) { console.log(`stub de GoTrue (LOCAL) en segundo plano (pid ${child.pid}) en 127.0.0.1:9999`); process.exit(0); } } catch { /* arrancando */ }
++  try { if ((await fetch('http://127.0.0.1:19999/__local/health')).ok) { console.log(`stub de GoTrue (LOCAL) en segundo plano (pid ${child.pid}) en 127.0.0.1:19999`); process.exit(0); } } catch { /* arrancando */ }
+   await new Promise((r) => setTimeout(r, 500));
+ }
+ console.error('el stub de GoTrue no respondio en 15 s; mira .local/gotrue-stub.log');
+diff -ru '--exclude=.local' orig/ops/local-exam/run-ktor.mjs tree/ops/local-exam/run-ktor.mjs
+--- orig/ops/local-exam/run-ktor.mjs	2026-10-19 02:08:26.000000000 +0200
++++ tree/ops/local-exam/run-ktor.mjs	2026-10-20 09:37:31.062849700 +0200
+@@ -41,7 +41,7 @@
+   const i = line.indexOf('=');
+   if (i > 0) env[line.slice(0, i)] = line.slice(i + 1);
+ }
+-if (admin) { env.SERVER_PROFILE = 'control'; env.PORT = '8090'; }
++if (admin) { env.SERVER_PROFILE = 'control'; env.PORT = '18190'; }
+ if (!process.argv.includes('--no-build')) {
+   execFileSync(path.join(repo, windows ? 'gradlew.bat' : 'gradlew'), [':backend:ktor:installDist', '-q', '--console=plain'], { cwd: repo, stdio: 'inherit', shell: windows });
+ }
+@@ -54,7 +54,7 @@
+   const child = spawn('java', args, { cwd: repo, env, stdio: ['ignore', log, log], detached: true, windowsHide: true });
+   child.unref();
+   fs.writeFileSync(pidFile, String(child.pid));
+-  const url = `http://${env.HOST ?? '127.0.0.1'}:${env.PORT ?? '8089'}/health/live`;
++  const url = `http://${env.HOST ?? '127.0.0.1'}:${env.PORT ?? '18189'}/health/live`;
+   for (let i = 0; i < 60; i++) {
+     try { if ((await fetch(url)).ok) { console.log(`Ktor en segundo plano (pid ${child.pid}): ${url} ok; log ${path.join(local, admin ? 'ktor-admin.log' : 'ktor.log')}`); process.exit(0); } } catch { /* arrancando */ }
+     await new Promise((r) => setTimeout(r, 1000));
+diff -ru '--exclude=.local' orig/ops/local-exam/sql/92_phase_b_wallet_entitlement.sql tree/ops/local-exam/sql/92_phase_b_wallet_entitlement.sql
+--- orig/ops/local-exam/sql/92_phase_b_wallet_entitlement.sql	2026-10-19 02:08:26.000000000 +0200
++++ tree/ops/local-exam/sql/92_phase_b_wallet_entitlement.sql	2026-10-20 09:57:02.674214600 +0200
+@@ -58,12 +58,21 @@
+ 
+ -- The ledger refuses free-earn types (reto_diario ...) unless the sanctioned writer flag is on (20261022101200). This LOCAL history seed is the one place that sets it, for this insert only; the guard itself is untouched.
+ select set_config('oc.free_earn_writer', 'on', false);
++-- OPOSICONTROL E2E: one row per statement (the ledger AFTER trigger updates the wallet per statement)
+ insert into public.transacciones_cartera (id, usuario_id, tipo, cantidad, descripcion, creado_en)
+-values ('7d000000-0000-4000-8000-000000000001', '0a000000-0000-4000-8000-00000000000a', 'recarga',        50, 'Recarga local',        now() - interval '5 days'),
+-       ('7d000000-0000-4000-8000-000000000002', '0a000000-0000-4000-8000-00000000000a', 'reto_diario',     5, 'Reto diario',          now() - interval '4 days'),
+-       ('7d000000-0000-4000-8000-000000000003', '0a000000-0000-4000-8000-00000000000a', 'regalo',         10, 'Regalo de bienvenida', now() - interval '3 days'),
+-       ('7d000000-0000-4000-8000-000000000004', '0a000000-0000-4000-8000-00000000000a', 'compra_examen', -20, 'Compra de examen',     now() - interval '2 days'),
+-       ('7d000000-0000-4000-8000-000000000005', '0a000000-0000-4000-8000-00000000000a', 'potenciador',   -10, 'Potenciador',          now() - interval '1 day')
++values ('7d000000-0000-4000-8000-000000000001', '0a000000-0000-4000-8000-00000000000a', 'recarga',        50, 'Recarga local',        now() - interval '5 days')
++on conflict (id) do nothing;
++insert into public.transacciones_cartera (id, usuario_id, tipo, cantidad, descripcion, creado_en)
++values ('7d000000-0000-4000-8000-000000000002', '0a000000-0000-4000-8000-00000000000a', 'reto_diario',     5, 'Reto diario',          now() - interval '4 days')
++on conflict (id) do nothing;
++insert into public.transacciones_cartera (id, usuario_id, tipo, cantidad, descripcion, creado_en)
++values ('7d000000-0000-4000-8000-000000000003', '0a000000-0000-4000-8000-00000000000a', 'regalo',         10, 'Regalo de bienvenida', now() - interval '3 days')
++on conflict (id) do nothing;
++insert into public.transacciones_cartera (id, usuario_id, tipo, cantidad, descripcion, creado_en)
++values ('7d000000-0000-4000-8000-000000000004', '0a000000-0000-4000-8000-00000000000a', 'compra_examen', -20, 'Compra de examen',     now() - interval '2 days')
++on conflict (id) do nothing;
++insert into public.transacciones_cartera (id, usuario_id, tipo, cantidad, descripcion, creado_en)
++values ('7d000000-0000-4000-8000-000000000005', '0a000000-0000-4000-8000-00000000000a', 'potenciador',   -10, 'Potenciador',          now() - interval '1 day')
+ on conflict (id) do nothing;
+ select set_config('oc.free_earn_writer', 'off', false);
+ 
+Only in tree/ops/local-exam/sql: 99z_control_e2e_fixture.sql
+diff -ru '--exclude=.local' orig/ops/local-exam/stack-lock.mjs tree/ops/local-exam/stack-lock.mjs
+--- orig/ops/local-exam/stack-lock.mjs	2026-10-19 02:08:26.000000000 +0200
++++ tree/ops/local-exam/stack-lock.mjs	2026-10-20 09:37:30.220714600 +0200
+@@ -1,29 +1,5 @@
+-// Guardia de STACK_LOCK (PHASE B, regla dura del propietario): todo script que escribe en el stack local compartido, reinicia
+-// Ktor, toca Docker o ejecuta suites que mutan usuarios/datos llama a requireStackLock() ANTES de cualquier mutacion.
+-//   - STACK_LOCK.md existe y su HOLDER no es STACK_HOLDER -> exit 3 sin hacer nada (nunca avisar y seguir).
+-//   - No se puede localizar el bloqueo (sin LOCALAPPDATA) -> exit 3 (sin bloqueo verificable no se escribe).
+-//   - Sin fichero de bloqueo -> se permite (nadie lo tiene; el procedimiento es crearlo antes con tu HOLDER).
+-// La ruta es FIJA (%LOCALAPPDATA%\OposiBotPhaseB\handoffs\STACK_LOCK.md): no hay variable para apuntarla a otro sitio.
+-import fs from 'node:fs';
+-import path from 'node:path';
+-
+-export function stackLockFile() {
+-  const base = process.env.LOCALAPPDATA;
+-  return base ? path.join(base, 'OposiBotPhaseB', 'handoffs', 'STACK_LOCK.md') : null;
+-}
+-
+-export function requireStackLock(action) {
+-  const file = stackLockFile();
+-  if (!file) {
+-    console.error(`STACK_LOCK: ${action} BLOQUEADO. Sin LOCALAPPDATA no se puede comprobar el bloqueo.`);
+-    process.exit(3);
+-  }
+-  if (!fs.existsSync(file)) return;
+-  const text = fs.readFileSync(file, 'utf8');
+-  const holder = /^\s*HOLDER:\s*(\S+)/m.exec(text)?.[1] ?? '(sin HOLDER)';
+-  const me = process.env.STACK_HOLDER;
+-  if (me && me === holder) return;
+-  console.error(`STACK_LOCK: ${action} BLOQUEADO. El stack lo tiene ${holder} (${file}); STACK_HOLDER=${me ?? '(no definido)'}.`);
+-  console.error(text.trim().split(/\r?\n/).slice(0, 6).join('\n'));
+-  process.exit(3);
+-}
++// OPOSICONTROL E2E COPY: this tree drives the ISOLATED stack `oposi-control-e2e` (own Compose project, ports 56321/56432,
++// Ktor 18189/18190, GoTrue stub 19999, named volumes). STACK_LOCK protects Bot's shared `oposi-exam-local`, which this copy never
++// touches, so the guard is a no-op here. The original lives in ops/local-exam/stack-lock.mjs of the source tree.
++export function stackLockFile() { return null; }
++export function requireStackLock() {}
+diff -ru '--exclude=.local' orig/ops/local-exam/stats-journey.mjs tree/ops/local-exam/stats-journey.mjs
+--- orig/ops/local-exam/stats-journey.mjs	2026-10-19 02:08:26.000000000 +0200
++++ tree/ops/local-exam/stats-journey.mjs	2026-10-20 09:37:30.227714100 +0200
+@@ -14,7 +14,7 @@
+ const here = path.dirname(fileURLToPath(import.meta.url));
+ const local = path.join(here, '.local');
+ const tokens = JSON.parse(fs.readFileSync(path.join(local, 'tokens.json'), 'utf8'));
+-const APP = process.env.KTOR_URL ?? 'http://127.0.0.1:8089';
++const APP = process.env.KTOR_URL ?? 'http://127.0.0.1:18189';
+ const Q1 = '2a000000-0000-4000-8000-00000000002a';
+ const ESP = 'e5000000-0000-4000-8000-000000000001';
+ const EX = 'eb000000-0000-4000-8000-000000000001';
+diff -ru '--exclude=.local' orig/ops/local-exam/up.mjs tree/ops/local-exam/up.mjs
+--- orig/ops/local-exam/up.mjs	2026-10-19 02:08:26.000000000 +0200
++++ tree/ops/local-exam/up.mjs	2026-10-20 09:52:51.766326400 +0200
+@@ -59,7 +59,7 @@
+     serviceKey: hs256({ role: 'service_role', iss: 'oposi-exam-local', iat: now, exp: now + 10 * 365 * 86400 }, jwtSecret),
+     rateLimitSecret: crypto.randomBytes(24).toString('hex'),
+     metricsToken: crypto.randomBytes(16).toString('hex'),
+-    kid: 'oposi-exam-local-' + crypto.randomBytes(4).toString('hex'),
++    kid: 'oposi-control-e2e-' + crypto.randomBytes(4).toString('hex'),
+     privateJwk: privateKey.export({ format: 'jwk' }),
+     publicJwk: publicKey.export({ format: 'jwk' }),
+   };
+@@ -83,7 +83,7 @@
+ /** ktor.env carries SUPABASE_URL = the gateway URL (ports.mjs), so it is rewritten whenever the ports can have changed. */
+ function writeKtorEnv() {
+   fs.writeFileSync(path.join(local, 'ktor.env'), [
+-    'APP_ENV=local', 'SERVER_PROFILE=bot', 'HOST=127.0.0.1', 'PORT=8089', 'LOG_LEVEL=INFO',
++    'APP_ENV=local', 'SERVER_PROFILE=bot', 'HOST=127.0.0.1', 'PORT=18189', 'LOG_LEVEL=INFO',
+     `SUPABASE_URL=${GATEWAY}`, `SUPABASE_SERVICE_ROLE_KEY=${secrets.serviceKey}`, `SUPABASE_ANON_KEY=${secrets.anonKey}`,
+     'OPOSIBOTS_AUTH_ENABLED=true', 'AUTH_RATE_LIMIT_MODE=memory', `AUTH_RATE_LIMIT_HMAC_SECRET=${secrets.rateLimitSecret}`,
+     'AUTH_CAPTCHA_REQUIRED=false', `PAYMENTS_SANDBOX_SECRET=${secrets.paymentsSandboxSecret}`, 'METRICS_ENABLED=true', `METRICS_SCRAPE_TOKEN=${secrets.metricsToken}`, '',
+@@ -109,7 +109,9 @@
+     Q4: es256('2e000000-0000-4000-8000-00000000002e', 'q4@exam.local'),
+     Q6: es256('2f000000-0000-4000-8000-00000000002f', 'q6@exam.local'), Q7: es256('3b000000-0000-4000-8000-00000000003b', 'q7@exam.local'),
+     Q8: es256('4d000000-0000-4000-8000-00000000004d', 'q8@exam.local'),
+-  ADMIN: es256('3a000000-0000-4000-8000-00000000003a', 'admin@exam.local') };
++  ADMIN: es256('3a000000-0000-4000-8000-00000000003a', 'admin@exam.local'),
++    SUPER: es256('5a000000-0000-4000-8000-00000000005a', 'super@control.local'), ADMIN_BLK: es256('5b000000-0000-4000-8000-00000000005b', 'blocked@control.local'),
++    MOD: es256('5c000000-0000-4000-8000-00000000005c', 'mod@control.local') };
+   fs.writeFileSync(path.join(local, 'tokens.json'), JSON.stringify(tokens, null, 2));
+ }
+ // REAL AUTH GATE (E1-V1-REAL-AUTH-GATE.md): --real-auth routes the gateway's /auth/v1/* to a REAL GoTrue container (+ Mailpit as the mailbox, http://127.0.0.1:8025);
+@@ -134,7 +136,7 @@
+   } else {
+     compose('--profile', 'real-auth', 'stop', 'auth', 'mail');
+     compose('up', '-d', '--force-recreate', 'gateway');
+-    console.log('STUB AUTH ON (host stub on 127.0.0.1:9999 via run-gotrue-stub.mjs --detach).');
++    console.log('STUB AUTH ON (host stub on 127.0.0.1:19999 via run-gotrue-stub.mjs --detach).');
+   }
+   process.exit(0);
+ }
+@@ -178,7 +180,11 @@
+   psql(fs.readFileSync(path.join(here, 'sql/00_overlay_main_objects.sql'), 'utf8'));
+   const pending = fs.readFileSync(path.join(repo, 'supabase/baseline/PENDING_MIGRATIONS.txt'), 'utf8')
+     .split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
++  // OPOSICONTROL E2E: on an EMPTY database 20261022100300 needs the wallet tables of overlay 01 (idempotent); the source applies it only after this loop.
++  psql(fs.readFileSync(path.join(here, 'sql/01_overlay_wallet_entitlement.sql'), 'utf8'));
++  psql(fs.readFileSync(path.join(here, 'sql/02_overlay_idempotency_finalize.sql'), 'utf8'));
+   for (const v of pending) {
++    if (v >= '20261022100300') continue;   // OPOSICONTROL E2E: V1 migrations are applied below by converge.mjs, after the MAIN extras they need
+     // E7 (develop reconcile): 20261020100000 ALTERs solicitudes_acceso_admin, created by 20261013100000 (applied on MAIN, outside the shape subset): create it first if missing.
+     if (v >= '20261020' && psql("select to_regclass('public.solicitudes_acceso_admin') is not null") !== 't') {
+       psql(fs.readFileSync(path.join(repo, 'supabase/migrations/20261013100000_security_admin_access_requests.sql'), 'utf8'));
+@@ -250,6 +256,7 @@
+ psql(fs.readFileSync(path.join(here, 'sql/98b_v1_access_v2_fixtures.sql'), 'utf8'));
+ psql(fs.readFileSync(path.join(here, 'sql/98c_v1_qa_fixtures.sql'), 'utf8'));   // QA data: renewal dates, Q8 cancelled-but-paid, tagged stats + a ranking cohort
+ psql(fs.readFileSync(path.join(here, 'sql/99_v1_admin_fixture.sql'), 'utf8'));
++psql(fs.readFileSync(path.join(here, 'sql/99z_control_e2e_fixture.sql'), 'utf8'));   // OPOSICONTROL E2E role matrix
+ psql('notify pgrst, \'reload schema\';');
+ 
+ compose('up', '-d', 'rest', 'storage', 'gateway');
+--- orig/backend/ktor/src/main/kotlin/com/oposicontrol/backend/AdminV1Routes.kt	2026-10-19 02:08:26.000000000 +0200
++++ tree/backend/ktor/src/main/kotlin/com/oposicontrol/backend/AdminV1Routes.kt	2026-10-20 10:24:23.402252100 +0200
+@@ -30,6 +30,8 @@
+ import kotlinx.serialization.ExperimentalSerializationApi
+ import kotlinx.serialization.Serializable
+ import kotlinx.serialization.SerializationException
++import kotlinx.serialization.builtins.nullable
++import kotlinx.serialization.builtins.serializer
+ import kotlinx.serialization.decodeFromString
+ import kotlinx.serialization.encodeToString
+ import kotlinx.serialization.json.Json
+@@ -1856,6 +1858,18 @@
+     val status: String = "draft",
+ )
+ 
++/**
++ * Columna `text` NULL de Supabase leída como "" (E2E 2026-10-20: `especialidades.descripcion` es nullable y un solo NULL
++ * tiraba `GET /especialidades` con 502, y con él el guardado de examen en el panel, que ya había creado la fila).
++ * Hacia el panel el contrato sigue siendo un String.
++ */
++object NullTextAsEmptySerializer : kotlinx.serialization.KSerializer<String> {
++    private val delegate = String.serializer().nullable
++    override val descriptor = delegate.descriptor
++    override fun deserialize(decoder: kotlinx.serialization.encoding.Decoder): String = delegate.deserialize(decoder) ?: ""
++    override fun serialize(encoder: kotlinx.serialization.encoding.Encoder, value: String) = delegate.serialize(encoder, value)
++}
++
+ // Especialidad: las columnas reales ya son palabras simples => DTO == fila Supabase.
+ @Serializable
+ data class AdminEspecialidadDto(
+@@ -1863,7 +1877,7 @@
+     val codigo: String = "",
+     val nombre: String,
+     val slug: String = "",
+-    val descripcion: String = "",
++    @Serializable(with = NullTextAsEmptySerializer::class) val descripcion: String = "",
+     val activa: Boolean = true,
+     val posicion: Int = 0,
+ )

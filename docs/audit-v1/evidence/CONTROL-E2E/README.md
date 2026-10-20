@@ -1,0 +1,39 @@
+# Control E2E: 12 recorridos del panel (2026-10-20)
+
+## Qué se probó y cómo
+
+- **Capa de datos → Ktor real → PG17 real** (`ControlJourneysE2ETest`, rama del panel `feature/december-v1-control-panel` @ `c655116`, `data/src/jvmTest/.../e2e/`). Son los repositorios reales del panel (`KtorControlV1RepositoryImpl`, `KtorAdminV1ContentRepositoryImpl`, `KtorAdminOperationsRepositoryImpl`, `KtorCommercialCatalogRepositoryImpl`, `AuditRepositoryImpl`, `KtorSystemStatusRepositoryImpl`) con el cliente HTTP de producción (`ApiClientFactory`) y una sesión con un JWT ES256 local. Cada recorrido comprueba la fila en la base y la de `auditoria_log` (con el actor sacado del JWT), además de los errores y de la matriz de roles.
+- **No es una prueba de interfaz.** Las pruebas de interfaz (Compose desktop) se cuentan aparte en CURRENT_STATE.
+- Servidor: árbol E7 `cb50ee3` (develop + panel + servidor Bot V1, el plan de integración v2) copiado con `git archive` y con la corrección de especialidades aplicada. Ktor `SERVER_PROFILE=control` en :18190 y `bot` en :18189 (lado usuario: pedido sandbox, webhook firmado, publicación en el foro).
+- Stack **aislado** `oposi-control-e2e`: copia de `ops/local-exam` con proyecto Compose, puertos (56321 pasarela, 56432 PG17, 19999 stub de GoTrue), red y volúmenes propios (`ctl_e2e_pg`, `ctl_e2e_storage`). Imagen PG17 `supabase/postgres 17.6.1.171`, la misma del gate. Datos sintéticos; sin MAIN; el QA de Bot (`oposi-exam-local`) no se tocó. Diferencias exactas con `cb50ee3`: `stack-copy-vs-cb50ee3.diff`.
+- Para reproducirlo: `CONTROL_E2E_LOCAL=<.local del stack> ./gradlew :data:jvmTest --tests "*.ControlJourneysE2ETest"`. Sin la variable, cada prueba imprime `E2E SKIPPED` y no hace nada (comprobado con `--rerun`: 12 SKIPPED, 0 RUN).
+
+## Resultado: 12/12 ejecutados y en verde (`ControlJourneysE2ETest-2026-10-20.xml`, 12 × `E2E RUN`)
+
+| # | Recorrido | Éxito verificado en la base y la auditoría | Errores y roles verificados |
+|---|---|---|---|
+| 1 | Acceso y permisos | admin y superadmin: sesión con sus roles | admin bloqueado 403, usuario 403, moderador 403, sin token 401; el bloqueado no crea examen (sin fila nueva) |
+| 2 | Gestión de exámenes | fila con comunidad, especialidad y borrador; `examen_creado` con actor = JWT; la edición persiste y queda auditada (2 filas) | comunidad inexistente rechazada, sin fila |
+| 3 | Publicación y estados | publicar (`publicado_en` sellado, `examen_publicado`), despublicar (`examen_despublicado`), archivar (`activo=false`, `examen_archivado`) | publicar sin preguntas rechazado (sigue en borrador); el usuario no publica |
+| 4 | Anuladas y reserva | `preguntas_examen.anulada` + motivo + auditoría; `es_reserva`/`orden_reserva` | reserva con orden 0 rechazada sin cambios; el usuario no anula |
+| 5 | Penalizaciones y reglas | `regla_anuladas`, `penalizacion_num/den`, auditoría `examen_reglas*` y lectura de la auditoría de reglas | denominador 0 rechazado, sin cambios |
+| 6 | Importación | lote → 3 preguntas vinculadas, `total_preguntas`, `lote_importado` | el usuario no importa; los duplicados entre exámenes se detectan (`import_duplicates_unresolved`) |
+| 7 | Precios y packs | `precio_tickets`/`comprable`/`dias` + `examen_economia_modificada`; pack `productos_comerciales` (`pack_tickets`) + `producto_comercial_guardado` | precio negativo, código duplicado y usuario: rechazados |
+| 8 | Pedidos | pedido sandbox con importe erróneo → `en_revision` (Bot); contador, lista y detalle en Control; nota (`pedido_nota_interna`); acreditar → `pagada` y +50 OT una sola vez (`pedido_resuelto`); repetir = `REPLAY` | el usuario no resuelve |
+| 9 | Reembolsos | `payment.refunded` sobre un pedido acreditado → `reembolsada` y −50 OT, sin `refund_case` (automático, Bot); el panel lo enseña; reembolsar otra vez = `REPLAY` | `order_not_credited` sobre un pedido nunca acreditado; `order_not_in_review` |
+| 10 | Accesos | conceder → `contenido_desbloqueado_usuario` vigente + `acceso_examen_concedido`; retirar → no vigente + `acceso_examen_retirado` | solo sobre exámenes publicados; el usuario no se autoconcede |
+| 11 | Moderación del foro | canal creado desde el panel (`foro_canal_creado`); el post premoderado entra en la cola; ocultar → `oculta` + auditoría; bloqueo de patrón añadir/quitar | ocultar sin motivo rechazado; el usuario no modera |
+| 12 | Auditoría | el movimiento aparece filtrado por acción con su actor; detalle legible | el usuario no lee la auditoría |
+
+## Hallazgos de este ciclo
+
+- **CP-E2E-01 (P2, CORREGIDO en `c655116`).** `GET /api/v1/admin/especialidades` devolvía 502 en cuanto una especialidad tenía `descripcion` NULL (la columna es nullable y el DTO exigía String). El panel daba por fallido el guardado de un examen que el servidor YA había creado, así que reintentar producía duplicados. Ahora se lee con `NullTextAsEmptySerializer`; el contrato hacia el panel no cambia. Prueba: `AdminEspecialidadNullDescriptionTest` 2/2. NOT_VERIFIED: si alguna especialidad de MAIN tiene NULL (no estaba en el alcance de lectura autorizado).
+- **CP-E2E-02 (PRODUCT_DECISION_PENDING).** El rol `moderador` recibe 403 en todo el panel: hoy la moderación del foro es solo de admin. Hay que confirmar si es intencionado.
+- **CP-E2E-03 (Info).** Anular una pregunta sin motivo se acepta: el servidor y la RPC lo permiten, aunque el KDoc de `AdminControlOfficialQuestions` dice «anulada (con motivo)». Decisión pendiente: ¿el motivo es obligatorio?
+- **CP-E2E-04 (Info, ya conocido).** Los packs de Market (`paquetes_opositickets`) no están en ningún DDL del repo y la app no los lee (PRODUCT_DECISIONS_PENDING §15.1). J07 prueba la vía canónica (`productos_comerciales`).
+- **CP-E2E-05 (P3, herramientas de Bot).** `ops/local-exam` en `cb50ee3` no levanta desde cero: falla el orden de las migraciones (100300 y 100900 antes de sus overlays), el seed multifila del libro (WALLET_INCONSISTENT) y 102200 no es idempotente. Además, varios scripts fijan el contenedor `oposi-exam-local-db-1` y los puertos 8089/8090/9999, así que una copia con otro nombre de proyecto seguiría escribiendo en el QA de Bot. Comunicado a Bot el 2026-10-20; arreglado solo en la copia aislada.
+- La inventaria previa daba «`updateExamen` sin auditoría» como hueco: **falso**, la edición deja filas de auditoría (J02).
+
+## Latencias (P3), medición preliminar con ruido
+
+`latency-run1-noisy.txt`: 60 peticiones secuenciales por operación contra :18190, con dos builds de Gradle en marcha en la misma máquina. Las p50 están entre 16 y 42 ms y las p95 por debajo de 110 ms, salvo `GET /examenes` (p95 237 ms, máx. 1,6 s). Hay que repetirla en reposo antes de sacar conclusiones; no se optimiza nada sin un cuello demostrado. FK `productos_comerciales_plan_fk` sin índice: un seq scan de 1,4 ms con 5.016 filas, unas 300 veces el catálogo; **no se propone índice**.
