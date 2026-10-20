@@ -46,3 +46,7 @@ El dashboard de Control cuenta solo pedidos `pagada` de **producción** (`entorn
 ## 6. Lo que Control NO hace
 
 No crea pedidos, no acredita por su cuenta fuera de `acreditar` en revisión, no habla con Apple ni con Google, no procesa webhooks, no cambia precios de tienda de proveedor (`productos_store`). Los packs que vende la app son `productos_comerciales` de tipo `pack_tickets` (Control los edita, J07). La tabla de Market `paquetes_opositickets` no la lee la app: PRODUCT_DECISIONS_PENDING §15.1.
+
+## 7. Moderador en Control (aviso para Bot, 2026-10-20)
+
+Decisión del propietario: el rol `moderador` entra en el panel **solo para moderar el foro**. Implementado en local en la rama del panel, sin push: lista cerrada de rutas en el guard de Ktor (`/sesion`, `/foro/cola`, `/foro/moderar`, `GET /foro/restricciones`), con rol `moderador` y cuenta activa. No se ha tocado ninguna migración ni ninguna ruta `/api/v1/app`. `admin_foro_moderate` (101900) no comprueba el rol en SQL y solo Ktor llega a ella; su auditoría registra al moderador como actor (verificado en el E2E). Levantar restricciones sigue siendo de admin (`private.require_admin_actor`). No se pudo entregar por mensaje porque la sesión de Bot ya no estaba activa. Si OposiRed (app) supone que «moderación = solo admin», hay que decirlo.

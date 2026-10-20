@@ -3,7 +3,7 @@
 ## Control panel E2E — 2026-10-20 (`develop` ae62375 + este ciclo, panel `c655116`)
 
 Estado: **CONTROL_PANEL_READY_LOCAL (condicionado)**. Las 12 funciones admin están verificadas de punta a punta en la capa de datos (12/12) y hay pruebas de interfaz de login/roles, publicación, pedidos/reembolsos y auditoría (17, panel `95b5b1e`). Latencias en reposo: lecturas con p95 ≤ 67 ms y escrituras auditadas ≤ 63 ms, sin ningún cuello. Condiciones antes de pasar a READY:
-(1) el propietario decide si el moderador tiene acceso al panel y si el motivo de anulación es obligatorio;
+(1) el propietario decide si el motivo de anulación es obligatorio (el acceso del moderador se DECIDIÓ el 2026-10-20: solo moderación del foro, implementado y probado en local, panel en la rama del panel);
 (2) volver a ejecutar `ControlJourneysE2ETest` sobre el candidato integrado con develop actual (E7 `cb50ee3` es anterior al límite de mutaciones admin y a las migraciones `security_*`);
 (3) las pruebas de interfaz usan repositorios falsos, así que la cadena interfaz→Ktor solo está cubierta por la capa de datos.
 NO APTO PARA PRODUCCIÓN mientras sigan abiertos los RB P1 (MAIN sin tocar; ningún GO aplicado).
@@ -12,7 +12,7 @@ NO APTO PARA PRODUCCIÓN mientras sigan abiertos los RB P1 (MAIN sin tocar; ning
 - **MAIN, solo lectura (alcance autorizado):** RB-16 ampliada a 14 políticas (`news-images` vía `can_manage_content`). Nuevo RB-18 / SEC-V1-24: un moderador o admin bloqueado sigue siendo staff en RLS (migración local `20261023100300`). Las 21 tablas con RLS sin políticas son 21/21 server-only intencionales. Evidencia: `evidence/SEC-V1-01/MAIN-readonly-2026-10-20.md`.
 - **P2 local:** `20261023100400` (search_path de los triggers de `noticia`) 4/4. El índice del FK `productos_comerciales_plan_fk` no se propone (sin beneficio medible).
 - **Contrato Control↔Bot** de pedidos, reembolsos y accesos: `docs/audit-v1/CONTRACT_CONTROL_BOT_ORDERS_REFUNDS_ACCESS.md` (Q1-Q3 respondidas por Bot; la política P2 de reembolso la decide el propietario).
-- Pendiente del propietario: ¿el moderador tiene acceso al panel? (hoy 403 en todo el panel). ¿El motivo de anulación es obligatorio? Packs de Market (§15.1).
+- Moderador: DECIDIDO 2026-10-20 (solo moderación del foro) e implementado en local; lista cerrada de rutas en Ktor y panel reducido. Pendiente del propietario: ¿el motivo de anulación es obligatorio? Packs de Market (§15.1).
 - Pruebas: dbtest 296/0 + 4 (noticia); panel `:backend:ktor:test` 2129/0 y `:data:jvmTest` 298/0.
 
 ## Auditoría V1 ciclo 1 — 2026-10-19 (`develop` 7fb9000, v1-server 86f0da9, panel 29a019f)
