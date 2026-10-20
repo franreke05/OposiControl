@@ -6,6 +6,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -113,6 +115,9 @@ import org.koin.compose.koinInject
 import org.koin.core.parameter.parametersOf
 import androidx.compose.runtime.rememberCoroutineScope
 import com.oposicontrol.admin.domain.repository.AuthRepository
+import com.oposicontrol.admin.domain.repository.SystemStatusRepository
+import com.oposicontrol.admin.features.controlv1.presentation.ForumModerationQueueScreen
+import com.oposicontrol.admin.features.controlv1.presentation.ForumQueueViewModel
 import kotlinx.coroutines.launch
 
 private const val TEMPORARILY_DISABLE_LOGIN = false
@@ -398,6 +403,17 @@ fun AppRoot(
         }
     }
 
+    // Qué parte del panel corresponde a la sesión, según el servidor (decisión 2026-10-20: el moderador solo modera el foro).
+    val systemStatusRepository: SystemStatusRepository = koinInject()
+    val accessAuthRepository: AuthRepository = koinInject()
+    val accessScope = rememberCoroutineScope()
+    var panelAccess by remember { mutableStateOf<PanelAccess>(PanelAccess.Checking) }
+    LaunchedEffect(authState.isAuthenticated) {
+        panelAccess = PanelAccess.Checking
+        if (authState.isAuthenticated) panelAccess = panelAccessFor(systemStatusRepository.loadSession())
+    }
+    val logoutFromAccess: () -> Unit = { accessScope.launch { accessAuthRepository.logout() } }
+
     when {
         !TEMPORARILY_DISABLE_LOGIN && authState.isRestoring -> AuthScreen(
             viewModel = authViewModel,
@@ -410,6 +426,15 @@ fun AppRoot(
             onAuthenticated = { navigator.replace(AppRoute.Home) },
             accessRequestViewModel = accessRequestViewModel,
         )
+
+        !TEMPORARILY_DISABLE_LOGIN && panelAccess == PanelAccess.Checking -> PanelAccessChecking()
+
+        !TEMPORARILY_DISABLE_LOGIN && panelAccess == PanelAccess.ForumModerator -> ModeratorPanel(onLogout = logoutFromAccess) {
+            ForumModerationQueueScreen(queueViewModel = koinInject<ForumQueueViewModel>())
+        }
+
+        !TEMPORARILY_DISABLE_LOGIN && panelAccess is PanelAccess.Denied ->
+            PanelAccessDenied(message = (panelAccess as PanelAccess.Denied).message, onLogout = logoutFromAccess)
 
         else -> {
             // Único punto de enganche del botón/gesto Atrás del sistema, y va

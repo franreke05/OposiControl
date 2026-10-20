@@ -745,6 +745,32 @@ class AppV1Gateway private constructor(
      */
     fun hasActiveAdminRole(usuarioId: String): Boolean {
         if (!hasAdminRole(usuarioId)) return false
+        return hasActiveAccount(usuarioId)
+    }
+
+    /** Caché del rol `moderador` (mismo TTL y misma regla de fallos que la del rol admin). */
+    private val moderatorRoleCache = java.util.concurrent.ConcurrentHashMap<String, CachedRoleDecision>()
+
+    /**
+     * Decisión del propietario 2026-10-20: el rol `moderador` entra en el panel SOLO para moderar el foro (las rutas las
+     * fija [isModeratorAdminPath]). Rol `moderador` **y** cuenta `activa` (un moderador bloqueado → `false` → 403).
+     * Misma regla de fallos que [hasAdminRole]: una lectura que falla propaga, nunca se convierte en `false`.
+     */
+    fun hasActiveModeratorRole(usuarioId: String): Boolean {
+        usuarioId.validatedUuid("usuarioId")
+        val now = clock()
+        val hasRole = moderatorRoleCache[usuarioId]?.takeIf { now < it.expiresAtMillis }?.hasRole
+            ?: hasAnyCanonicalRole(usuarioId, setOf(CanonicalRole.MODERADOR.code)).also { decided ->
+                moderatorRoleCache[usuarioId] = CachedRoleDecision(decided, now + ADMIN_ROLE_CACHE_TTL_MILLIS)
+                if (moderatorRoleCache.size > ADMIN_ROLE_CACHE_MAX_ENTRIES) {
+                    moderatorRoleCache.entries.removeAll { it.value.expiresAtMillis <= now }
+                }
+            }
+        return hasRole && hasActiveAccount(usuarioId)
+    }
+
+    /** `perfiles_usuario.estado_cuenta` = `activa` explícita (deny-by-default), con la caché de [hasActiveAdminRole]. */
+    private fun hasActiveAccount(usuarioId: String): Boolean {
         val now = clock()
         adminAccountStatusCache[usuarioId]?.let { cached ->
             if (now < cached.expiresAtMillis) return cached.hasRole

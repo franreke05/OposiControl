@@ -96,6 +96,18 @@ fun ForumOpsScreen(
     }
 }
 
+/**
+ * Solo la cola de moderación, sin canales, bloqueos ni límites: lo que ve el rol `moderador` (decisión del propietario
+ * 2026-10-20). El servidor es quien lo impone (lista cerrada de rutas del guard); esta pantalla no ofrece lo demás.
+ */
+@Composable
+fun ForumModerationQueueScreen(queueViewModel: ForumQueueViewModel) {
+    ControlColumn {
+        val state by queueViewModel.state.collectAsState()
+        ForumQueueContent(state, queueViewModel::dispatch)
+    }
+}
+
 // ---------------------------------------------------------------- cola
 
 @Composable

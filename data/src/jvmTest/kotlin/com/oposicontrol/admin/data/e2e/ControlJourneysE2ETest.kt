@@ -186,7 +186,11 @@ class ControlJourneysE2ETest {
         assertTrue(s.isSuperAdmin && s.isAdmin, s.toString())
         assertIs<AppError.Authorization>(Panel("ADMIN_BLK").status.loadSession().failure("admin bloqueado"))
         assertIs<AppError.Authorization>(Panel("Q1").status.loadSession().failure("usuario normal"))
-        assertIs<AppError.Authorization>(Panel("MOD").status.loadSession().failure("moderador (sin panel: decision de producto pendiente)"))
+        // Decisión del propietario 2026-10-20: el moderador entra en el panel, pero solo para moderar el foro.
+        val m = Panel("MOD").status.loadSession().ok("moderador")
+        assertTrue("moderador" in m.roles && !m.isAdmin && !m.isSuperAdmin, m.toString())
+        assertIs<AppError.Authorization>(Panel("MOD").control.orders("en_revision", 0).failure("moderador lee pedidos"))
+        assertIs<AppError.Authorization>(Panel("MOD").content.upsertExam(newExam("E2E moderador")).failure("moderador crea examen"))
         assertIs<AppError.Authentication>(Panel(null).status.loadSession().failure("sin token"))
         // Un admin bloqueado tampoco escribe: ninguna fila nueva.
         val before = sql("select count(*) from public.examenes")
@@ -414,7 +418,16 @@ class ControlJourneysE2ETest {
             setBody("""{"categoriaId":"${channel.id}","titulo":"Duda E2E","cuerpo":"$body"}""")
         }.bodyAsText()
         val postId = sql("select id from public.publicaciones_oposired where contenido = '$body'").ifEmpty { fail("publicacion no creada: $created") }
-        assertTrue(p.control.forumQueue(ForumContentType.POST, "pendiente_moderacion", null).ok("cola").items.any { it.id == postId }, "el post premoderado entra en la cola")
+        // Moderador real (rol `moderador`, cuenta activa): ve la cola y modera; la auditoría lo registra a ÉL como actor.
+        val mod = Panel("MOD")
+        assertTrue(mod.control.forumQueue(ForumContentType.POST, "pendiente_moderacion", null).ok("cola del moderador").items.any { it.id == postId }, "el post premoderado entra en la cola")
+        mod.control.moderateForum(ForumContentType.POST, postId, ForumAction.HIDE, "Fuera de tema E2E", null).ok("ocultar (moderador)")
+        assertEquals("5c000000-0000-4000-8000-00000000005c", sql("select usuario_id from public.auditoria_log where registro_id::text = '$postId' order by creado_en desc limit 1"), "actor = moderador")
+        mod.control.forumRestrictions().ok("moderador lee restricciones")
+        assertIs<AppError.Authorization>(mod.control.createForumChannel(ForumChannelDraft("Canal mod", "mod-" + slug, "x", true, "96", specialty, false)).failure("moderador crea canal"))
+        assertIs<AppError.Authorization>(mod.control.addForumBlock("e2e-mod-block").failure("moderador bloquea patrones"))
+        assertIs<AppError.Authorization>(Panel("ADMIN_BLK").control.forumQueue(ForumContentType.POST, "pendiente_moderacion", null).failure("admin bloqueado modera"))
+        p.control.moderateForum(ForumContentType.POST, postId, ForumAction.RESTORE, "", null).ok("restaurar (admin)")
         p.control.moderateForum(ForumContentType.POST, postId, ForumAction.HIDE, "Fuera de tema E2E", null).ok("ocultar")
         println("E2E J11 post state=" + sql("select coalesce(estado, '') from public.publicaciones_oposired where id = '$postId'"))
         assertTrue(sql("select count(*) from public.auditoria_log where registro_id::text = '$postId'").toInt() >= 1, "auditoria de la moderacion")

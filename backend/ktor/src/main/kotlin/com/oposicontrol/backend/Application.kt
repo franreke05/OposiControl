@@ -771,6 +771,7 @@ internal fun Route.installControlRoutes(deps: CombinedRoutingDeps, includeIntern
                 this.appEnv = environmentName
                 // MASTER-AUTH-002: rol admin Y cuenta `activa` (deny-by-default).
                 this.hasAdminRole = { appV1Gateway.hasActiveAdminRole(it) }
+                this.hasModeratorRole = { appV1Gateway.hasActiveModeratorRole(it) }
             }
             // MASTER-OBS-002: el `sub` del JWT como actor de toda auditoría administrativa.
             installAdminAuditActor()
