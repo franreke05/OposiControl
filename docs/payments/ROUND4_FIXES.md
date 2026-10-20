@@ -101,3 +101,21 @@ Retest:
    `to_regprocedure('public.app_store_inbox_pending(integer,boolean)')` is null.
 
 Still not verified: Apple's real behaviour (token lifetime, order of History).
+
+# Round 6 (N6-1, N6-2)
+
+Source: OposiControl `docs/audit-v1/HANDOFF_BOT_store_payments_round6.md` (re-audit of `999a50b` + `c17a804`). It found N5-1/2/3 and H-04 FIXED.
+H-04 is only reachable in theory: the time limit is still an open product decision. New migration `20261022103300_v1_store_payments_round6.sql`.
+G1/D8 defaults are unchanged.
+
+| ID | Status | Change | Test(s) | Before (fails) | After |
+|---|---|---|---|---|---|
+| N6-1 | FIXED | `pollAppleHistory` sets `store_inbox_history_incomplete` from the **database** state (`pollState(...).pendingPage != null`) right after reading it, on every run. This includes the early return (6-hour wait) and runs where the API call fails. The gauge no longer reflects only this replica's last read | `StoreServerSyncTest.theHistoryGaugeFollowsTheDatabaseAcrossReplicas` (A leaves a page pending, B finishes the window, A's next run exports 0); `.aRestartedReplicaRaisesTheGaugeFromAStuckTokenInTheDatabase` (gauge 0 after restart, stuck token, 5xx: exports 1) | `A exports the database state ... expected:<0> but was:<1>`; `expected:<1> but was:<0>` | green |
+| N6-2 | FIXED | The gauge goes to 1 (and the ALERT log is written) BEFORE `savePollPage`, so a token the database refuses still raises the alert. The token limit goes from 4096 to 65536 (`tienda_sondeo_pagina_check` and `app_store_poll_page`) because Apple documents no maximum | `StoreServerSyncTest.aTokenTheDatabaseRefusesStillRaisesTheGaugeAndALongTokenIsStored`; gate step 6 `N6-2 token largo` (5000 chars saved); VERIFY `poll_page_token_limit_4096`, `poll_page_check_limit_4096` | `the refused save does not silence the alert expected:<1> but was:<0>` | green |
+
+Limit: if the database still refuses a token (now only above 65536 characters), the next run first exports the database state (0) and then 1 again
+after the read. A scrape in between can restart the 6-hour `for` of the alert. The ALERT log line is written on every run.
+
+Evidence: `:backend:ktor:test` 2228 tests, 0 failures, 1 skipped (3 new, red before). PG17 gate rc=0 (32 pending, VERIFY = 0, store and H-04 races).
+
+Retest: `./gradlew :backend:ktor:test --tests "com.oposicontrol.backend.StoreServerSyncTest"` and then the full suite; `bash scripts/db-pg17-gate.sh`.

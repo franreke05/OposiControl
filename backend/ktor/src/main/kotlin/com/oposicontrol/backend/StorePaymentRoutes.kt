@@ -230,6 +230,8 @@ internal object StorePaymentsJob {
     suspend fun pollAppleHistory(runtime: StorePaymentsRuntime, now: Instant, log: (String) -> Unit = {}): Int {
         val apple = runtime.apple?.takeIf { it.hasServerApi } ?: return 0
         val state = runtime.service.pollState(StorePlatform.APP_STORE, HISTORY_SOURCE)
+        // N6-1: el gauge sigue al estado de la BASE en cada vuelta (tambien si se sale sin leer), no a la ultima lectura de esta replica.
+        StoreInboxMetrics.historyIncomplete(state?.pendingPage != null)
         // N5-1: una lectura a medias (token guardado) sigue en la siguiente vuelta del trabajo, sin esperar las 6 horas.
         val page = state?.pendingPage
         if (page == null && state != null && state.lastPoll.isAfter(now.minusSeconds(6 * 3_600L))) return 0
@@ -254,9 +256,9 @@ internal object StorePaymentsJob {
         } else {
             // N4-3 / N5-1: mas de 100 paginas. Se GUARDA el token con su ventana y el cursor no se mueve: no depende de que History venga en
             // orden cronologico (avanzar hasta la fecha del ultimo aviso leido si dependeria). Gauge + alerta StoreAppleHistoryIncomplete.
+            StoreInboxMetrics.historyIncomplete(true)   // N6-2: antes de guardar: si la base rechaza el token, la alerta no se queda muda
+            log("ALERT store apple history: page cap reached; storing the pagination token, reading continues next run (${read.events.size} notification(s) ingested)")
             runtime.service.savePollPage(StorePlatform.APP_STORE, HISTORY_SOURCE, next, start, end)
-            StoreInboxMetrics.historyIncomplete(true)
-            log("ALERT store apple history: page cap reached; pagination token stored, reading continues next run (${read.events.size} notification(s) ingested)")
         }
         return read.events.size
     }

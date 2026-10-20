@@ -220,6 +220,8 @@ SQL
   out="$(rq "select public.app_store_poll_advance('app_store', 'notification_history', 5000)")"
   expect "N5-1 fin" "$out|$(rq "select cursor_ms || '|' || coalesce(pagina_token, '-') || '|' || coalesce(ventana_fin_ms::text, '-') from public.app_store_poll_get('app_store', 'notification_history')")" "5000|5000|-|-"
   expect "N5-2 sobrecarga" "$(rq "select to_regprocedure('public.app_store_inbox_pending(integer,boolean)') is null")" t
+  # N6-2: un token de 5000 caracteres se guarda (el limite de 20261022103200 era 4096)
+  expect "N6-2 token largo" "$(rq "select public.app_store_poll_page('app_store', 'notification_history', repeat('t', 5000), 5000, 9000)")|$(rq "select length(pagina_token) from public.app_store_poll_get('app_store', 'notification_history')")" "t|5000"
   # N4-5: con 300k avisos procesados, app_store_inbox_stats lee el indice parcial del atasco (contador de escaneos del indice, no el texto del plan)
   psqlc >/dev/null 2>"$err" <<'SQL' || { cat "$err"; fail "N4-5: no se siembra la bandeja"; }
 insert into public.tienda_bandeja (proveedor, evento_id, tipo, clave_compra, entorno, huella, estado, resultado, procesado_en)

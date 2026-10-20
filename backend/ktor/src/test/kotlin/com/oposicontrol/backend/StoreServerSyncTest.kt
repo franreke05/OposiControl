@@ -174,6 +174,8 @@ class StoreServerSyncTest {
         var cursor: Pair<Long, String>? = null
         var token: String? = null
         var window: Pair<Long, Long>? = null
+        /** Longitud maxima de token que acepta "la base" (N6-2: 4096 en 20261022103200, 65536 desde 20261022103300). */
+        var maxToken = 65_536
         var due = "[]"
         override fun get(path: String): String = "[]"
         override fun rpc(function: String, body: String): SupabaseRawResponse {
@@ -192,6 +194,7 @@ class StoreServerSyncTest {
                     SupabaseRawResponse(200, "$c")
                 }
                 "app_store_poll_page" -> {
+                    if (args["p_token"]!!.jsonPrimitive.content.length > maxToken) return SupabaseRawResponse(400, """{"message":"STORE_REQUEST_INVALID"}""")
                     token = args["p_token"]!!.jsonPrimitive.content
                     window = args["p_inicio_ms"]!!.jsonPrimitive.content.toLong() to args["p_fin_ms"]!!.jsonPrimitive.content.toLong()
                     cursor = (cursor?.first ?: window!!.first) to Instant.now().toString()
@@ -287,6 +290,60 @@ class StoreServerSyncTest {
         assertEquals(null, db.token)
         assertEquals(0L, StoreInboxMetrics.historyIncomplete())
         assertEquals(listOf("assn:t-1", "assn:t-2"), db.calls("app_store_inbox_put").map { it["p_evento_id"]!!.jsonPrimitive.content })
+    }
+
+    /**
+     * N6-1 (re-auditoria Control ronda 6): el gauge sigue al estado de la BASE en cada vuelta, no a la ultima lectura de la replica. Replica A deja
+     * una pagina a medias (gauge 1); replica B termina la ventana; A (que seguia exportando 1) en su siguiente vuelta exporta 0 aunque salga sin leer.
+     */
+    @Test
+    fun theHistoryGaugeFollowsTheDatabaseAcrossReplicas() = runTest {
+        val db = Db()
+        val twoDaysAgo = now.minusSeconds(2 * 86_400L)
+        db.cursor = twoDaysAgo.toEpochMilli() to now.minusSeconds(7 * 3_600L).toString()
+        val httpA = RecordingHttp().apply { repeat(100) { i -> responses += StoreHttpResponse(200, """{"notificationHistory":[],"hasMore":true,"paginationToken":"a${i + 2}"}""") } }
+        StorePaymentsJob.pollAppleHistory(runtime(db, apple = provider(httpA)), now)
+        assertEquals(1L, StoreInboxMetrics.historyIncomplete(), "replica A left a page pending")
+        val httpB = RecordingHttp().apply { responses += StoreHttpResponse(200, """{"notificationHistory":[],"hasMore":false}""") }
+        StorePaymentsJob.pollAppleHistory(runtime(db, apple = provider(httpB)), now.plusSeconds(60))
+        assertEquals(null, db.token)
+        StoreInboxMetrics.historyIncomplete(true)   // lo que A seguia exportando (el gauge es por proceso)
+        val before = httpA.calls.size
+        assertEquals(0, StorePaymentsJob.pollAppleHistory(runtime(db, apple = provider(httpA)), now.plusSeconds(120)))
+        assertEquals(before, httpA.calls.size, "A leaves early: B polled less than 6 h ago")
+        assertEquals(0L, StoreInboxMetrics.historyIncomplete(), "A exports the database state (no page pending), not its last read")
+    }
+
+    /** N6-1: una replica reiniciada (gauge a 0) con un token atascado en la base (la API falla con 5xx) exporta 1 desde el estado de la base. */
+    @Test
+    fun aRestartedReplicaRaisesTheGaugeFromAStuckTokenInTheDatabase() = runTest {
+        val db = Db()
+        val twoDaysAgo = now.minusSeconds(2 * 86_400L)
+        db.cursor = twoDaysAgo.toEpochMilli() to now.minusSeconds(60).toString()
+        db.token = "stuck"
+        db.window = twoDaysAgo.toEpochMilli() - 3_600_000L to now.minusSeconds(3_600).toEpochMilli()
+        StoreInboxMetrics.historyIncomplete(false)   // proceso recien arrancado
+        val http = RecordingHttp().apply { responses += StoreHttpResponse(503, "{}") }
+        assertFailsWith<BackendDomainException> { StorePaymentsJob.pollAppleHistory(runtime(db, apple = provider(http)), now) }
+        assertEquals("stuck", db.token, "a 5xx keeps the token")
+        assertEquals(1L, StoreInboxMetrics.historyIncomplete())
+    }
+
+    /**
+     * N6-2: un token que la base no acepta (mas largo que su limite) no puede dejar la alerta muda: el gauge se pone a 1 ANTES de guardar. Con
+     * 20261022103300 el limite es 65536 y un token de 5000 caracteres se guarda.
+     */
+    @Test
+    fun aTokenTheDatabaseRefusesStillRaisesTheGaugeAndALongTokenIsStored() = runTest {
+        val long = "t".repeat(5_000)
+        fun pages() = RecordingHttp().apply { repeat(100) { responses += StoreHttpResponse(200, """{"notificationHistory":[],"hasMore":true,"paginationToken":"$long"}""") } }
+        val old = Db().apply { maxToken = 4_096; cursor = now.minusSeconds(86_400L).toEpochMilli() to now.minusSeconds(7 * 3_600L).toString() }
+        StoreInboxMetrics.historyIncomplete(false)
+        assertFailsWith<BackendDomainException> { StorePaymentsJob.pollAppleHistory(runtime(old, apple = provider(pages())), now) }
+        assertEquals(1L, StoreInboxMetrics.historyIncomplete(), "the refused save does not silence the alert")
+        val db = Db().apply { cursor = now.minusSeconds(86_400L).toEpochMilli() to now.minusSeconds(7 * 3_600L).toString() }
+        StorePaymentsJob.pollAppleHistory(runtime(db, apple = provider(pages())), now)
+        assertEquals(long, db.token)
     }
 
     /** N5-1: Apple rechaza un token guardado (4xx): se descarta y la ventana se relee desde el cursor (nada se salta); el error sube. */
