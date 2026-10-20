@@ -134,9 +134,9 @@ store_race() {
   sub() { echo "select outcome from public.app_store_upsert_subscription('$(u "$1")', public.app_store_account_token('$(u "$1")'), 'app_store', 'produccion', 'race-premium', 'com.x.premium', '$2', 'activa', '2026-10-01T00:00:00Z', '2026-11-01T00:00:00Z', null, null, 100, null);"; }
   st() { rq "select estado || '|' || (select count(*) from public.transacciones_cartera t where t.compra_id = c.id and t.tipo = 'pack_tickets') || '|' || (select count(*) from public.transacciones_cartera t where t.compra_id = c.id and t.tipo = 'devolucion') from public.compras_usuario c where identificador_transaccion = '$1'"; }
   psqlc >/dev/null 2>"$err" <<'SQL' || { cat "$err"; fail "carreras de tienda: no se siembran los datos"; }
-insert into auth.users (id, email, aud, role) select ('a0000000-0000-0000-0000-' || lpad((950 + n)::text, 12, '0'))::uuid, 'race' || n || '@test.local', 'authenticated', 'authenticated' from generate_series(1, 9) n;
+insert into auth.users (id, email, aud, role) select ('a0000000-0000-0000-0000-' || lpad((950 + n)::text, 12, '0'))::uuid, 'race' || n || '@test.local', 'authenticated', 'authenticated' from generate_series(1, 12) n;
 insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta)
-  select ('a0000000-0000-0000-0000-' || lpad((950 + n)::text, 12, '0'))::uuid, 'race' || n, 'race_user_' || n, true, 'activa' from generate_series(1, 9) n
+  select ('a0000000-0000-0000-0000-' || lpad((950 + n)::text, 12, '0'))::uuid, 'race' || n, 'race_user_' || n, true, 'activa' from generate_series(1, 12) n
   on conflict (usuario_id) do update set username = excluded.username;
 insert into public.productos_comerciales (id, codigo, tipo_producto, nombre, precio_centimos, moneda, cantidad_tickets, activo, visible)
   values ('b9950000-0000-0000-0000-000000000001', 'race-pack-100', 'pack_tickets', 'Race 100', 99, 'EUR', 100, true, true),
@@ -177,7 +177,50 @@ SQL
     bg c "begin; select null from pg_advisory_xact_lock(hashtextextended('wallet:$(u 8)', 0)); do \$\$ begin perform pg_sleep(2); end \$\$; commit;"
     sleep 0.4; bg a "$(credit 8 "$k")"; sleep 0.4; bg b "select public.app_store_reconcile_orphans(50, false);"; wait; noerr a b c
     expect "D1.$i" "$(rq "select resultado from public.tienda_bandeja where evento_id = 'd1-rev-$i'")" REVERSAL_HELD
+    # D2 (N4-6) lo mismo con el paso de una fila por transaccion que usa el trabajo: sin 40P01, la clave ocupada se salta (BUSY) y el credito liga
+    k="d2-$i"; rq "$(credit 9 "$k")" >/dev/null; inbox "d2-rev-$i" REEMBOLSO_REVERTIDO "$k"
+    rq "update public.tienda_bandeja set resultado = 'REVERSAL_ORPHAN_HELD', estado = 'procesado' where evento_id = 'd2-rev-$i'" >/dev/null
+    bg c "begin; select null from pg_advisory_xact_lock(hashtextextended('wallet:$(u 9)', 0)); do \$\$ begin perform pg_sleep(2); end \$\$; commit;"
+    sleep 0.4; bg a "$(credit 9 "$k")"; sleep 0.4; bg b "select resultado from public.app_store_reconcile_orphan_step(false, null, null, null) where evento_id = 'd2-rev-$i';"; wait; noerr a b c
+    expect "D2.$i" "$(rq "select resultado from public.tienda_bandeja where evento_id = 'd2-rev-$i'")" REVERSAL_HELD
   done
+  # N4-6: el paso del trabajo retiene UNA clave y UNA cartera por transaccion (el lote de 20261022103000 retenia 2 por fila hasta el final) y sigue
+  # el cursor: tres huerfanos de tres usuarios se ligan en tres transacciones; un cuarto paso no devuelve nada.
+  for i in 10 11 12; do
+    k="n46-$i"; rq "$(credit "$i" "$k")" >/dev/null; inbox "n46-rev-$i" REEMBOLSO_REVERTIDO "$k"
+    rq "update public.tienda_bandeja set resultado = 'REVERSAL_ORPHAN_HELD', estado = 'procesado', recibido_en = now() - interval '1 hour' + interval '1 second' * $i where evento_id = 'n46-rev-$i'" >/dev/null
+  done
+  bg a "begin; select resultado from public.app_store_reconcile_orphan_step(false, null, null, null); do \$\$ begin perform pg_sleep(1.5); end \$\$; commit;"
+  sleep 0.6
+  expect "N4-6 cerrojos de un paso" "$(rq "select count(*) from pg_locks where locktype = 'advisory' and granted")" 2
+  wait; noerr a
+  out="$(rq "select evento_id || '|' || resultado from public.app_store_reconcile_orphan_step(false, (select recibido_en from public.tienda_bandeja where evento_id = 'n46-rev-10'), 'app_store', 'n46-rev-10')")"
+  expect "N4-6 cursor" "$out" "n46-rev-11|REVERSAL_RECORDED"
+  out="$(rq "select evento_id || '|' || resultado from public.app_store_reconcile_orphan_step(false, (select recibido_en from public.tienda_bandeja where evento_id = 'n46-rev-11'), 'app_store', 'n46-rev-11')")"
+  expect "N4-6 cursor 2" "$out" "n46-rev-12|REVERSAL_RECORDED"
+  expect "N4-6 fin" "$(rq "select count(*) from public.app_store_reconcile_orphan_step(false, (select recibido_en from public.tienda_bandeja where evento_id = 'n46-rev-12'), 'app_store', 'n46-rev-12')")" 0
+  expect "N4-6 ligados" "$(rq "select string_agg(resultado, ',' order by evento_id) from public.tienda_bandeja where evento_id like 'n46-rev-%'")" "REVERSAL_RECORDED,REVERSAL_RECORDED,REVERSAL_RECORDED"
+  for i in 9 10 11 12; do
+    expect "libro=saldo u$i" "$(rq "select coalesce(sum(cantidad), 0) = coalesce((select saldo_tickets from public.carteras_usuario where usuario_id = '$(u "$i")'), 0) from public.transacciones_cartera where usuario_id = '$(u "$i")'")" t
+  done
+  # N4-2: un aviso aplazado por G1 queda retenido (sin intento, nunca muerto aunque haya dead letter), se mide aparte (no es `pendiente`) y solo
+  # se vuelve a pedir cuando el trabajo nombra su motivo (interruptor encendido).
+  out="$(rq "select coalesce((select n from public.app_store_inbox_stats() where estado = 'pendiente'), 0)")"
+  k="$(rq "select reclamo from public.app_store_inbox_put('app_store', 'n42-1', 'COMPRA', 'n42-key', 'produccion', repeat('b', 64), '{}'::jsonb)")"
+  expect "N4-2 mark" "$(rq "select public.app_store_inbox_mark('app_store', 'n42-1', 'retenido', null, 'LIVE_CREDIT_DISABLED', '$k', 1)")" t
+  expect "N4-2 retenido" "$(rq "select estado || '|' || intentos from public.tienda_bandeja where evento_id = 'n42-1'")" "retenido|0"
+  expect "N4-2 stats" "$(rq "select string_agg(estado || ':' || n, ',' order by estado) from public.app_store_inbox_stats() where estado like 'retenido%'")|$(rq "select coalesce((select n from public.app_store_inbox_stats() where estado = 'pendiente'), 0)")" "retenido_decision:1|$out"
+  expect "N4-2 interruptor apagado" "$(rq "select count(*) from public.app_store_inbox_pending(200, array['REFUNDS_DISABLED', 'SUBSCRIPTIONS_DISABLED']) where evento_id = 'n42-1'")" 0
+  expect "N4-2 interruptor encendido" "$(rq "select count(*) from public.app_store_inbox_pending(200, array['LIVE_CREDIT_DISABLED']) where evento_id = 'n42-1'")" 1
+  # N4-5: con 300k avisos procesados, app_store_inbox_stats lee el indice parcial del atasco (contador de escaneos del indice, no el texto del plan)
+  psqlc >/dev/null 2>"$err" <<'SQL' || { cat "$err"; fail "N4-5: no se siembra la bandeja"; }
+insert into public.tienda_bandeja (proveedor, evento_id, tipo, clave_compra, entorno, huella, estado, resultado, procesado_en)
+  select 'google_play', 'n45-' || g, 'COMPRA', 'n45-k' || g, 'produccion', repeat('a', 64), 'procesado', 'CREDITED', now() from generate_series(1, 300000) g;
+analyze public.tienda_bandeja;
+SQL
+  out="$(rq "select coalesce((select idx_scan from pg_stat_user_indexes where indexrelname = 'ix_tienda_bandeja_atasco'), -1)")"
+  rq "select count(*) from public.app_store_inbox_stats()" >/dev/null; sleep 1   # el contador se publica al cerrar la sesion
+  expect "N4-5 indice del atasco" "$(rq "select coalesce((select idx_scan from pg_stat_user_indexes where indexrelname = 'ix_tienda_bandeja_atasco'), -1) > $out and $out >= 0")" t
   out="$(rq "select count(*) from public.tienda_bandeja b where b.resultado in ('REFUND_ORPHAN_HELD', 'REVERSAL_ORPHAN_HELD') and exists (select 1 from public.compras_usuario c where c.proveedor = b.proveedor and c.identificador_transaccion = b.clave_compra)")"
   expect "huerfanos con pedido" "$out" 0
   for i in 1 2 3 4 5 6 8; do
