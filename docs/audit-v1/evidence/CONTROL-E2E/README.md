@@ -45,3 +45,25 @@
 ## Pruebas de interfaz (panel `95b5b1e`)
 
 17 pruebas de interfaz de escritorio con las pantallas y los ViewModels REALES y repositorios falsos (no hay red): `AuthLoginUiTest` 4, `ExamPublicationFlowUiTest` 4, `OrdersResolveUiTest` 5 (el primer jvmTest de control-v1) y `AuditScreenUiTest` 4. Corrección encontrada: un login con 403 (no admin o admin bloqueado) enseñaba un texto genérico; ahora muestra el del servidor. Ejecuciones: auth 42/0, exams 334/0, control-v1 36/0, audit 35/0.
+
+## Interfaz contra el backend real (panel `a06601a`), 2026-10-20
+
+`ControlPanelUiE2ETest` (composeApp jvmTest) monta **la app entera**: el grafo Koin de producción, AppRoot, pantallas, ViewModels y repositorios reales. Funciona contra el stack aislado: login real por la pantalla de acceso (GoTrue local del stack, contraseñas de usuarios sintéticos solo en `.local/`), Ktor `control` real y PG17. Solo se sustituye la base local de escritorio por una en memoria, así que `%APPDATA%\OposiControl` no se toca. **8/8 en verde** (`ControlPanelUiE2ETest-2026-10-20.xml`, capturas en `ui-shots/`):
+
+| Flujo | Qué se hace en la interfaz | Qué se comprueba en PG17 |
+|---|---|---|
+| Login admin | email y contraseña → «Entrar» → Dashboard con datos reales | — |
+| Contraseña incorrecta | se queda en el login con el error | no entra |
+| Admin bloqueado | «Sin acceso al panel» + cerrar sesión, sin menú | — |
+| Moderador | panel reducido «Moderación del foro», sin menú de admin ni canales | — |
+| Publicar | Exámenes → buscar → abrir → Publicación → Publicar ahora → confirmar | `publicado_en` + `examen_publicado` con actor admin |
+| Pedido en revisión | Catálogo → Pedidos → abrir → Acreditar + motivo → Resolver → confirmar | `pagada`, +50 OT una vez, `pedido_resuelto` con actor admin |
+| Auditoría | Sistema → pestaña Auditoría → movimientos con «Admin local» | — |
+| Moderador rechaza | cola → Rechazar → motivo → confirmar | `oculta` + auditoría con el MODERADOR como actor |
+
+Durante las pruebas de interfaz salieron:
+- **El dashboard «Usuarios activos: No se pudo leer» era un hueco del stack, no del panel.** Las RPC del dashboard (20260917084214/090229, aplicadas en MAIN) no estaban en el subconjunto de forma del stack. Ya están aplicadas al stack y añadidas a su `up.mjs`.
+- **Tres escrituras sin auditoría, corregidas:** `examen_actualizado`, `lote_creado` y `staging_revisado`. Las pruebas son `AdminImportAndExamEditAuditTest` 3/3 y E2E J02/J06.
+- **Falsa alarma revisada:** los `examen_reglas_puntuacion_*` al crear un examen oficial son el valor por defecto documentado (penalización racional), no una sobrescritura al editar.
+
+Develop: el gate PG17 falla en el paso de manifiesto por DEBT-156b (preexistente: las `*_security_*` están fuera de `PENDING_MIGRATIONS.txt` por diseño). En una copia que solo excluye esas migraciones del paso de manifiesto, el resto del gate da `db-pg17-gate OK` (`develop-pg17-gate-copy-tail.txt`). El script compartido no se ha tocado porque Bot lo modifica en su rama. `verify-ops-config.sh`: OK.

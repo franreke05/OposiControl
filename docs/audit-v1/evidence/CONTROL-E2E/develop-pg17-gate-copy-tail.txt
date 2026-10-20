@@ -1,0 +1,3 @@
+ok:   rollback inverso == bootstrap; re-aplicacion == primera aplicacion (VERIFY = 0)
+db-pg17-gate OK
+GATE_EXIT=0

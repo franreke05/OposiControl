@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" tests="8" skipped="0" failures="0" errors="0" timestamp="2026-10-20T12:01:41.914Z" hostname="ERMENEJILDO" time="102.892">
+  <properties/>
+  <testcase name="uiLoginBlockedAdminSeesNoAccess[jvm]" classname="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" time="17.417"/>
+  <testcase name="uiLoginAdminEntersThePanel[jvm]" classname="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" time="15.8"/>
+  <testcase name="uiAdminPublishesAnExam[jvm]" classname="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" time="21.105"/>
+  <testcase name="uiLoginModeratorSeesOnlyForumModeration[jvm]" classname="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" time="5.713"/>
+  <testcase name="uiAdminCreditsAnOrderInReview[jvm]" classname="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" time="19.017"/>
+  <testcase name="uiModeratorRejectsAPendingPost[jvm]" classname="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" time="11.132"/>
+  <testcase name="uiLoginWrongPasswordStaysOnLogin[jvm]" classname="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" time="3.768"/>
+  <testcase name="uiAdminReadsTheAuditLog[jvm]" classname="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" time="8.938"/>
+  <system-out><![CDATA[UI E2E RUN ui-login-blocked
+UI E2E RUN ui-login-admin
+UI E2E RUN ui-publish
+UI E2E RUN ui-login-moderator
+UI E2E RUN ui-orders
+UI E2E RUN ui-moderator
+UI E2E RUN ui-login-wrong
+UI E2E RUN ui-audit
+]]></system-out>
+  <system-err><![CDATA[SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+]]></system-err>
+</testsuite>

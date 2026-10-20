@@ -5,7 +5,7 @@
 Estado: **CONTROL_PANEL_READY_LOCAL (condicionado)**. Las 12 funciones admin están verificadas de punta a punta en la capa de datos (12/12) y hay pruebas de interfaz de login/roles, publicación, pedidos/reembolsos y auditoría (17, panel `95b5b1e`). Latencias en reposo: lecturas con p95 ≤ 67 ms y escrituras auditadas ≤ 63 ms, sin ningún cuello. Condiciones antes de pasar a READY:
 (1) decisiones del propietario del 2026-10-20 implementadas y probadas en local en la rama del panel: el moderador solo modera el foro, y anular una pregunta oficial exige motivo;
 (2) volver a ejecutar `ControlJourneysE2ETest` sobre el candidato integrado con develop actual (E7 `cb50ee3` es anterior al límite de mutaciones admin y a las migraciones `security_*`);
-(3) las pruebas de interfaz usan repositorios falsos, así que la cadena interfaz→Ktor solo está cubierta por la capa de datos.
+(3) RESUELTO el 2026-10-20: 8 flujos de interfaz con la app entera contra el backend real (`ControlPanelUiE2ETest`, 8/8, panel `a06601a`). Plan de staging aislado en `docs/engineering/STAGING_PLAN.md`, solo plan.
 NO APTO PARA PRODUCCIÓN mientras sigan abiertos los RB P1 (MAIN sin tocar; ningún GO aplicado).
 - **E2E de capa de datos (LIVE_VERIFIED en local aislado):** `ControlJourneysE2ETest` 12/12. Repositorios reales del panel → Ktor `control` real → PG17 (stack `oposi-control-e2e`, árbol E7 `cb50ee3`). Comprueba la base, `auditoria_log` y la matriz de roles. Evidencia: `docs/audit-v1/evidence/CONTROL-E2E/`.
 - **Corregido en el panel:** 502 de `/especialidades` con `descripcion` NULL. Hacía fallar en el panel un guardado de examen que el servidor ya había hecho, y al reintentar se duplicaba.
