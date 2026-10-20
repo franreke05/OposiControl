@@ -1,10 +1,11 @@
 #!/usr/bin/env node
 // REAL AUTH GATE (owner rule 2026-10-16): the bot-backend Auth routes against a REAL GoTrue (not the stub).
-//   node ops/local-exam/up.mjs --real-auth      (gateway /auth/v1 -> GoTrue container, Mailpit on http://127.0.0.1:8025; the host stub must be stopped)
+//   node ops/local-exam/up.mjs --real-auth      (gateway /auth/v1 -> GoTrue container, Mailpit on MAIL_URL (mail port, stack-config.mjs); the host stub must be stopped)
 //   STACK_HOLDER=E1 node ops/local-exam/real-auth-gate.mjs
 //   node ops/local-exam/up.mjs --stub-auth      (back to the fast path)
 // PASS/FAIL lines are assertions about OUR contract; OBSERVED lines record how the real GoTrue differs from the stub (see E1-V1-REAL-AUTH-GATE.md).
-// Never prints a password, token or code. Needs STACK_LOCK, the app Ktor (:8089). Test accounts *@exam.local are deleted at start (cascade) so the run repeats.
+// Never prints a password, token or code. Needs STACK_LOCK, the app Ktor (KTOR_URL, stack-config.mjs). Test accounts *@exam.local are deleted at start (cascade) so the run repeats.
+import { GATEWAY, KTOR_URL, LOCAL_DIR, MAIL_URL, composeArgs } from './stack-config.mjs';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -13,14 +14,12 @@ import { requireStackLock } from './stack-lock.mjs';
 
 requireStackLock('real-auth-gate.mjs');
 const here = path.dirname(fileURLToPath(import.meta.url));
-const local = path.join(here, '.local');
-const KTOR = process.env.KTOR_URL ?? 'http://127.0.0.1:8089';
-const MAIL = process.env.MAILPIT_URL ?? 'http://127.0.0.1:8025';
-import { GATEWAY } from './ports.mjs';
+const local = LOCAL_DIR;
+const KTOR = KTOR_URL;
+const MAIL = MAIL_URL;
 const PASS = 'Real-Auth-Pass-0123456789';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const sql = (text) => execFileSync('docker', ['compose', '--env-file', path.join(local, 'compose.env'), '-f', path.join(here, 'docker-compose.yaml'),
-  'exec', '-T', 'db', 'psql', '-U', 'postgres', '-h', 'localhost', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'], { input: text, encoding: 'utf8' }).trim();
+const sql = (text) => execFileSync('docker', [...composeArgs(), 'exec', '-T', 'db', 'psql', '-U', 'postgres', '-h', 'localhost', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'], { input: text, encoding: 'utf8' }).trim();
 const results = [];
 const check = (id, ok, detail = '') => { results.push(ok); console.log(`${ok ? 'PASS' : 'FAIL'}  ${id}${detail ? '  ' + detail : ''}`); };
 const observed = (id, detail) => console.log(`OBSERVED  ${id}  ${detail}`);

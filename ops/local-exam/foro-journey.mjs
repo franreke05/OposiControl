@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-// J22 (E1, W5b): Foro / Red (text) over HTTP. Needs STACK_LOCK, the app Ktor (:8089) and `up.mjs --converge` (migration 20261022101900).
+// J22 (E1, W5b): Foro / Red (text) over HTTP. Needs STACK_LOCK, the app Ktor (KTOR_URL, stack-config.mjs) and `up.mjs --converge` (migration 20261022101900).
 //   Author = Q1, readers = Q2 and Q3 (same specialty). Channels are created here (one open to the caller specialty, one scoped to ING). Control's moderation is called through the SQL function
 //   (the Ktor admin route for it belongs to Control's integration). Everything it writes is removed at the start and at the end.
 //   node ops/local-exam/foro-journey.mjs
+import { KTOR_URL, LOCAL_DIR, composeArgs } from './stack-config.mjs';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -13,15 +14,14 @@ import { requireStackLock } from './stack-lock.mjs';
 
 requireStackLock('foro-journey.mjs');
 const here = path.dirname(fileURLToPath(import.meta.url));
-const local = path.join(here, '.local');
+const local = LOCAL_DIR;
 const tokens = JSON.parse(fs.readFileSync(path.join(local, 'tokens.json'), 'utf8'));
-const APP = process.env.KTOR_URL ?? 'http://127.0.0.1:8089';
+const APP = KTOR_URL;
 const Q1 = '2a000000-0000-4000-8000-00000000002a', Q2 = '2b000000-0000-4000-8000-00000000002b', Q3 = '2d000000-0000-4000-8000-00000000002d';
 const ESP = 'e5000000-0000-4000-8000-000000000001', ING = 'e1000000-0000-4000-8000-000000000002';
 const CH_OPEN = 'c0220000-0000-4000-8000-000000000001', CH_ING = 'c0220000-0000-4000-8000-000000000002';
 const P = '/api/v1/app/oposired';
-const sql = (text) => execFileSync('docker', ['compose', '--env-file', path.join(local, 'compose.env'), '-f', path.join(here, 'docker-compose.yaml'),
-  'exec', '-T', 'db', 'psql', '-U', 'postgres', '-h', 'localhost', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'], { input: text, encoding: 'utf8' }).trim();
+const sql = (text) => execFileSync('docker', [...composeArgs(), 'exec', '-T', 'db', 'psql', '-U', 'postgres', '-h', 'localhost', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'], { input: text, encoding: 'utf8' }).trim();
 const http = async (user, method, p, body, key) => {
   const headers = { Authorization: `Bearer ${tokens[user] ?? user}` };
   if (body !== undefined) headers['Content-Type'] = 'application/json';

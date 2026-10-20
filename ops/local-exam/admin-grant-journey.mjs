@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-// J15 (E5): admin gift of an exam, end to end over HTTP. Needs STACK_LOCK, the app Ktor (:8089) and the CONTROL-profile Ktor (:8090, `run-ktor.mjs --admin`), and `up.mjs` applied (migration
+// J15 (E5): admin gift of an exam, end to end over HTTP. Needs STACK_LOCK, the app Ktor (KTOR_URL, stack-config.mjs) and the CONTROL-profile Ktor (ADMIN_KTOR_URL, `run-ktor.mjs --admin`), and `up.mjs` applied (migration
 // 20261022100700 + fixtures 98/99). The gift is ONE month (the exam's dias_acceso_compra, 30) set by the server; it stacks max(now, current end) + 30 days and never shortens; it is never unlimited;
 // the specialty and capability gates apply; it never touches the wallet. Revoke exists in Control (POST /accesos/{id}/revocar): it closes every active manual grant, never a purchase.
 //   node ops/local-exam/admin-grant-journey.mjs
+import { ADMIN_KTOR_URL, KTOR_URL, LOCAL_DIR, composeArgs } from './stack-config.mjs';
 import { execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -13,16 +14,15 @@ import { trackHarnessExams } from './harness-marker.mjs'; trackHarnessExams('adm
 
 requireStackLock('admin-grant-journey.mjs');
 const here = path.dirname(fileURLToPath(import.meta.url));
-const local = path.join(here, '.local');
+const local = LOCAL_DIR;
 const tokens = JSON.parse(fs.readFileSync(path.join(local, 'tokens.json'), 'utf8'));
-const APP = process.env.KTOR_URL ?? 'http://127.0.0.1:8089';
-const ADMIN = process.env.ADMIN_KTOR_URL ?? 'http://127.0.0.1:8090';
+const APP = KTOR_URL;
+const ADMIN = ADMIN_KTOR_URL;
 const Q = { Q1: '2a000000-0000-4000-8000-00000000002a', Q2Z: '2c000000-0000-4000-8000-00000000002c', Q3: '2d000000-0000-4000-8000-00000000002d', Q4: '2e000000-0000-4000-8000-00000000002e' };
 const OT = { IMM30: 'e3000000-0000-4000-8000-000000000030', ONE: 'e3000000-0000-4000-8000-000000000001', ING: 'e3000000-0000-4000-8000-000000000005' };
 const day = 86400000;
 
-const sql = (text) => execFileSync('docker', ['compose', '--env-file', path.join(local, 'compose.env'), '-f', path.join(here, 'docker-compose.yaml'),
-  'exec', '-T', 'db', 'psql', '-U', 'postgres', '-h', 'localhost', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'], { input: text, encoding: 'utf8' }).trim();
+const sql = (text) => execFileSync('docker', [...composeArgs(), 'exec', '-T', 'db', 'psql', '-U', 'postgres', '-h', 'localhost', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'], { input: text, encoding: 'utf8' }).trim();
 const http = async (base, token, method, p, body, key) => {
   const headers = { Authorization: `Bearer ${token}` };
   if (body !== undefined) headers['Content-Type'] = 'application/json';

@@ -2,7 +2,7 @@
 // EX15/EX16/EX11/EX12: E2E del motor de examen contra el stack LOCAL (up.mjs + run-ktor.mjs). Nunca contra MAIN.
 //   node ops/local-exam/e2e.mjs        -> imprime PASS/FAIL por caso y escribe .local/e2e-result.json
 // Cada caso parte de un intento NUEVO: se cierran (abandonan) los abiertos de los usuarios de prueba antes de empezar.
-import { GATEWAY as GATEWAY_URL } from './ports.mjs';
+import { ADMIN_KTOR_URL, GATEWAY as GATEWAY_URL, GOTRUE_STUB_URL, KTOR_URL, LOCAL_DIR, composeArgs } from './stack-config.mjs';
 import { execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -15,10 +15,10 @@ import { trackHarnessExams } from './harness-marker.mjs'; trackHarnessExams('e2e
 requireStackLock('e2e.mjs');
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const local = path.join(here, '.local');
-const KTOR = process.env.KTOR_URL ?? 'http://127.0.0.1:8089';
+const local = LOCAL_DIR;
+const KTOR = KTOR_URL;
 // V1: segundo Ktor con el perfil `control` (node ops/local-exam/run-ktor.mjs --admin) para la superficie de administracion.
-const ADMIN_KTOR = process.env.ADMIN_KTOR_URL ?? 'http://127.0.0.1:8090';
+const ADMIN_KTOR = ADMIN_KTOR_URL;
 // E5-B03: el e2e usa SUS PROPIOS usuarios para todo lo que escribe (intentos, cubos de limite): XA/XB (sql/94). A, B y P son
 // de los recorridos de la app: solo se LEEN (cartera, derechos, premium) y nunca se tocan sus intentos.
 const rawTokens = JSON.parse(fs.readFileSync(path.join(local, 'tokens.json'), 'utf8'));
@@ -54,8 +54,7 @@ function decode(bytes) {
   return { stream, seconds, decoded: probe.ok && full.ok && full.out.trim() === '' };
 }
 
-const sql = (text) => execFileSync('docker', ['compose', '--env-file', path.join(local, 'compose.env'), '-f', path.join(here, 'docker-compose.yaml'),
-  'exec', '-T', 'db', 'psql', '-U', 'postgres', '-h', 'localhost', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'], { input: text, encoding: 'utf8' }).trim();
+const sql = (text) => execFileSync('docker', [...composeArgs(), 'exec', '-T', 'db', 'psql', '-U', 'postgres', '-h', 'localhost', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'], { input: text, encoding: 'utf8' }).trim();
 
 async function call(user, method, p, body, key) {
   const headers = { Authorization: `Bearer ${tokens[user]}` };
@@ -363,7 +362,7 @@ await scenario('ENTITLEMENT', async () => {
 await scenario('REGISTER_J6', async () => {
   const MAIL = 'j6@exam.local', PASS = 'Local-Pass-0123456789';
   const ING = 'e1000000-0000-4000-8000-000000000002';
-  const stub = 'http://127.0.0.1:9999';
+  const stub = GOTRUE_STUB_URL;
   const stubUp = () => fetch(stub + '/__local/health').then((r) => r.ok).catch(() => false);
   if (!(await stubUp()) && process.env.E2E_NO_STUB_START !== '1') {
     // start the LOCAL stub with the same guards as by hand (STACK_LOCK holder and APP_ENV=local|test are inherited, never forced); stopped again at the end
@@ -588,7 +587,7 @@ await scenario('ECONOMY', async () => {
   check('ECONOMY.D6_03_no_ot_price_422', unset.status === 422 && unset.json?.code === 'NOT_PURCHASABLE', unset.status + ' ' + unset.json?.code);
   const none = await redeem('Q4', 'e3999999-0000-4000-8000-000000000999');
   check('ECONOMY.D6_03_unknown_exam_404', none.status === 404 && none.json?.code === 'EXAM_NOT_FOUND', none.status + ' ' + none.json?.code);
-  const forged = await call('Q4', 'POST', '/api/v1/app/wallet/canjes', { examId: OT.ONE, usuarioId: Q.Q2, saldo: 9999, precioPagado: 0 }, key());
+  const forged = await call('Q4', 'POST', '/api/v1/app/wallet/canjes', { examId: OT.ONE, usuarioId: Q.Q2, saldo: 9999, precioPagado: 0 }, key());   // stack-port-check: data value, not a port
   check('ECONOMY.D6_03_forged_fields_400', forged.status === 400 && forged.json?.code === 'VALIDATION' && ledgerCount('Q4', OT.ONE) === 0 && bal('Q2') === '29', forged.status + ' ' + forged.json?.code);
   const noKey = await call('Q4', 'POST', '/api/v1/app/wallet/canjes', { examId: OT.ONE });
   check('ECONOMY.D6_03_key_required_400', noKey.status === 400 && noKey.json?.code === 'IDEMPOTENCY_KEY_REQUIRED', noKey.status + ' ' + noKey.json?.code);
@@ -651,7 +650,7 @@ await scenario('ECONOMY', async () => {
     o1.status + ' ' + o1.text.slice(0, 200));
   const o1b = await newOrder(ko);
   check('ECONOMY.D6_12_order_replay_same_key', (o1b.status === 201 || o1b.status === 200) && o1b.headers.get('idempotent-replayed') === 'true' && o1b.json?.order?.id === ord?.id, o1b.status + ' ' + o1b.json?.order?.id);
-  const forgedOrder = await call('Q2Z', 'POST', '/api/v1/app/payments/orders', { productCode: 'LOCAL_PACK_50', provider: 'sandbox', amountCents: 1, tickets: 9999 }, key());
+  const forgedOrder = await call('Q2Z', 'POST', '/api/v1/app/payments/orders', { productCode: 'LOCAL_PACK_50', provider: 'sandbox', amountCents: 1, tickets: 9999 }, key());   // stack-port-check: data value, not a port
   check('ECONOMY.D6_12_client_amounts_rejected', forgedOrder.status === 400 && forgedOrder.json?.code === 'VALIDATION', forgedOrder.status + ' ' + forgedOrder.json?.code);
   const tampered = await call('Q2Z', 'POST', '/api/v1/app/payments/orders', { productCode: 'LOCAL_PACK_UNKNOWN', provider: 'sandbox' }, key());
   check('ECONOMY.D6_12_unknown_pack_422', tampered.status === 422 && tampered.json?.code === 'PRODUCT_NOT_AVAILABLE', tampered.status + ' ' + tampered.json?.code);

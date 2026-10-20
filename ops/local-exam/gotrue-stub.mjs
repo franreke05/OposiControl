@@ -10,7 +10,7 @@
 //   - binds 127.0.0.1 only; the gateway reaches it through nginx (ops/local-exam/nginx.conf) on this machine;
 //   - requires STACK_LOCK (stack-lock.mjs): it writes to the shared local DB;
 //   - never prints or logs a password, token, code or e-mail address; the verification code of a signup is delivered ONLY through the
-//     local mailbox file .local/mailbox.jsonl and GET http://127.0.0.1:9999/__local/mailbox?email=<address> (127.0.0.1 only).
+//     local mailbox file <localDir>/mailbox.jsonl and GET <gotrueStub url>/__local/mailbox?email=<address> (127.0.0.1 only; port from stack-config.mjs).
 // It is NOT part of the Ktor image and has no production counterpart.
 //
 //   STACK_HOLDER=E1 APP_ENV=local node ops/local-exam/gotrue-stub.mjs            (foreground)
@@ -30,16 +30,13 @@ if (process.env.APP_ENV !== 'local' && process.env.APP_ENV !== 'test') {
 requireStackLock('gotrue-stub.mjs');
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const local = path.join(here, '.local');
-const PORT = Number(process.env.GOTRUE_STUB_PORT ?? 9999);
-import { GATEWAY as LOCAL_GATEWAY } from './ports.mjs';
+import { GATEWAY as LOCAL_GATEWAY, LOCAL_DIR, PORTS, PROJECT, dbPsqlArgs } from './stack-config.mjs';
+const local = LOCAL_DIR;
+const PORT = PORTS.gotrueStub;
 const GATEWAY = process.env.GOTRUE_STUB_GATEWAY ?? LOCAL_GATEWAY;
-const DB_CONTAINER = process.env.GOTRUE_STUB_DB_CONTAINER ?? 'oposi-exam-local-db-1';
-// Belt and braces (E2-V1-R-REGISTER INFO-1): the stub writes only into the local stack's own database container.
-if (!DB_CONTAINER.startsWith('oposi-exam-local-')) {
-  console.error('gotrue-stub: the database container must be a local-stack container (oposi-exam-local-*).');
-  process.exit(4);
-}
+// Belt and braces (E2-V1-R-REGISTER INFO-1): the stub writes only into the local stack's own database: the `db` service of THIS compose
+// project (stack-config.mjs; an isolated copy that would share the default stack's ports or .local refuses to load there, exit 4).
+console.log(`gotrue-stub: database = compose project ${PROJECT}, service db`);
 const secrets = JSON.parse(fs.readFileSync(path.join(local, 'secrets.json'), 'utf8'));
 const key = crypto.createPrivateKey({ key: secrets.privateJwk, format: 'jwk' });
 const mailboxFile = path.join(local, 'mailbox.jsonl');
@@ -55,7 +52,7 @@ function sql(text, vars = {}) {
   const literal = (v) => { const t = String(v); if (t.includes('$' + tag)) throw new Error('db'); return '$' + tag + '$' + t + '$' + tag + '$'; };
   const statement = text.replace(/:'(\w+)'/g, (_, name) => literal(vars[name]));
   return new Promise((resolve, reject) => {
-    const args = ['exec', '-i', DB_CONTAINER, 'psql', '-U', 'postgres', '-h', 'localhost', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-v', 'VERBOSITY=sqlstate', '-f', '-'];
+    const args = dbPsqlArgs(['-U', 'postgres', '-h', 'localhost', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-v', 'VERBOSITY=sqlstate', '-f', '-']);
     const child = execFile('docker', args, { maxBuffer: 1 << 20 }, (error, stdout, stderr) => (error ? reject(new Error('db ' + String(stderr).split(/\r?\n/)[0].replace(/[^A-Za-z0-9: _.-]/g, '').slice(0, 60))) : resolve(stdout.trim())));
     child.stdin.end(statement);
   });

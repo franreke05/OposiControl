@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// J19 (E1, W3): stats over HTTP. Needs STACK_LOCK, the app Ktor (:8089) and `up.mjs --converge` (migration 20261022101600 + fixtures 98b with the league tiers).
+// J19 (E1, W3): stats over HTTP. Needs STACK_LOCK, the app Ktor (KTOR_URL, stack-config.mjs) and `up.mjs --converge` (migration 20261022101600 + fixtures 98b with the league tiers).
 // It creates its own exam (STAT-1, 8 questions, 2 tags) for the free user Q1 and resets Q1's stats rows first (the ledger of first answers is the exactly-once guard, so a re-run must clear it).
 //   node ops/local-exam/stats-journey.mjs
+import { KTOR_URL, LOCAL_DIR, composeArgs } from './stack-config.mjs';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -12,9 +13,9 @@ import { trackHarnessExams } from './harness-marker.mjs'; trackHarnessExams('sta
 
 requireStackLock('stats-journey.mjs');
 const here = path.dirname(fileURLToPath(import.meta.url));
-const local = path.join(here, '.local');
+const local = LOCAL_DIR;
 const tokens = JSON.parse(fs.readFileSync(path.join(local, 'tokens.json'), 'utf8'));
-const APP = process.env.KTOR_URL ?? 'http://127.0.0.1:8089';
+const APP = KTOR_URL;
 const Q1 = '2a000000-0000-4000-8000-00000000002a';
 const ESP = 'e5000000-0000-4000-8000-000000000001';
 const EX = 'eb000000-0000-4000-8000-000000000001';
@@ -22,8 +23,7 @@ const qid = (p) => `fb000000-0000-4000-0001-${String(p).padStart(12, '0')}`;
 const oid = (p, o) => `0b000000-0000-4000-0001-${String(p * 10 + o).padStart(12, '0')}`;
 const TAG_A = '7b900000-0000-4000-8000-000000000001', TAG_B = '7b900000-0000-4000-8000-000000000002';
 
-const sql = (text) => execFileSync('docker', ['compose', '--env-file', path.join(local, 'compose.env'), '-f', path.join(here, 'docker-compose.yaml'),
-  'exec', '-T', 'db', 'psql', '-U', 'postgres', '-h', 'localhost', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'], { input: text, encoding: 'utf8' }).trim();
+const sql = (text) => execFileSync('docker', [...composeArgs(), 'exec', '-T', 'db', 'psql', '-U', 'postgres', '-h', 'localhost', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'], { input: text, encoding: 'utf8' }).trim();
 const http = async (method, p, body) => {
   const headers = { Authorization: `Bearer ${tokens.Q1}` };
   if (body !== undefined) headers['Content-Type'] = 'application/json';

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// J20 (E1, W4): leagues, ranking, top 3 and place probability over HTTP. Needs STACK_LOCK, the app Ktor (:8089), the control Ktor (:8090) and `up.mjs --converge` (migration 20261022101700).
+// J20 (E1, W4): leagues, ranking, top 3 and place probability over HTTP. Needs STACK_LOCK, the app Ktor (KTOR_URL, stack-config.mjs), the control Ktor (ADMIN_KTOR_URL) and `up.mjs --converge` (migration 20261022101700).
 //   Caller = Q1 (specialty ESP). Synthetic users R1..R9 (same specialty, liga-50, FULL window, Nota media 9..1), R1 and R2 opted in; R10 of another specialty; R11 without a full window.
 //   node ops/local-exam/ranking-journey.mjs
+import { ADMIN_KTOR_URL, KTOR_URL, LOCAL_DIR, composeArgs } from './stack-config.mjs';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -10,17 +11,16 @@ import { requireStackLock } from './stack-lock.mjs';
 
 requireStackLock('ranking-journey.mjs');
 const here = path.dirname(fileURLToPath(import.meta.url));
-const local = path.join(here, '.local');
+const local = LOCAL_DIR;
 const tokens = JSON.parse(fs.readFileSync(path.join(local, 'tokens.json'), 'utf8'));
-const APP = process.env.KTOR_URL ?? 'http://127.0.0.1:8089';
-const ADMIN = process.env.ADMIN_KTOR_URL ?? 'http://127.0.0.1:8090';
+const APP = KTOR_URL;
+const ADMIN = ADMIN_KTOR_URL;
 const Q1 = '2a000000-0000-4000-8000-00000000002a', Q4 = '2e000000-0000-4000-8000-00000000002e';
 // the journey runs in its OWN specialty (the live stack holds other users of the main specialty from other suites: they would change the positions); Q1 is moved there and back
 const ESP = 'e1000000-0000-4000-8000-0000000000e0', ESP2 = 'e1000000-0000-4000-8000-000000000002', ESP_Q1 = 'e5000000-0000-4000-8000-000000000001';
 const R = (n) => `4c000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 
-const sql = (text) => execFileSync('docker', ['compose', '--env-file', path.join(local, 'compose.env'), '-f', path.join(here, 'docker-compose.yaml'),
-  'exec', '-T', 'db', 'psql', '-U', 'postgres', '-h', 'localhost', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'], { input: text, encoding: 'utf8' }).trim();
+const sql = (text) => execFileSync('docker', [...composeArgs(), 'exec', '-T', 'db', 'psql', '-U', 'postgres', '-h', 'localhost', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'], { input: text, encoding: 'utf8' }).trim();
 const http = async (base, token, method, p, body) => {
   const headers = { Authorization: `Bearer ${token}` };
   if (body !== undefined) headers['Content-Type'] = 'application/json';

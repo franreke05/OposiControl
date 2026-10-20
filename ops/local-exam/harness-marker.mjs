@@ -1,9 +1,10 @@
 // Marks the exams a harness created so `up.mjs --clean-test-exams` / `--restore-fixtures` can clean them (see sql/88_harness_exams_local.sql).
 // Usage, at the top of a harness that creates exams:   import { trackHarnessExams } from './harness-marker.mjs'; trackHarnessExams('stats-journey');
 // Everything created in `examenes` between the call and the process exit is marked, except baseline fixtures (LOC-*). Best effort: never fails the harness.
+import { composeArgs } from './stack-config.mjs';
 import { execFileSync } from 'node:child_process';
 
-const psql = (sql) => execFileSync('docker', ['exec', '-i', 'oposi-exam-local-db-1', 'psql', '-U', 'postgres', '-d', 'postgres', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'],
+const psql = (sql) => execFileSync('docker', [...composeArgs(), 'exec', '-T', 'db', 'psql', '-U', 'postgres', '-d', 'postgres', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'],
   { input: sql, encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }).trim();
 
 export function trackHarnessExams(label) {

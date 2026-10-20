@@ -4,14 +4,16 @@
 // guardDbRecreate() runs before up.mjs touches compose:
 //   - no db container, or it has mounts (data is in a volume), or the compose config is unchanged -> nothing to do
 //   - otherwise the container would be recreated while it holds data -> REFUSE (exit 4), unless `--allow-db-recreate` is given, in which case the
-//     whole container is first saved with `docker commit` as image `oposi-exam-local-db-backup:<timestamp>` (data inside; restore with
+//     whole container is first saved with `docker commit` as image `<project>-db-backup:<timestamp>` (data inside; restore with
 //     `docker run` of that image, see the handoff) and a plain SQL dump is attempted into .local/backups/.
 //   - `--reset` is the explicit destructive path and is not guarded here.
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 
-const NAME = 'oposi-exam-local-db-1';
+import { DB_CONTAINER as NAME, PROJECT } from './stack-config.mjs';
+
+// NAME = `<project>-db-1` (stack-config.mjs): inspect/commit need the raw container name; everything else goes through `docker compose -p`.
 const docker = (...args) => execFileSync('docker', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 
 export function guardDbRecreate({ composeArgs, local, argv = process.argv }) {
@@ -38,7 +40,7 @@ export function guardDbRecreate({ composeArgs, local, argv = process.argv }) {
     process.exit(4);
   }
   const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
-  const image = `oposi-exam-local-db-backup:${stamp}`;
+  const image = `${PROJECT}-db-backup:${stamp}`;
   docker('commit', NAME, image);
   console.log(`DB GUARD: container saved as image ${image}`);
   try {
@@ -46,7 +48,7 @@ export function guardDbRecreate({ composeArgs, local, argv = process.argv }) {
     fs.mkdirSync(path.join(local, 'backups'), { recursive: true });
     const dump = execFileSync('docker', ['exec', NAME, 'pg_dumpall', '-U', 'postgres', '-h', 'localhost'], { encoding: 'buffer', maxBuffer: 1 << 30 });
     fs.writeFileSync(path.join(local, 'backups', `db-${stamp}.sql`), dump);
-    console.log(`DB GUARD: SQL dump written to .local/backups/db-${stamp}.sql`);
+    console.log(`DB GUARD: SQL dump written to ${path.join(local, 'backups', `db-${stamp}.sql`)}`);
   } catch (error) {
     console.warn('DB GUARD: SQL dump failed (the committed image still holds the data): ' + String(error.message).split('\n')[0]);
   }

@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// J17 (E1, W2 + D7-33): daily challenge, streak, claim and plan catalog over HTTP. Needs STACK_LOCK, the app Ktor (:8089) and `up.mjs --converge` (migrations ..101150, ..101200 + fixtures 98b).
+// J17 (E1, W2 + D7-33): daily challenge, streak, claim and plan catalog over HTTP. Needs STACK_LOCK, the app Ktor (KTOR_URL, stack-config.mjs) and `up.mjs --converge` (migrations ..101150, ..101200 + fixtures 98b).
 //   Q1 = free user (no community: the national row). Repeatable: it clears the challenge rows of Q1 for today first (the ledger is append-only, so a second run claims by REPLAY).
 //   node ops/local-exam/challenge-journey.mjs
+import { KTOR_URL, LOCAL_DIR, composeArgs } from './stack-config.mjs';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -11,13 +12,12 @@ import { trackHarnessExams } from './harness-marker.mjs'; trackHarnessExams('cha
 
 requireStackLock('challenge-journey.mjs');
 const here = path.dirname(fileURLToPath(import.meta.url));
-const local = path.join(here, '.local');
+const local = LOCAL_DIR;
 const tokens = JSON.parse(fs.readFileSync(path.join(local, 'tokens.json'), 'utf8'));
-const APP = process.env.KTOR_URL ?? 'http://127.0.0.1:8089';
+const APP = KTOR_URL;
 const Q1 = '2a000000-0000-4000-8000-00000000002a';
 
-const sql = (text) => execFileSync('docker', ['compose', '--env-file', path.join(local, 'compose.env'), '-f', path.join(here, 'docker-compose.yaml'),
-  'exec', '-T', 'db', 'psql', '-U', 'postgres', '-h', 'localhost', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'], { input: text, encoding: 'utf8' }).trim();
+const sql = (text) => execFileSync('docker', [...composeArgs(), 'exec', '-T', 'db', 'psql', '-U', 'postgres', '-h', 'localhost', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'], { input: text, encoding: 'utf8' }).trim();
 const http = async (token, method, p, body) => {
   const headers = { Authorization: `Bearer ${token}` };
   if (body !== undefined) headers['Content-Type'] = 'application/json';

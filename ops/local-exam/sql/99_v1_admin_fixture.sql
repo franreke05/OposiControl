@@ -1,4 +1,4 @@
--- V1 admin path for local end-to-end checks (LOCAL ONLY). One admin user so the CONTROL profile (second Ktor, port 8090) can be called with a real JWT:
+-- V1 admin path for local end-to-end checks (LOCAL ONLY). One admin user so the CONTROL profile (second Ktor, port ktorControl, stack-config.mjs) can be called with a real JWT:
 -- "an exam without community is rejected", "an unknown community is rejected", "publishing needs a community". JWT: .local/tokens.json key "ADMIN".
 -- The admin role is the canonical `admin` code in roles_app (CanonicalAuthorization.adminRoleCodes); roles_usuario links the user to it. Idempotent.
 set session_replication_role = replica;
