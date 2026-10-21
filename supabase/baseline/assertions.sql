@@ -2062,7 +2062,7 @@ begin
   select pr.pregunta_id into pid from public.preguntas_reto_diario pr where pr.reto_id = rid and pr.posicion = 1;
   perform pg_temp.expect_e(format($q$select public.app_answer_daily_challenge(%L, %L, %L, %L)$q$, us, rid, pid, ('0e800000-0000-0000-0000-000000000' || lpad(right(pid::text, 2), 2, '0') || '1')::uuid), 'RETO_OUT_OF_WINDOW');
   assert public.app_get_daily_challenge(us) ->> 'estado' = 'FALLADO', 'an unfinished challenge after its window reads as failed';
-  update public.retos_diarios set termina_en = (select empieza_en + interval '24 hours' from public.retos_diarios where id = rid) where id = rid;
+  update public.retos_diarios set termina_en = private.reto_day_end(fecha) where id = rid;   -- 20261022103500: the window ends at the next local midnight
   -- ---- streak bonus (from the 3rd consecutive day, plan amount)
   insert into public.rachas_usuario (usuario_id, racha_actual_dias, mejor_racha_dias, ultima_actividad_fecha) values (us, 2, 5, today - 1);
   for pid in select pr.pregunta_id from public.preguntas_reto_diario pr where pr.reto_id = rid order by pr.posicion loop
@@ -2112,11 +2112,146 @@ begin
                                'estadisticas_usuario', 'estadisticas_usuario_etiqueta', 'estadisticas_usuario_pregunta', 'estado_competitivo_usuario', 'estado_opositester_usuario',
                                'estadisticas_globales_etiqueta', 'estadisticas_globales_pregunta', 'rachas_usuario']) t(n)
     where to_regclass('public.' || t.n) is not null and has_table_privilege('anon', 'public.' || t.n, 'select')), 'W-11: anon reads none of them';
+  -- ---- 20261022103500: ONE streak rule for write and read (private.reto_streak_gap_free); no challenge row exists before today yet
+  insert into auth.users (id, email, aud, role, email_confirmed_at) values
+    ('a0000000-0000-0000-0000-0000000000e5','ch-gap@test.local','authenticated','authenticated', now()), ('a0000000-0000-0000-0000-0000000000e6','ch-miss@test.local','authenticated','authenticated', now()),
+    ('a0000000-0000-0000-0000-0000000000e7','ch-legacy@test.local','authenticated','authenticated', now());
+  insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta, especialidad_principal_id, comunidad_principal_id) values
+    ('a0000000-0000-0000-0000-0000000000e5','n5','chn5',true,'activa',esp, null), ('a0000000-0000-0000-0000-0000000000e6','n6','chn6',true,'activa',esp, null),
+    ('a0000000-0000-0000-0000-0000000000e7','n7','chn7',true,'activa',esp, comA)
+    on conflict (usuario_id) do update set especialidad_principal_id = excluded.especialidad_principal_id, comunidad_principal_id = excluded.comunidad_principal_id;
+  insert into public.rachas_usuario (usuario_id, racha_actual_dias, mejor_racha_dias, ultima_actividad_fecha) values
+    ('a0000000-0000-0000-0000-0000000000e5', 4, 4, today - 3), ('a0000000-0000-0000-0000-0000000000e6', 4, 4, today - 3);
+  -- (a) days WITHOUT any challenge for the specialty keep the streak (current owner rule, decision 5 pending): the read now agrees with the write
+  assert private.reto_streak_gap_free(today - 3, today, esp) and not private.reto_streak_gap_free(today - 3, today, null) and not private.reto_streak_gap_free(today, today, esp)
+     and private.reto_streak_gap_free(today - 1, today, esp) and not private.reto_streak_gap_free(null, today, esp), 'gap rule: yesterday or only no-challenge days in between';
+  assert (public.app_get_streak('a0000000-0000-0000-0000-0000000000e5') ->> 'actual')::int = 4, 'read: two days without any challenge do not read as a lost streak (was 0 before 20261022103500)';
+  j := public.app_get_daily_challenge('a0000000-0000-0000-0000-0000000000e5');
+  rid := (j ->> 'retoId')::uuid;
+  for pid in select pr.pregunta_id from public.preguntas_reto_diario pr where pr.reto_id = rid order by pr.posicion loop
+    j := public.app_answer_daily_challenge('a0000000-0000-0000-0000-0000000000e5', rid, pid, ('0e800000-0000-0000-0000-000000000' || lpad(right(pid::text, 2), 2, '0') || '1')::uuid);
+  end loop;
+  assert j ->> 'estado' = 'SUPERADO' and (j -> 'racha' ->> 'actual')::int = 5 and (j -> 'racha' ->> 'maxima')::int = 5, 'write: the same rule continues the streak: ' || j::text;
+  -- (b) a REAL missed day (a challenge existed for the specialty and was not passed) resets the streak on read and on write
+  perform private.ensure_challenge_row(today - 2, esp, null);
+  assert exists (select 1 from public.retos_diarios where fecha = today - 2 and especialidad_id = esp and activo), 'a challenge existed two days ago';
+  assert not private.reto_streak_gap_free(today - 3, today, esp), 'gap rule: a day with a challenge in between breaks it';
+  assert (public.app_get_streak('a0000000-0000-0000-0000-0000000000e6') ->> 'actual')::int = 0, 'read: a real missed day reads 0';
+  j := public.app_get_daily_challenge('a0000000-0000-0000-0000-0000000000e6');
+  rid := (j ->> 'retoId')::uuid;
+  assert (j -> 'racha' ->> 'actual')::int = 0, 'GET today shows the lost streak too';
+  for pid in select pr.pregunta_id from public.preguntas_reto_diario pr where pr.reto_id = rid order by pr.posicion loop
+    j := public.app_answer_daily_challenge('a0000000-0000-0000-0000-0000000000e6', rid, pid, ('0e800000-0000-0000-0000-000000000' || lpad(right(pid::text, 2), 2, '0') || '1')::uuid);
+  end loop;
+  assert j ->> 'estado' = 'SUPERADO' and (j -> 'racha' ->> 'actual')::int = 1 and (j -> 'racha' ->> 'maxima')::int = 4, 'write: after a real missed day the streak restarts at 1, the best stays: ' || j::text;
+  assert (select racha_actual_dias from public.rachas_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000e6') = 1
+     and (select ultima_actividad_fecha from public.rachas_usuario where usuario_id = 'a0000000-0000-0000-0000-0000000000e6') = today, 'stored: 1 day, today';
+  -- (c) legacy GET /reto-diario: the user's row of today in the configured zone, read only, segment-aware
+  assert (select l.id from public.app_legacy_daily_challenge(un) l) = reto_n and (select l.fecha from public.app_legacy_daily_challenge(un) l) = today, 'legacy: the national user reads the frozen national row of today';
+  assert (select l.id from public.app_legacy_daily_challenge(ua) l) = reto_a, 'legacy: the frozen row wins even after a community change';
+  assert not exists (select 1 from public.app_legacy_daily_challenge(u0)) and not exists (select 1 from public.app_legacy_daily_challenge(null)), 'legacy: no specialty (or no user) reads nothing, never another segment';
+  n := (select count(*) from public.registros_reto_diario where usuario_id = 'a0000000-0000-0000-0000-0000000000e7');
+  assert n = 0 and (select l.id from public.app_legacy_daily_challenge('a0000000-0000-0000-0000-0000000000e7') l) = reto_a, 'legacy: before the first open, the most specific eligible row (community A)';
+  assert (select count(*) from public.registros_reto_diario where usuario_id = 'a0000000-0000-0000-0000-0000000000e7') = 0, 'legacy: the read freezes nothing';
+  assert (public.app_get_daily_challenge('a0000000-0000-0000-0000-0000000000e7') ->> 'retoId')::uuid = reto_a, 'legacy and V1 pick the same row';
+  assert not has_function_privilege('authenticated', 'public.app_legacy_daily_challenge(uuid)', 'execute') and not has_function_privilege('anon', 'public.app_legacy_daily_challenge(uuid)', 'execute')
+     and has_function_privilege('service_role', 'public.app_legacy_daily_challenge(uuid)', 'execute'), 'legacy read is service-role only';
   -- ---- the streak read
   assert (public.app_get_streak(us) ->> 'actual')::int = 3 and (public.app_get_streak(u0) ->> 'actual')::int = 0, 'streak reads';
   update public.rachas_usuario set ultima_actividad_fecha = today - 2 where usuario_id = us;
-  assert (public.app_get_streak(us) ->> 'actual')::int = 0, 'a streak missed for a whole day reads 0';
+  assert (public.app_get_streak(us) ->> 'actual')::int = 3, 'no challenge yesterday: the streak is still alive (same rule as the write)';
+  perform private.ensure_challenge_row(today - 1, esp, null);
+  assert (public.app_get_streak(us) ->> 'actual')::int = 0, 'a streak missed for a whole day (a challenge existed) reads 0';
+  -- ---- 20261022103500 (P1 DST): the window of a row ends at the next LOCAL midnight (Europe/Madrid), where reto_today switches day
+  update public.configuracion_v1 set valor_text = 'Europe/Madrid' where clave = 'zona_horaria';
+  update public.configuracion_v1 set valor_integer = 0 where clave = 'reto_hora_desbloqueo';
+  perform private.ensure_challenge_row('2026-10-25', esp, null);   -- 25 h day (CEST -> CET)
+  perform private.ensure_challenge_row('2027-03-28', esp, null);   -- 23 h day (CET -> CEST)
+  perform private.ensure_challenge_row('2026-10-21', esp, null);   -- ordinary day (may be today's row already: then its window is checked as it is)
+  assert (select empieza_en from public.retos_diarios where fecha = '2026-10-25' and especialidad_id = esp and comunidad_id is null) = '2026-10-24 22:00:00+00'::timestamptz
+     and (select termina_en from public.retos_diarios where fecha = '2026-10-25' and especialidad_id = esp and comunidad_id is null) = '2026-10-25 23:00:00+00'::timestamptz
+     and (select termina_en - empieza_en from public.retos_diarios where fecha = '2026-10-25' and especialidad_id = esp and comunidad_id is null) = interval '25 hours',
+     'DST 2026-10-25: the window is the whole 25 h local day (it used to close at 23:00 local)';
+  assert '2026-10-25 22:30:00+00'::timestamptz < (select termina_en from public.retos_diarios where fecha = '2026-10-25' and especialidad_id = esp and comunidad_id is null)
+     and private.reto_today('2026-10-25 22:30:00+00') = '2026-10-25' and private.reto_today('2026-10-25 23:00:00+00') = '2026-10-26',
+     'DST 2026-10-25: 23:30 local is still that day and inside its window; the window ends exactly when the day changes';
+  assert (select empieza_en from public.retos_diarios where fecha = '2027-03-28' and especialidad_id = esp and comunidad_id is null) = '2027-03-27 23:00:00+00'::timestamptz
+     and (select termina_en from public.retos_diarios where fecha = '2027-03-28' and especialidad_id = esp and comunidad_id is null) = '2027-03-28 22:00:00+00'::timestamptz
+     and (select termina_en - empieza_en from public.retos_diarios where fecha = '2027-03-28' and especialidad_id = esp and comunidad_id is null) = interval '23 hours'
+     and private.reto_today('2027-03-28 22:00:00+00') = '2027-03-29',
+     'DST 2027-03-28: the window is the 23 h local day and no longer runs 1 h into the next day';
+  assert (select empieza_en from public.retos_diarios where fecha = '2026-10-21' and especialidad_id = esp and comunidad_id is null) = '2026-10-20 22:00:00+00'::timestamptz
+     and (select termina_en from public.retos_diarios where fecha = '2026-10-21' and especialidad_id = esp and comunidad_id is null) = '2026-10-21 22:00:00+00'::timestamptz,
+     'ordinary day: 24 h, local midnight to local midnight';
+  assert private.reto_day_end('2026-10-25') = '2026-10-25 23:00:00+00'::timestamptz and private.reto_day_end('2027-03-28') = '2027-03-28 22:00:00+00'::timestamptz
+     and private.reto_day_end('2026-10-21') = '2026-10-21 22:00:00+00'::timestamptz, 'reto_day_end = next local midnight';
+  -- with an unlock hour the window still ends at local midnight (after it reto_today is the next day and the user's row of yesterday is gone)
+  update public.configuracion_v1 set valor_integer = 2 where clave = 'reto_hora_desbloqueo';
+  perform private.ensure_challenge_row('2026-11-02', esp, null);
+  assert (select empieza_en from public.retos_diarios where fecha = '2026-11-02' and especialidad_id = esp and comunidad_id is null) = '2026-11-02 01:00:00+00'::timestamptz
+     and (select termina_en from public.retos_diarios where fecha = '2026-11-02' and especialidad_id = esp and comunidad_id is null) = '2026-11-02 23:00:00+00'::timestamptz, 'unlock hour 2: 02:00 to local midnight';
+  update public.configuracion_v1 set valor_integer = 0 where clave = 'reto_hora_desbloqueo';
+  -- every row the job or the lazy fallback created in this block follows the rule
+  assert not exists (select 1 from public.retos_diarios d where d.especialidad_id = esp and d.termina_en <> private.reto_day_end(d.fecha)), 'no row keeps an inicio + 24 h end';
   raise notice 'OK V1 wave 2';
+end $$;
+rollback;
+
+-- 20261022103500 (CERT-LOAD-1000 P0): a first open of the day takes NO global advisory lock (fresh transaction: nothing else took one yet).
+-- Concurrent first opens of one segment (same row, same questions, waits only on that row) are proven with real connections in
+-- backend/dbtest DailyChallengeFirstOpenConcurrencyTest.
+begin;
+insert into auth.users (id, email, aud, role, email_confirmed_at) values   -- confirmed_at is GENERATED from email_confirmed_at (GoTrue shape, main_shape_auth_users.sql)
+  ('a0000000-0000-0000-0000-0000000000e1','ch-nat@test.local','authenticated','authenticated', now()), ('a0000000-0000-0000-0000-0000000000e2','ch-a@test.local','authenticated','authenticated', now()),
+  ('a0000000-0000-0000-0000-0000000000e3','ch-sub@test.local','authenticated','authenticated', now()), ('a0000000-0000-0000-0000-0000000000e4','ch-nospec@test.local','authenticated','authenticated', null);
+insert into public.especialidades (id, codigo, nombre, slug, activa) values ('e1000000-0000-0000-0000-0000000000e1','CH','CH','ch',true);
+insert into public.comunidades_autonomas (id, codigo, nombre, slug) values ('c1000000-0000-0000-0000-0000000000a1','CHA','Com A','com-ch-a'), ('c1000000-0000-0000-0000-0000000000b1','CHB','Com B','com-ch-b');
+insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta, especialidad_principal_id, comunidad_principal_id) values
+  ('a0000000-0000-0000-0000-0000000000e1','n1','chn1',true,'activa','e1000000-0000-0000-0000-0000000000e1', null),
+  ('a0000000-0000-0000-0000-0000000000e2','n2','chn2',true,'activa','e1000000-0000-0000-0000-0000000000e1', 'c1000000-0000-0000-0000-0000000000a1'),
+  ('a0000000-0000-0000-0000-0000000000e3','n3','chn3',true,'activa','e1000000-0000-0000-0000-0000000000e1', 'c1000000-0000-0000-0000-0000000000b1')
+  on conflict (usuario_id) do update set especialidad_principal_id = excluded.especialidad_principal_id, comunidad_principal_id = excluded.comunidad_principal_id;
+set local session_replication_role = replica;
+insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en) values
+  ('e5000000-0000-0000-0000-0000000000e8','CH-IMM','e1000000-0000-0000-0000-0000000000e1','c1000000-0000-0000-0000-0000000000a1','Inm','inmersivo','premium',true, now() - interval '1 day'),
+  ('e5000000-0000-0000-0000-0000000000e9','CH-RAZ','e1000000-0000-0000-0000-0000000000e1','c1000000-0000-0000-0000-0000000000a1','Raz','razonado','premium',true, now() - interval '1 day'),
+  ('e5000000-0000-0000-0000-0000000000ea','CH-RAF','e1000000-0000-0000-0000-0000000000e1','c1000000-0000-0000-0000-0000000000a1','Raf','rafaga','gratuito',true, now() - interval '1 day');
+-- questions: 1 immersive (demo flagged), razonado x3 (the 3rd is REGIONAL tag of community A), rafaga x2
+insert into public.preguntas (id, codigo_pregunta, tipo_pregunta, titulo, activa)
+select ('f8000000-0000-0000-0000-0000000000' || lpad(n::text, 2, '0'))::uuid, 'CH-' || n, case when n = 1 then 'inmersiva' when n <= 4 then 'razonada' else 'rafaga' end, 'Pregunta reto ' || n, true from generate_series(1, 6) n;
+insert into public.opciones_pregunta (id, pregunta_id, letra, texto_opcion, posicion)
+select ('0e800000-0000-0000-0000-000000000' || lpad(n::text, 2, '0') || o)::uuid, ('f8000000-0000-0000-0000-0000000000' || lpad(n::text, 2, '0'))::uuid, chr(64 + o), 'Opcion', o from generate_series(1, 6) n, generate_series(1, 2) o;
+insert into public.soluciones_pregunta (pregunta_id, opcion_correcta_id, razonamiento)
+select ('f8000000-0000-0000-0000-0000000000' || lpad(n::text, 2, '0'))::uuid, ('0e800000-0000-0000-0000-000000000' || lpad(n::text, 2, '0') || '1')::uuid, 'porque si' from generate_series(1, 6) n;
+insert into public.preguntas_examen (examen_id, pregunta_id, posicion, numero_en_examen, es_demo)
+select case when n = 1 then 'e5000000-0000-0000-0000-0000000000e8'::uuid when n <= 4 then 'e5000000-0000-0000-0000-0000000000e9'::uuid else 'e5000000-0000-0000-0000-0000000000ea'::uuid end,
+       ('f8000000-0000-0000-0000-0000000000' || lpad(n::text, 2, '0'))::uuid, n, n, n = 1 from generate_series(1, 6) n;
+insert into public.etiquetas (id, nombre, slug) values ('7a800000-0000-0000-0000-000000000001', 'Legislacion autonomica A', 'ch-leg-a');
+insert into public.etiquetas_pregunta (pregunta_id, etiqueta_id) values ('f8000000-0000-0000-0000-000000000004', '7a800000-0000-0000-0000-000000000001');
+set local session_replication_role = origin;
+insert into public.recursos_pregunta (id, pregunta_id, codigo_recurso, tipo_recurso, titulo, bucket_storage, ruta_storage, posicion, metadatos)
+values ('7e500000-0000-0000-0000-000000000001', 'f8000000-0000-0000-0000-000000000001', 'CH-R1', 'imagen', 'Imagen', 'recursos-pregunta', 'preguntas/f8000000-0000-0000-0000-000000000001/7e500000-0000-0000-0000-000000000001.png', 1, '{"mime":"image/png","bytes":1234}'::jsonb);
+insert into public.etiquetas_comunidad (etiqueta_id, comunidad_id) values ('7a800000-0000-0000-0000-000000000001', 'c1000000-0000-0000-0000-0000000000a1');
+do $$
+declare
+  un uuid := 'a0000000-0000-0000-0000-0000000000e1'; ua uuid := 'a0000000-0000-0000-0000-0000000000e2'; us uuid := 'a0000000-0000-0000-0000-0000000000e3';
+  esp uuid := 'e1000000-0000-0000-0000-0000000000e1'; comA uuid := 'c1000000-0000-0000-0000-0000000000a1';
+  today date := private.reto_today(clock_timestamp());
+  j jsonb; j2 jsonb;
+begin
+  assert not exists (select 1 from pg_locks l where l.locktype = 'advisory' and l.pid = pg_backend_pid()), 'precondition: no advisory lock yet';
+  assert not exists (select 1 from public.retos_diarios r where r.fecha = today and r.especialidad_id = esp), 'precondition: today''s rows are missing (the job did not run)';
+  j := public.app_get_daily_challenge(un);   -- first open of the day: creates the national row lazily
+  assert j ->> 'estado' = 'DISPONIBLE' and (j ->> 'retoId') is not null, 'the lazy first open creates and serves the row';
+  j2 := public.app_get_daily_challenge(ua);  -- first open of community A: creates the regional row lazily
+  assert (select comunidad_id from public.retos_diarios where id = (j2 ->> 'retoId')::uuid) = comA, 'the regional row is created lazily too';
+  assert (public.app_get_daily_challenge(us) ->> 'retoId') = (j ->> 'retoId'), 'fast path (row exists): the same national row';
+  assert not exists (select 1 from pg_locks l where l.locktype = 'advisory' and l.pid = pg_backend_pid()),
+    'no global lock: neither the lazy creation nor the fast path takes an advisory lock (it used to take reto-job on every first open)';
+  assert (select count(*) from public.retos_diarios r where r.fecha = today and r.especialidad_id = esp and r.comunidad_id is null) = 1
+     and (select count(*) from public.preguntas_reto_diario pr where pr.reto_id = (j ->> 'retoId')::uuid) = 3, 'exactly one national row with its three questions';
+  assert (select p.prosrc from pg_proc p where p.oid = 'private.user_challenge_reto(uuid,timestamptz)'::regprocedure) not like '%pg_advisory%', 'the first-open function has no advisory lock';
+  raise notice 'OK V1 daily challenge first open without global lock';
 end $$;
 rollback;
 
