@@ -67,3 +67,29 @@ Durante las pruebas de interfaz salieron:
 - **Falsa alarma revisada:** los `examen_reglas_puntuacion_*` al crear un examen oficial son el valor por defecto documentado (penalización racional), no una sobrescritura al editar.
 
 Develop: el gate PG17 falla en el paso de manifiesto por DEBT-156b (preexistente: las `*_security_*` están fuera de `PENDING_MIGRATIONS.txt` por diseño). En una copia que solo excluye esas migraciones del paso de manifiesto, el resto del gate da `db-pg17-gate OK` (`develop-pg17-gate-copy-tail.txt`). El script compartido no se ha tocado porque Bot lo modifica en su rama. `verify-ops-config.sh`: OK.
+(Superado el mismo día: DEBT-156b se corrigió de acuerdo con Bot en `a8928f8` y el gate de develop pasa en verde, ver `dcb279e`.)
+
+## Interfaz contra el backend real: recorridos 2, 4, 5, 6, 7 y 10 (panel `d277992`), 2026-10-21
+
+**15/15 en verde** (`ControlPanelUiE2ETest-2026-10-21.xml`). Los 8 flujos anteriores más 7 nuevos, con la app entera contra el stack aislado. Los E2E de datos siguen en **12/12** (`ControlJourneysE2ETest-2026-10-21.xml`). La suite se ejecutó varias veces seguidas sobre los mismos datos; cada prueba reutiliza el examen que renombró en una pasada anterior.
+
+| # | Flujo | Qué se hace en la interfaz | Qué se comprueba en PG17 |
+|---|---|---|---|
+| 2 | Editar examen | Exámenes → buscar → abrir → cambiar el título → «Guardar cambios» | título nuevo y una fila `examen_actualizado` más, con actor admin |
+| 7 | Precio | pestaña «Acceso y monetización» → Premium → «Poner un precio» → 90 → guardar | `tipo_acceso = premium`, `precio_tickets = 90` |
+| 5 | Reglas de puntuación | Configuración → apagar la penalización racional → fracción 1/3 → «Guardar reglas» | `false/1/3` y al menos 2 filas `examen_reglas*` |
+| 4 | Anular con motivo | Configuración → «Anuladas y reservas» → pregunta → «Anulada por el tribunal» → motivo → «Guardar marcas» | `anulada = true` y el motivo exacto |
+| 4 | Anular sin reservas suficientes | igual, en un examen con 1 anulada y 1 reserva | la interfaz muestra el rechazo del servidor y la pregunta sigue sin anular |
+| 6 | Importar PDF | Importación → examen destino → «Seleccionar PDF» (`rafaga_valid.pdf`) → «Subir y analizar» → vincular duplicados → «Publicar lote» | lote creado (`lote_creado`), preguntas en el examen y `lote_importado` con actor admin |
+| 10 | Conceder acceso | Usuarios → Accesos → «Conceder acceso» → buscar `q1_saldo_alto` → elegir examen → conceder | una concesión vigente más y `acceso_examen_concedido` con actor admin |
+
+Capturas en `ui-shots/` (`ui-edit-exam-saved`, `ui-price-saved`, `ui-grading-form`, `ui-annul-saved`, `ui-annul-rejected-final`, `ui-import-*`, `ui-access-*`).
+
+Lo que salió al probar con la interfaz:
+- **CP-E2E-06 (P2, CORREGIDO).** Guardar las reglas de puntuación de un examen con la regla de anuladas derivada (null) daba 400 «El cuerpo de la petición no es válido». El `Json` del cliente (`explicitNulls = false`) omitía `reglaAnuladas` y el servidor exige la clave. Ahora el cuerpo viaja como `JsonObject` con el null explícito. Prueba de regresión con el `Json` de producción (`KtorControlV1RepositoryImplTest`, 12/12). Era la única ruta del servidor que exige la presencia de una clave anulable.
+- **CP-E2E-07 (P3, CORREGIDO).** En el espacio de trabajo del examen, las secciones de reglas y de anuladas/reservas se dibujaban unas encima de otras (`AsyncStatePane` pinta en un `Box`), y el «Denominador» quedaba en vertical. Se corrigió con una `Column` y campos de 240 dp.
+- **CP-E2E-08 (P3, CORREGIDO).** Los textos del motivo de anulación seguían diciendo «Opcional» (espacio de trabajo) y «(opcional)» (revisión de importación) después de la decisión del 2026-10-20. Ahora dicen «Obligatorio».
+- **CP-E2E-09 (P2, CORREGIDO, petición del propietario 2026-10-21).** En las preguntas inmersivas no se podía comprobar qué archivo se había subido. Cada recurso muestra ahora su formato (JPEG, MP3, MP4…) y un botón «Abrir» que entrega la URL firmada al navegador o reproductor del sistema. Solo se abre una URL del Storage propio (`MediaUrlPolicy.isOpenableStorageObject`: mismo host, ruta `object/sign` u `object/public`, sin traversal); la política de carga dentro de la app no cambia. Pruebas: `MediaUrlPolicyTest` (2 nuevas; core:common 15/0) y `QuestionsPresentationTest` (1 nueva; questions 85/0). PENDIENTE (decisión): el nombre original del archivo no se guarda en ningún sitio (el servidor nombra el objeto con el id del recurso); mostrarlo exige una columna nueva.
+- **Comportamiento correcto confirmado:** al reimportar el mismo PDF, la revisión marca las 3 filas como duplicadas y no deja publicar hasta vincularlas u omitirlas.
+- **Herramienta de pruebas:** el SQL de los E2E pasa por JDBC al puerto del stack aislado. Con `docker exec`, Windows abría una ventana de consola en cada consulta.
+- **Entorno:** el 2026-10-21 Docker se reinició (exit 255 en todos los contenedores). El stack aislado se volvió a levantar arrancando solo sus contenedores (los volúmenes estaban intactos). Los JWT sintéticos caducados se regeneraron con la misma clave local. El QA de Bot no se tocó.

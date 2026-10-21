@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" tests="15" skipped="0" failures="0" errors="0" timestamp="2026-10-21T09:27:40.343Z" hostname="ERMENEJILDO" time="110.329">
+  <properties/>
+  <testcase name="uiAdminGrantsAnExamAccess[jvm]" classname="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" time="14.818"/>
+  <testcase name="uiAnnullingWithoutEnoughReservesIsRejectedAndChangesNothing[jvm]" classname="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" time="12.557"/>
+  <testcase name="uiLoginBlockedAdminSeesNoAccess[jvm]" classname="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" time="2.461"/>
+  <testcase name="uiLoginAdminEntersThePanel[jvm]" classname="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" time="3.235"/>
+  <testcase name="uiAdminPublishesAnExam[jvm]" classname="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" time="8.136"/>
+  <testcase name="uiLoginModeratorSeesOnlyForumModeration[jvm]" classname="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" time="2.799"/>
+  <testcase name="uiAdminCreditsAnOrderInReview[jvm]" classname="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" time="8.334"/>
+  <testcase name="uiAdminAnnulsAQuestionWithItsReason[jvm]" classname="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" time="11.143"/>
+  <testcase name="uiModeratorRejectsAPendingPost[jvm]" classname="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" time="4.462"/>
+  <testcase name="uiLoginWrongPasswordStaysOnLogin[jvm]" classname="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" time="2.096"/>
+  <testcase name="uiAdminImportsAPdfIntoAnExam[jvm]" classname="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" time="9.456"/>
+  <testcase name="uiAdminEditsAnExam[jvm]" classname="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" time="7.466"/>
+  <testcase name="uiAdminReadsTheAuditLog[jvm]" classname="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" time="5.04"/>
+  <testcase name="uiAdminChangesTheGradingRules[jvm]" classname="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" time="10.175"/>
+  <testcase name="uiAdminSetsAnExamPrice[jvm]" classname="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" time="8.15"/>
+  <system-out><![CDATA[UI E2E RUN ui-access
+UI E2E RUN ui-annul-rejected
+UI E2E RUN ui-login-blocked
+UI E2E RUN ui-login-admin
+UI E2E RUN ui-publish
+UI E2E RUN ui-login-moderator
+UI E2E RUN ui-orders
+UI E2E RUN ui-annul
+UI E2E RUN ui-moderator
+UI E2E RUN ui-login-wrong
+UI E2E RUN ui-import
+UI E2E RUN ui-edit-exam
+UI E2E RUN ui-audit
+UI E2E RUN ui-grading
+UI E2E RUN ui-price
+]]></system-out>
+  <system-err><![CDATA[SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+]]></system-err>
+</testsuite>

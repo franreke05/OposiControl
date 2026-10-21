@@ -1,5 +1,14 @@
 # Current State
 
+## Control panel E2E, interfaz — 2026-10-21 (panel `d277992`, rama `feature/december-v1-control-panel`, sin push)
+
+- **Interfaz contra el backend real: 15/15** (`ControlPanelUiE2ETest`). Cubre los recorridos 1, 2, 3, 4 (anular con motivo y rechazo sin reservas), 5, 6 (PDF real, vinculación de duplicados y publicación), 7, 8, 10, 11 y 12. Los E2E de datos siguen en 12/12. El recorrido 9 (reembolsos) solo se prueba en la capa de datos: el reembolso es automático, lo hace Bot, y el panel solo lo muestra. Evidencia: `docs/audit-v1/evidence/CONTROL-E2E/` (sección del 2026-10-21).
+- **Corregido en el panel:** guardar reglas con la regla de anuladas derivada daba 400 (CP-E2E-06); las secciones de reglas y anuladas se solapaban (CP-E2E-07); los textos «Opcional» del motivo de anulación (CP-E2E-08).
+- **Petición del propietario (2026-10-21), hecha:** los recursos de las preguntas inmersivas muestran su formato y un botón «Abrir» (URL firmada del Storage propio, abierta fuera de la app) para comprobar qué archivo se subió (CP-E2E-09). PRODUCT_DECISION_PENDING: guardar el nombre original del archivo exige una columna nueva.
+- **Pagos de tienda de Bot, ronda 7 (`be9e0bd`): CERRADA.** N6-1 FIXED y N6-2 FIXED; un P3 nuevo (N7-1, la alerta de historial puede no dispararse si el guardado se rechaza de forma persistente) y 3 Info. Expediente: `docs/audit-v1/HANDOFF_BOT_store_payments_round7.md`.
+- Pruebas (2026-10-21): core:common 15/0, questions 85/0, imports 121/0, exams 335/0, exam-access 18/0, control-v1 37/0, data 299/0 y composeApp 171/0. `:backend:ktor:test` 2141/0 (sin cambios de backend desde esa pasada).
+- Pendiente para «preparado para integración»: integrar el panel con develop actual y repetir los E2E sobre ese candidato (condición 2 de abajo); GO del propietario para staging aislado; los RB P1 siguen abiertos (NO APTO PARA PRODUCCIÓN).
+
 ## Control panel E2E — 2026-10-20 (`develop` ae62375 + este ciclo, panel `c655116`)
 
 Estado: **CONTROL_PANEL_READY_LOCAL (condicionado)**. Las 12 funciones admin están verificadas de punta a punta en la capa de datos (12/12) y hay pruebas de interfaz de login/roles, publicación, pedidos/reembolsos y auditoría (17, panel `95b5b1e`). Latencias en reposo: lecturas con p95 ≤ 67 ms y escrituras auditadas ≤ 63 ms, sin ningún cuello. Condiciones antes de pasar a READY:

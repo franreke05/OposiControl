@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.oposicontrol.admin.data.e2e.ControlJourneysE2ETest" tests="12" skipped="0" failures="0" errors="0" timestamp="2026-10-21T09:21:20.203Z" hostname="ERMENEJILDO" time="6.727">
+  <properties/>
+  <testcase name="j03PublishAndStates[jvm]" classname="com.oposicontrol.admin.data.e2e.ControlJourneysE2ETest" time="2.216"/>
+  <testcase name="j12AuditLog[jvm]" classname="com.oposicontrol.admin.data.e2e.ControlJourneysE2ETest" time="0.22"/>
+  <testcase name="j11ForumModeration[jvm]" classname="com.oposicontrol.admin.data.e2e.ControlJourneysE2ETest" time="0.887"/>
+  <testcase name="j10AccessGrantAndRevoke[jvm]" classname="com.oposicontrol.admin.data.e2e.ControlJourneysE2ETest" time="0.518"/>
+  <testcase name="j01AccessAndPermissions[jvm]" classname="com.oposicontrol.admin.data.e2e.ControlJourneysE2ETest" time="0.235"/>
+  <testcase name="j05GradingRules[jvm]" classname="com.oposicontrol.admin.data.e2e.ControlJourneysE2ETest" time="0.616"/>
+  <testcase name="j08OrdersAdmin[jvm]" classname="com.oposicontrol.admin.data.e2e.ControlJourneysE2ETest" time="0.399"/>
+  <testcase name="j06ContentImport[jvm]" classname="com.oposicontrol.admin.data.e2e.ControlJourneysE2ETest" time="0.374"/>
+  <testcase name="j04AnnulledAndReserve[jvm]" classname="com.oposicontrol.admin.data.e2e.ControlJourneysE2ETest" time="0.415"/>
+  <testcase name="j09RefundEffects[jvm]" classname="com.oposicontrol.admin.data.e2e.ControlJourneysE2ETest" time="0.278"/>
+  <testcase name="j02ExamManagement[jvm]" classname="com.oposicontrol.admin.data.e2e.ControlJourneysE2ETest" time="0.143"/>
+  <testcase name="j07PricesAndPacks[jvm]" classname="com.oposicontrol.admin.data.e2e.ControlJourneysE2ETest" time="0.422"/>
+  <system-out><![CDATA[E2E RUN J03 publish
+E2E RUN J12 audit
+E2E J12 detail=AuditDetail(id=d2e681f4-2f39-4d7f-b022-388528c5c581, before=null, after=null)
+E2E RUN J11 forum
+E2E J11 post state=oculta
+E2E RUN J10 access
+E2E RUN J01 access
+E2E RUN J05 grading
+E2E RUN J08 orders
+E2E RUN J06 import
+E2E RUN J04 official
+E2E RUN J09 refund
+E2E J09 refund on a never-credited order: Validation(message=Este pedido nunca se acreditó: no se puede confirmar ni reembolsar., code=order_not_credited)
+E2E J09 outcome=null state=en_revision refund_case=0 balance 1475->1475
+E2E J09 refund webhook -> {"result":"REFUNDED"}; state=reembolsada balance=1475 refund_case=0
+E2E RUN J02 exams
+E2E RUN J07 prices
+]]></system-out>
+  <system-err><![CDATA[]]></system-err>
+</testsuite>
