@@ -45,6 +45,22 @@ Sin secretos en los logs nuevos (`DailyChallengeJob.kt:23-26`). Las V1 no redefi
 5. Fijar el delta de tienda en `main-wallet-shape.txt`.
 6. Registrar en `DEPLOYMENT.md` que 100200 va después de 102600.
 
+## Seguimiento: condiciones cumplidas en `ce8cfd1` (2026-10-21)
+
+Bot corrigió las condiciones en `candidate/v1-bot-ktor`, que tiene como nueva HEAD `ce8cfd1`. Los commits son `4a1af78`, `484365b`, `4ba2a19`, `a148a6c`, `5cf3fe5`, `e3b336c` y `d7a6c42`, más el manifiesto. Hemos revisado el diff completo de `3bdf3fb..ce8cfd1` en `backend`, `scripts`, `ops` y `DEPLOYMENT.md`:
+
+| Condición | Estado | Evidencia |
+|---|---|---|
+| 1 Concesión por RPC | CUMPLE | Borrada `ContenidoDesbloqueadoInsertRow` (`5cf3fe5`). `ContenidoDesbloqueadoCierre` también ha quedado sin uso (Info; Bot no la ha tocado). |
+| 2 Escenario (f) y controles (g)/(h) | CUMPLE | (f) muta la función vigente de `101300` y comprueba que cambia exactamente una línea (`db-pg17-gate.test.sh`, `4a1af78`). **Ejecutado por nosotros** sobre panel + candidata: `db-pg17-gate.test OK (20 escenarios)`; (g) R1, (g2) R2, (g3) R3/R4 y (h) D1 fallan cada uno por su motivo (`candidata-ce8cfd1-gate-test-tail.txt`). CAND-01 CERRADO. |
+| 3 Contrato con el panel | CUMPLE | E2E del panel sobre la candidata: datos 12/12 y UI 15/15 en dos pasadas. CAND-02 CERRADO. |
+| 4 Paso 1b, DEBT-156 e ID | CUMPLE | Se saltan las V1 ya aplicadas en MAIN (`db-pg17-gate.sh:43-44`), hay control nuevo para la rama `V1_MIGRATIONS.txt` y para «V1 _security_ ya aplicada en MAIN» y DEBT-156 está actualizada. DEBT-116-EXAM pasa a **DEBT-160** (`a148a6c`). |
+| 5 Delta WALLET | CUMPLE | `main-wallet-shape.txt` lleva el delta exacto de 102600 (secciones 1-2). Además, Bot encontró y corrigió que `up.mjs` devolvía las escrituras a `service_role` en cada ejecución (`4ba2a19`). |
+| 6 CAND-04 | CUMPLE | `DEPLOYMENT.md`: 100200 después de 102600 (`d7a6c42`). |
+| CAND-03 | CUMPLE | `ServerProfile.runsBotJobs = mountsBot` y el test `botJobsRunOnlyWhereTheBotRoutesAreMounted` (`e3b336c`). |
+
+**Veredicto final: candidata APTA, condiciones cumplidas.** Quedan abiertos solo Info: el cupo `PLAN_WRITE` compartido por el foro, en el manifiesto de Bot, y `ContenidoDesbloqueadoCierre` sin uso.
+
 ## Sin verificar
 
 Gate PG17 y `db-pg17-gate.test.sh` de la candidata (requieren Docker; los resultados son los que declara Bot), diff exacto de WALLET, e2e y journeys de Bot, dbtest y la suite Ktor completa de la candidata (solo se ejecutó `AdminV1ExamAccessGrantTest`) y el estado de MAIN.

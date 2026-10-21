@@ -121,4 +121,10 @@ La rama nace de `candidate/v1-bot-ktor` `3bdf3fb` (código `baf4264`, base devel
   - La importación elige exámenes sin lotes previos y espera a las filas de auditoría (`lote_creado`/`lote_importado`), que el servidor escribe justo después.
   - Al terminar se dejaron los valores de fábrica del foro (`foro_posts_hora` 5, `foro_posts_dia` 20, `foro_premoderacion_posts` 3), que una pasada cortada a las 13:45 había dejado alterados, y el stack volvió a sus Ktor de E7.
 - Re-auditoría de la candidata: `docs/audit-v1/HANDOFF_BOT_candidate_v1_bot_ktor.md`.
+
+### Seguimiento: candidata corregida `ce8cfd1` (merge `afa848cd` en la misma rama), 2026-10-21
+
+- Merge con un solo conflicto, en `TECH_DEBT`: la DEBT-156 actualizada y la DEBT-160 de Bot, más las DEBT-157..159 del panel.
+- Pruebas (`candidata-ce8cfd1-pruebas-resumen.txt`): `:backend:ktor:test` 2457/0 (1 omitido), dbtest 309/0 y los módulos del panel sin fallos. Gate PG17 OK. **`db-pg17-gate.test.sh` OK en sus 20 escenarios, incluidos (f), (g), (g2), (g3) y (h)** (`candidata-ce8cfd1-gate-test-tail.txt`). `verify-ops-config` OK y manifiesto V1 OK (32).
+- E2E con los Ktor `bot` y `control` de esa rama: **datos 12/12 y UI 15/15, en dos pasadas seguidas** (`*-candidata-ce8cfd1-2026-10-21.xml`). La configuración del foro queda en sus valores de fábrica después de las pasadas. El stack volvió a sus Ktor de E7.
 - Al terminar, el stack volvió a su Ktor `control` de E7 (el estado validado). La migración 100300 queda aplicada en el stack.

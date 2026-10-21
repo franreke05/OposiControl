@@ -1,0 +1,8 @@
+ok:   (e) SELECT de cliente sobre las revisiones -> FAIL: 20261022100000_slice3_attempt_content_revisions: VERIFY con contadores distintos de 0
+ok:   (f) el congelado no liga la revision -> FAIL: assertions.sql
+ok:   (g) mutA: cerrojo de la reversion movido bajo la busqueda -> FAIL: carreras de tienda con dos conexiones (cerrojo por clave / orden de cerrojos)
+ok:   (g2) mutA2: cerrojo del reembolso movido bajo la busqueda -> FAIL: carreras de tienda con dos conexiones (cerrojo por clave / orden de cerrojos)
+ok:   (g3) cerrojo del credito movido tras los huerfanos -> FAIL: carreras de tienda con dos conexiones (cerrojo por clave / orden de cerrojos)
+ok:   (h) N3-1: reconcile fila-antes-que-clave -> FAIL: carreras de tienda con dos conexiones (cerrojo por clave / orden de cerrojos)
+db-pg17-gate.test OK (20 escenarios)
+gate-test rc=0
