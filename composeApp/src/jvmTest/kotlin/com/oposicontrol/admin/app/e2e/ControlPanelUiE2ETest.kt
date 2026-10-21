@@ -422,7 +422,9 @@ class ControlPanelUiE2ETest {
         val title = "E2E UI importar " + UUID.randomUUID().toString().take(8)
         val examId = sql(
             "select id from public.examenes where titulo like 'E2E%' and tipo_examen = 'rafaga' and activo and publicado_en is null" +
-                " and not exists (select 1 from public.preguntas_examen pe where pe.examen_id = examenes.id) order by creado_en desc limit 1",
+                " and not exists (select 1 from public.preguntas_examen pe where pe.examen_id = examenes.id)" +
+                // Sin lotes previos: una pasada que falló después de subir deja un examen vacío pero con lote.
+                " and not exists (select 1 from public.lotes_importacion_preguntas l where l.examen_id = examenes.id) order by creado_en desc limit 1",
         )
         check(examId.isNotBlank()) { "no hay borrador Ráfaga vacío en el stack" }
         sql("update public.examenes set titulo = '$title' where id = '$examId'")
@@ -444,7 +446,7 @@ class ControlPanelUiE2ETest {
         shot("ui-import-picked")
         onNodeWithText("Subir y analizar").performClick()
         waitUntil(timeoutMillis = 30_000) { sql("select count(*) from public.lotes_importacion_preguntas where examen_id = '$examId'").toInt() == 1 }
-        val lote = sql("select id from public.lotes_importacion_preguntas where examen_id = '$examId'")
+        val lote = sql("select id from public.lotes_importacion_preguntas where examen_id = '$examId' order by creado_en desc limit 1")
         // Igual que `lote_importado`: la auditoría se escribe justo después de crear el lote, así que se espera a ella.
         waitUntil(timeoutMillis = 20_000) {
             sql("select count(*) from public.auditoria_log where accion = 'lote_creado' and registro_id::text = '$lote' and usuario_id = '$adminId'") == "1"
@@ -565,10 +567,17 @@ class ControlPanelUiE2ETest {
             // Solo queda en la cola la publicación de esta prueba: las pendientes anteriores se rechazan por la función de moderación.
             sql("select public.admin_foro_moderate('$adminId'::uuid, 'publicacion', p.id, 'rechazar', null, 'Limpieza previa del UI E2E') from public.publicaciones_oposired p where p.estado = 'pendiente_moderacion'")
             val marker = "UI E2E " + UUID.randomUUID().toString().take(8)
-            val created = post(
-                "$appUrl/api/v1/app/oposired/publicaciones", """{"categoriaId":"$channel","titulo":"$marker","cuerpo":"Duda de moderacion desde la interfaz $marker"}""",
-                mapOf("Authorization" to "Bearer " + tokens["Q1"]!!.jsonPrimitive.content, "Idempotency-Key" to UUID.randomUUID().toString()),
-            )
+            // El límite por usuario de la app (lado Bot) puede saltar tras muchas pasadas seguidas: se reintenta como lo haría
+            // una persona, con pausas y hasta un minuto; si sigue limitado, el fallo dice por qué.
+            var created = ""
+            for (attempt in 1..7) {
+                created = post(
+                    "$appUrl/api/v1/app/oposired/publicaciones", """{"categoriaId":"$channel","titulo":"$marker","cuerpo":"Duda de moderacion desde la interfaz $marker"}""",
+                    mapOf("Authorization" to "Bearer " + tokens["Q1"]!!.jsonPrimitive.content, "Idempotency-Key" to UUID.randomUUID().toString()),
+                )
+                if (!created.contains("rate_limited")) break
+                Thread.sleep(10_000)
+            }
             val postId = sql("select id from public.publicaciones_oposired where titulo = '$marker'")
             check(postId.isNotBlank()) { "la publicación no se creó: $created" }
             login("mod@control.local")
