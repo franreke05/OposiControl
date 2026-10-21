@@ -205,6 +205,15 @@ if (!fixtures) {
 if (psql("select to_regclass('public.solicitudes_acceso_admin') is not null") !== 't') {
   psql(fs.readFileSync(path.join(repo, 'supabase/migrations/20261013100000_security_admin_access_requests.sql'), 'utf8'));
 }
+// candidate/v1-bot-ktor: develop's Ktor (register/access-request guard) reads solicitudes_acceso_admin.correo_verificado_en and
+// intentos_verificacion (20261020100000, a develop _security_ migration outside the MAIN-history capture, so neither the bootstrap
+// nor V1_MIGRATIONS.txt brings it). Without it the mail guard fails closed and every register is a 503. Applied once and recorded in
+// private.v1_applied_migrations (not re-runnable: a later run keeps it when the file is unchanged), same rule as the V1 stamps.
+{
+  const { applyV1Stamps: applyOnce } = await import('./converge.mjs');
+  const v = '20261020100000_security_access_request_email_verified';
+  applyOnce({ psql: (sql) => psql(sql), files: [{ v, text: fs.readFileSync(path.join(repo, 'supabase/migrations', `${v}.sql`), 'utf8') }] });
+}
 psql(fs.readFileSync(path.join(here, 'sql/01_overlay_wallet_entitlement.sql'), 'utf8'));
 psql(fs.readFileSync(path.join(here, 'sql/02_overlay_idempotency_finalize.sql'), 'utf8'));
 // E2-P03: la migracion pendiente 20261022100100 solo reescribe cuatro politicas (ALTER POLICY, idempotente): tambien se
