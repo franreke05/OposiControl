@@ -432,11 +432,18 @@ class ControlJourneysE2ETest {
         sql("update auth.users set email_confirmed_at = now() - interval '3 days', created_at = now() - interval '3 days' where id = '$q1'; update public.configuracion_v1 set valor_integer = 1 where clave = 'foro_premoderacion_posts'")
         try {
         val body = "Duda E2E de moderacion ${UUID.randomUUID().toString().take(8)} sobre el tema 3"
-        val created = client.post("$appUrl/api/v1/app/oposired/publicaciones") {
-            header("Authorization", "Bearer ${token("Q1")}"); header("Idempotency-Key", UUID.randomUUID().toString())
-            contentType(ContentType.Application.Json)
-            setBody("""{"categoriaId":"${channel.id}","titulo":"Duda E2E","cuerpo":"$body"}""")
-        }.bodyAsText()
+        // El límite por usuario de la app (lado Bot: PLAN_WRITE, 60/min) puede saltar si otra prueba acaba de publicar con
+        // Q1: se reintenta con pausas hasta que pasa la ventana (unos 70 s); si sigue limitado, el fallo dice por qué.
+        var created = ""
+        for (attempt in 1..7) {
+            created = client.post("$appUrl/api/v1/app/oposired/publicaciones") {
+                header("Authorization", "Bearer ${token("Q1")}"); header("Idempotency-Key", UUID.randomUUID().toString())
+                contentType(ContentType.Application.Json)
+                setBody("""{"categoriaId":"${channel.id}","titulo":"Duda E2E","cuerpo":"$body"}""")
+            }.bodyAsText()
+            if (!created.contains("rate_limited")) break
+            Thread.sleep(10_000)
+        }
         val postId = sql("select id from public.publicaciones_oposired where contenido = '$body'").ifEmpty { fail("publicacion no creada: $created") }
         // Moderador real (rol `moderador`, cuenta activa): ve la cola y modera; la auditoría lo registra a ÉL como actor.
         val mod = Panel("MOD")
