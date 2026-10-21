@@ -30,6 +30,8 @@ import kotlinx.serialization.EncodeDefault
 import kotlinx.serialization.ExperimentalSerializationApi
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.SerializationException
+import kotlinx.serialization.builtins.nullable
+import kotlinx.serialization.builtins.serializer
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -42,6 +44,7 @@ import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.intOrNull
+import kotlinx.serialization.json.jsonPrimitive
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import java.net.URLEncoder
@@ -430,6 +433,18 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway, idempotency: IdempotencyStore? 
                 community.validatedUuid("comunidadId")
                 withUpstreamIo { gateway.requireActiveCommunity(community) }
                 val saved = withUpstreamIo { gateway.createExamen(body) }
+                // V1: un examen OFICIAL nace con la penalización racional activada (E1-V1-PENALTY-CONTRACT); el administrador
+                // puede apagarla en Reglas de puntuación. Mejor esfuerzo: si el servidor aún no tiene la columna, el examen
+                // se crea igual y el panel de reglas enseña el estado real.
+                if (saved.esOficial) {
+                    try {
+                        withUpstreamIo { gateway.controlV1.applyOfficialExamDefaults(saved.id) }
+                    } catch (cancellation: kotlin.coroutines.cancellation.CancellationException) {
+                        throw cancellation
+                    } catch (failure: Exception) {
+                        AuditLogger.error("official exam default (rational penalty) not applied examId={} error={}", saved.id, failure::class.simpleName)
+                    }
+                }
                 call.respond(HttpStatusCode.Created, AdminExamenResponse(saved))
             }
             // Todas las rutas `/{id}` de esta vertical validan el identificador.
@@ -1844,6 +1859,18 @@ data class AdminCampanaRafagaDto(
     val status: String = "draft",
 )
 
+/**
+ * Columna `text` NULL de Supabase leída como "" (E2E 2026-10-20: `especialidades.descripcion` es nullable y un solo NULL
+ * tiraba `GET /especialidades` con 502, y con él el guardado de examen en el panel, que ya había creado la fila).
+ * Hacia el panel el contrato sigue siendo un String.
+ */
+object NullTextAsEmptySerializer : kotlinx.serialization.KSerializer<String> {
+    private val delegate = String.serializer().nullable
+    override val descriptor = delegate.descriptor
+    override fun deserialize(decoder: kotlinx.serialization.encoding.Decoder): String = delegate.deserialize(decoder) ?: ""
+    override fun serialize(encoder: kotlinx.serialization.encoding.Encoder, value: String) = delegate.serialize(encoder, value)
+}
+
 // Especialidad: las columnas reales ya son palabras simples => DTO == fila Supabase.
 @Serializable
 data class AdminEspecialidadDto(
@@ -1851,7 +1878,7 @@ data class AdminEspecialidadDto(
     val codigo: String = "",
     val nombre: String,
     val slug: String = "",
-    val descripcion: String = "",
+    @Serializable(with = NullTextAsEmptySerializer::class) val descripcion: String = "",
     val activa: Boolean = true,
     val posicion: Int = 0,
 )
@@ -4160,6 +4187,13 @@ class AdminV1Gateway private constructor(
         client = client,
     )
 
+    /**
+     * Superficie de Control V1 (reglas de puntuacion, importacion por lotes, invitaciones, foro, comunidad y precios,
+     * pedidos, alertas). Comparte este transporte —mismo cliente, misma politica de credenciales— y el actor de auditoria
+     * del JWT. Ver `AdminControlV1.kt`.
+     */
+    val controlV1: AdminControlV1Gateway by lazy { AdminControlV1Gateway(transport, json) }
+
     // Para ESCRIBIR en Supabase: encodeDefaults=true (envia tipo_examen="rafaga" aunque
     // sea el default) + explicitNulls=false (omite nulls para que apliquen defaults de BD).
     private val sbJson = Json {
@@ -4401,12 +4435,15 @@ class AdminV1Gateway private constructor(
     fun updateExamen(id: String, raw: JsonObject): AdminExamenDto? {
         val patch = examenPatchFrom(raw)
         if (patch.isEmpty()) return getExamen(id)
-        return request(
+        val saved = request(
             "PATCH",
             "/rest/v1/examenes?id=eq.$id",
             sbJson.encodeToString(JsonObject.serializer(), patch),
             prefer = "return=representation",
-        ).decodeList<AdminExamenRow>().firstOrNull()?.toDto().withSignedCover()
+        ).decodeList<AdminExamenRow>().firstOrNull()?.toDto()
+        // E2E 2026-10-20: editar un examen no dejaba rastro (solo crear/publicar/archivar). Se registran los CAMPOS cambiados.
+        if (saved != null) registrarAuditoria("examen_actualizado", "examenes", id, despues = auditFields(patch.keys))
+        return saved.withSignedCover()
     }
 
     /** V1: la comunidad debe existir y estar activa; 422 UNKNOWN_COMMUNITY si no. */
@@ -5577,6 +5614,11 @@ class AdminV1Gateway private constructor(
                 throw error
             }
         }
+        // E2E 2026-10-20: crear un lote (JSON o PDF, que acaba aquí) no se auditaba; solo su publicación.
+        registrarAuditoria(
+            "lote_creado", "lotes_importacion_preguntas", loteId,
+            despues = buildJsonObject { put("examen_id", JsonPrimitive(examenId)); put("filas", JsonPrimitive(rows.size)) },
+        )
         return getLote(loteId) ?: error("No se pudo leer el lote creado.")
     }
 
@@ -5744,6 +5786,10 @@ class AdminV1Gateway private constructor(
         }
         val vincular = item.vincularPreguntaId?.takeIf { it.isNotBlank() }?.validatedUuid("vincularPreguntaId")
         val motivoAnulacion = normalizedAnnulmentReason(item.anulada, item.motivoAnulacion)
+        // Decisión 2026-10-20: el revisor no aprueba una fila anulada sin el motivo del tribunal (el parser puede traerla sin él).
+        if (estado == "aprobada" && item.anulada && motivoAnulacion == null) {
+            controlReject(OfficialQuestionFlags.ANNULMENT_REASON_REQUIRED, OfficialQuestionFlags.ANNULMENT_REASON_REQUIRED_MESSAGE)
+        }
         require(vincular == null || estado == "aprobada") {
             "Para vincular con una pregunta existente, la fila tiene que quedar aprobada."
         }
@@ -5783,12 +5829,22 @@ class AdminV1Gateway private constructor(
             // FA37: null = no se toca (un cliente antiguo no mueve una reserva al bloque principal).
             bloque = item.bloque?.let { requireKnownBloque(it) },
         )
-        return request(
+        val saved = request(
             "PATCH", "/rest/v1/preguntas_parseadas_staging?id=eq.$id",
             patch.toJson().toString(),
             prefer = "return=representation",
         ).decodeList<StagingRow>().firstOrNull()?.toDto()
             ?: throw domainError("IMPORT_STAGING_NOT_FOUND")
+        // E2E 2026-10-20: la revisión humana (aprobar, omitir, vincular, anular) no se auditaba. Sin el contenido de la pregunta.
+        registrarAuditoria(
+            "staging_revisado", "preguntas_parseadas_staging", id,
+            despues = buildJsonObject {
+                put("estado", JsonPrimitive(estado))
+                put("anulada", JsonPrimitive(item.anulada))
+                put("vinculada", JsonPrimitive(vincular != null))
+            },
+        )
+        return saved
     }
 
     /**
@@ -5840,6 +5896,20 @@ class AdminV1Gateway private constructor(
         confirmarExamenPublicado: Boolean = false,
         actorId: String? = null,
     ): AdminLoteImportResponse {
+        // Decisión 2026-10-20: ninguna pregunta llega anulada al examen sin el motivo del tribunal. El lote se crea igual (el
+        // parser puede detectar ANULADA sin motivo); es la publicación la que se para y dice qué filas lo necesitan.
+        val sinMotivo = request(
+            "GET",
+            "/rest/v1/preguntas_parseadas_staging?select=posicion&lote_id=eq.${loteId.validatedUuid("loteId")}&anulada=is.true" +
+                "&estado_parseo=neq.omitida&or=(motivo_anulacion.is.null,motivo_anulacion.eq.)&order=posicion.asc&limit=50",
+            null,
+        ).decodeList<JsonObject>().mapNotNull { it["posicion"]?.jsonPrimitive?.intOrNull }
+        if (sinMotivo.isNotEmpty()) {
+            controlReject(
+                OfficialQuestionFlags.ANNULMENT_REASON_REQUIRED,
+                "Hay preguntas anuladas sin el motivo del tribunal (posiciones ${sinMotivo.joinToString(", ")}). Indícalo en la revisión antes de publicar.",
+            )
+        }
         val body = rpcOrUnavailable(
             "admin_import_lote_preguntas",
             sbJson.encodeToString(AdminImportLoteRpc(loteId, confirmarExamenPublicado, actorId)),
@@ -8815,6 +8885,10 @@ class AdminV1Gateway private constructor(
      * - [duplicateMeansAudited]: un 23505 (UNIQUE_VIOLATION) al insertar significa que la fila YA existe (indice unico
      *   parcial); se registra y no es un fallo.
      */
+    /** Solo los NOMBRES de los campos tocados (ordenados): qué cambió, sin copiar el contenido al registro de auditoría. */
+    private fun auditFields(keys: Collection<String>): JsonElement =
+        buildJsonObject { put("campos", JsonArray(keys.sorted().map { JsonPrimitive(it) })) }
+
     fun registrarAuditoria(
         accion: String,
         tabla: String?,

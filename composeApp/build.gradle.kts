@@ -171,6 +171,7 @@ kotlin {
             implementation(projects.data)
             implementation(projects.domain)
             implementation(projects.features.audit)
+            implementation(projects.features.controlV1)
             implementation(projects.features.auth)
             implementation(projects.features.communities)
             implementation(projects.features.dashboard)
@@ -212,6 +213,16 @@ kotlin {
             implementation(compose.desktop.currentOs)
             implementation(libs.kotlinx.coroutines.swing)
             implementation("io.sentry:sentry:8.57.0")
+        }
+        // E2E de interfaz contra el stack aislado oposi-control-e2e (ControlPanelUiE2ETest): la app entera con su Koin real.
+        jvmTest.dependencies {
+            @OptIn(org.jetbrains.compose.ExperimentalComposeLibrary::class)
+            implementation(compose.uiTest)
+            implementation(libs.sqldelight.sqlite.driver)
+            implementation(projects.core.database)
+            implementation(libs.kotlinx.serialization.json)
+            // Solo pruebas E2E: SQL al Postgres del stack aislado (misma version que backend/dbtest).
+            implementation("org.postgresql:postgresql:42.7.4")
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)

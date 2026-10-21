@@ -5,6 +5,7 @@ import com.oposicontrol.admin.domain.model.ContentExamType
 import com.oposicontrol.admin.domain.model.ContentImportBatch
 import com.oposicontrol.admin.domain.model.ContentImportStagingItem
 import com.oposicontrol.admin.domain.model.Exam
+import com.oposicontrol.admin.domain.model.isReserve
 
 /**
  * El estado de PARSEO de una fila, agrupado para filtrar. La anulación por el tribunal
@@ -99,6 +100,8 @@ data class BatchMetrics(
     val duplicates: Int,
     /** Filas anuladas por el tribunal (ortogonal al estado de parseo). */
     val annulled: Int,
+    /** Filas que van como RESERVA (bloque del examen oficial). */
+    val reserves: Int = 0,
 )
 
 fun ContentImportBatch.metrics(): BatchMetrics {
@@ -112,5 +115,6 @@ fun ContentImportBatch.metrics(): BatchMetrics {
         errors = tones.count { it == ReviewFilter.ERROR },
         duplicates = tones.count { it == ReviewFilter.DUPLICADA },
         annulled = staging.count { it.annulled },
+        reserves = staging.count { it.isReserve && !it.parseStatus.equals("omitida", ignoreCase = true) },
     )
 }

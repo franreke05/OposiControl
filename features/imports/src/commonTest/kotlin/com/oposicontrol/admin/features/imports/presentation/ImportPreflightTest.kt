@@ -35,6 +35,7 @@ class ImportPreflightTest {
         duplicate: ContentImportDuplicate? = null,
         link: String? = null,
         annulled: Boolean = false,
+        reason: String? = if (annulled) "Anulada por el tribunal" else null,
         questionId: String? = null,
     ) = ContentImportStagingItem(
         id = id,
@@ -55,6 +56,7 @@ class ImportPreflightTest {
         linkQuestionId = link,
         duplicate = duplicate,
         annulled = annulled,
+        annulmentReason = reason,
     )
 
     private fun batch(
@@ -317,6 +319,18 @@ class ImportPreflightTest {
         assertTrue(gate.reason.startsWith("Se publicarán 2 preguntas"), gate.reason)
         assertTrue(gate.reason.contains("1 vinculada a una existente"), gate.reason)
         assertTrue(gate.reason.contains("1 anulada por el tribunal"), gate.reason)
+    }
+
+    /** Decisión del propietario 2026-10-20: no se publica una pregunta anulada sin el motivo del tribunal. */
+    @Test
+    fun `una fila anulada sin motivo bloquea la publicacion y omitirla la desbloquea`() {
+        val sinMotivo = importPublishPreflight(batch(listOf(row(), row(id = "s-2", position = 2, annulled = true, reason = "  "))))
+        assertFalse(sinMotivo.canPublish)
+        val issue = sinMotivo.blockers.single { it.kind == ImportPreflightKind.ANNULMENT_REASON_MISSING }
+        assertEquals("1 pregunta anulada no tiene el motivo del tribunal: indícalo en la revisión antes de publicar.", issue.message)
+        assertTrue(importPublishPreflight(batch(listOf(row(), row(id = "s-2", position = 2, annulled = true)))).canPublish, "con motivo se publica")
+        assertTrue(importPublishPreflight(batch(listOf(row(), row(id = "s-2", position = 2, status = "omitida", annulled = true, reason = null)))).blockers
+            .none { it.kind == ImportPreflightKind.ANNULMENT_REASON_MISSING }, "una fila omitida no se publica")
     }
 
     // -----------------------------------------------------------------------

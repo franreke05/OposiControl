@@ -27,6 +27,8 @@ kotlin {
         jvmTest.dependencies {
             implementation(libs.ktor.client.mock)
             implementation(libs.sqldelight.sqlite.driver)
+            // Solo pruebas E2E: SQL al Postgres del stack aislado (misma version que backend/dbtest).
+            implementation("org.postgresql:postgresql:42.7.4")
         }
     }
 }

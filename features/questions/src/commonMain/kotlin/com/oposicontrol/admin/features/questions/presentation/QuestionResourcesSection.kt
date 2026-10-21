@@ -11,13 +11,17 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
+import com.oposicontrol.admin.core.common.config.AppConfig
+import com.oposicontrol.admin.core.common.config.MediaUrlPolicy
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.ui.components.AppIcon
 import com.oposicontrol.admin.core.ui.components.AppIconImage
@@ -41,6 +45,7 @@ import com.oposicontrol.admin.domain.model.QuestionDetail
 import com.oposicontrol.admin.domain.model.QuestionResource
 import com.oposicontrol.admin.domain.model.QuestionResourceType
 import com.oposicontrol.admin.domain.repository.QuestionResourceKind
+import org.koin.mp.KoinPlatform
 
 /**
  * Los recursos de una pregunta inmersiva.
@@ -73,7 +78,10 @@ internal fun QuestionResourcesSection(
     // título —como se hacía para elegir el icono— fallaba en cuanto dos recursos se
     // llamaban igual, y con «Recurso sin título» eso es lo normal.
     val resources = detail?.resources.orEmpty().sortedBy { it.sortOrder }
-    val rows = questionResourceRows(resources)
+    // «Abrir» solo para archivos de NUESTRO Storage (URL firmada del bucket privado): cualquier otra URL de la base no
+    // se entrega al sistema. Sin configuración (Koin sin arrancar, vistas de prueba) no se abre nada.
+    val config = remember { KoinPlatform.getKoinOrNull()?.getOrNull<AppConfig>() }
+    val rows = questionResourceRows(resources) { MediaUrlPolicy.isOpenableStorageObject(it, config) }
     val canAttach = state.canAttachResources()
     FormSection(
         title = "Recursos",
@@ -192,9 +200,20 @@ private fun QuestionResourceRowView(
                 overflow = TextOverflow.Ellipsis,
             )
             Text(
-                text = row.typeLabel,
+                text = row.formatLabel?.let { "${row.typeLabel} · $it" } ?: row.typeLabel,
                 style = MaterialTheme.typography.bodySmall,
                 color = tokens.textSecondary,
+            )
+        }
+        // Para comprobar QUÉ se subió: el archivo se abre en el navegador o reproductor del sistema con la URL firmada
+        // (caduca en una hora; al volver a cargar la pregunta llega otra). Nunca se descarga dentro del panel.
+        row.openUrl?.let { url ->
+            val uriHandler = LocalUriHandler.current
+            SecondaryButton(
+                text = "Abrir",
+                size = ButtonSize.COMPACT,
+                onClick = { runCatching { uriHandler.openUri(url) } },
+                icon = { AppIconImage(AppIcon.VIEW, size = 13.dp) },
             )
         }
         // Accesible o no, con palabra: el estado no va sólo en color.

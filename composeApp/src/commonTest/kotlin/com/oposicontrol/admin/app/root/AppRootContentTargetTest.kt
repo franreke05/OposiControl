@@ -586,7 +586,10 @@ class AppRootContentTargetTest {
         }
         assertEquals(CatalogHubTab.PRODUCTS, catalogTabForMarketSection(MarketSection.PRODUCTS))
         // Un pack es un producto: no tiene pestaña propia ni sección de Market (DEBT-100).
-        assertEquals(listOf("Productos", "Planes", "Servicios", "Promociones", "Avisos"), CatalogHubTab.entries.map { it.label })
+        assertEquals(
+            listOf("Productos", "Planes", "Servicios", "Promociones", "Avisos", "Comunidad y precios", "Pedidos"),
+            CatalogHubTab.entries.map { it.label },
+        )
     }
 
     @Test

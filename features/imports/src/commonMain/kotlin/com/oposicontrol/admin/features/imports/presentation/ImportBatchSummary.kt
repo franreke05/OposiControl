@@ -27,6 +27,7 @@ import com.oposicontrol.admin.core.ui.theme.Radius
 import com.oposicontrol.admin.core.ui.theme.Spacing
 import com.oposicontrol.admin.domain.model.ContentExamType
 import com.oposicontrol.admin.domain.model.ContentImportBatch
+import com.oposicontrol.admin.domain.model.ContentImportPublishResult
 
 /**
  * El rail derecho: qué se está importando, qué admite y qué pasa al publicar.
@@ -83,6 +84,14 @@ private fun ImportBatchCard(
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
         )
+        // Cabecera del PDF: el código del examen al que dice pertenecer. El servidor lo compara con el examen elegido.
+        batch.examCode?.let { code ->
+            Text(
+                text = "Cabecera del fichero: $code",
+                style = MaterialTheme.typography.bodySmall,
+                color = tokens.textSecondary,
+            )
+        }
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
@@ -108,6 +117,8 @@ private fun ImportBatchCard(
         if (metrics.imported > 0) ImportMetricLine("Importadas", metrics.imported, tokens.info)
         // Anuladas por el tribunal: un dato de la pregunta en el examen, aparte del estado de parseo.
         ImportMetricLine("Anuladas por el tribunal", metrics.annulled, tokens.textSecondary)
+        // Reservas del examen oficial: solo puntúan cuando se anula una principal.
+        if (metrics.reserves > 0) ImportMetricLine("Reservas", metrics.reserves, tokens.info)
 
         PrimaryButton(
             text = "Publicar lote",
@@ -139,6 +150,9 @@ private fun ImportBatchCard(
         (state.actionState as? UiAsync.Error)?.let { error ->
             ImportNotice(text = error.error.message, icon = AppIcon.WARNING, danger = true)
         }
+        // Lo que hizo la última publicación (reservas añadidas, avisos y, si falta algo, qué falta).
+        batch.publishResult?.takeIf { it.executed }?.let { result -> ImportPublishResultNotes(result) }
+
         (state.actionState as? UiAsync.Success)?.let { success ->
             Text(
                 text = success.value,
@@ -262,4 +276,43 @@ private fun ImportNotice(text: String, icon: AppIcon, danger: Boolean) {
             color = if (danger) tokens.dangerInk else tokens.textSecondary,
         )
     }
+}
+
+/** Qué hizo la publicación: lo que no bloquea se cuenta tal cual, y un problema abierto se explica en lenguaje de operador. */
+@Composable
+private fun ImportPublishResultNotes(result: ContentImportPublishResult) {
+    if (result.reserves > 0) {
+        ImportNotice(
+            text = "Se añadieron ${result.reserves} reservas al examen, tras las principales. Solo puntúan si se anula alguna principal.",
+            icon = AppIcon.INFO,
+            danger = false,
+        )
+    }
+    result.warnings.forEach { code ->
+        ImportNotice(text = importPublishWarningText(code), icon = AppIcon.INFO, danger = false)
+    }
+    result.problem?.let { code ->
+        ImportNotice(
+            text = importPublishProblemText(code),
+            icon = AppIcon.WARNING,
+            danger = false,
+        )
+    }
+}
+
+/** Los avisos que el servidor devuelve al publicar un lote con reservas. */
+internal fun importPublishWarningText(code: String): String = when (code) {
+    "MORE_RESERVES_THAN_MAX" -> "El examen tiene más reservas de las habituales (normalmente 3). No bloquea."
+    "ANNULLED_RESERVE_SKIPPED" -> "Una reserva está anulada: se salta y se usa la siguiente."
+    else -> "Aviso del servidor: $code."
+}
+
+/** El primer problema abierto de las reglas oficiales tras publicar: el examen en borrador aún no está completo. */
+internal fun importPublishProblemText(code: String): String = when (code) {
+    "RESERVE_WITHOUT_MAIN" -> "Hay reservas pero aún no hay preguntas principales: importa primero las principales."
+    "RESERVE_ORDER_GAPS" -> "El orden de las reservas tiene huecos: tiene que ser 1, 2, 3…"
+    "RESERVE_BEFORE_MAIN" -> "Una reserva quedó antes de la última principal: no se podrá publicar el examen así."
+    "REEMPLAZO_NOT_ENOUGH_RESERVES" -> "Hay más preguntas anuladas que reservas: faltan reservas para poder publicar el examen."
+    "DEMO_CONFLICT" -> "Una pregunta de demostración está anulada o es reserva."
+    else -> "Falta completar el examen antes de publicarlo ($code)."
 }

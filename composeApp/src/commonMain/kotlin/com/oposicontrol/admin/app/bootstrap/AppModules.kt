@@ -7,6 +7,7 @@ import com.oposicontrol.admin.data.di.dataModule
 import com.oposicontrol.admin.features.audit.di.auditFeatureModule
 import com.oposicontrol.admin.features.auth.di.authFeatureModule
 import com.oposicontrol.admin.features.communities.di.communitiesFeatureModule
+import com.oposicontrol.admin.features.controlv1.di.controlV1FeatureModule
 import com.oposicontrol.admin.features.dashboard.di.dashboardFeatureModule
 import com.oposicontrol.admin.features.examaccess.di.examAccessFeatureModule
 import com.oposicontrol.admin.features.exams.di.examsFeatureModule
@@ -61,5 +62,6 @@ fun appModules(
         reportsFeatureModule,
         forumFeatureModule,
         opositesterFeatureModule,
+        controlV1FeatureModule,
     )
 }

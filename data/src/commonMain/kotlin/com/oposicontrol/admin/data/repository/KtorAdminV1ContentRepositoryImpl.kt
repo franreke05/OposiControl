@@ -14,8 +14,13 @@ import io.ktor.http.Headers
 import io.ktor.http.HttpHeaders
 import com.oposicontrol.admin.domain.model.Exam
 import com.oposicontrol.admin.domain.model.ContentImportBatch
+import com.oposicontrol.admin.domain.model.ContentImportPublishResult
+import com.oposicontrol.admin.domain.model.IMPORT_BLOCK_MAIN
+import com.oposicontrol.admin.domain.model.IMPORT_BLOCK_RESERVE
+import com.oposicontrol.admin.domain.model.isReserve
 import com.oposicontrol.admin.domain.model.ContentImportDuplicate
 import com.oposicontrol.admin.domain.model.ContentImportStagingItem
+import com.oposicontrol.admin.domain.model.RazonadoMarkup
 import com.oposicontrol.admin.domain.model.ContentImportSummary
 import com.oposicontrol.admin.domain.model.canonicalExamType
 import com.oposicontrol.admin.domain.model.ExamQuestion
@@ -432,7 +437,7 @@ class KtorAdminV1ContentRepositoryImpl(
                 }
             }
             response.requireBackendSuccess(endpoint)
-            response.body<AdminLoteImportResponse>().data.toDomain()
+            response.body<AdminLoteImportResponse>().let { it.data.toDomain().copy(publishResult = it.resultado?.toDomain()) }
         }
 
     /**
@@ -1019,6 +1024,13 @@ private data class AdminImportResultadoDto(
     val totalImportadas: Int = 0,
     /** Relaciones publicadas como anuladas (M10). Ausente en un backend anterior. */
     val anuladas: Int = 0,
+    /** Filas publicadas como RESERVA (FA37). Ausente en un backend anterior. */
+    val reservas: Int = 0,
+    val huella: String? = null,
+    /** Primer problema abierto de las reglas oficiales del examen, o `null`. */
+    val problema: String? = null,
+    /** Avisos que no bloquean (`MORE_RESERVES_THAN_MAX`, `ANNULLED_RESERVE_SKIPPED`). */
+    val avisos: List<String> = emptyList(),
 )
 
 /** Con el `Json` del cliente (`encodeDefaults = false`) un `false` se omitiría: se fuerza para que la decisión viaje. */
@@ -1160,6 +1172,11 @@ private data class AdminLoteDto(
     val duplicadosComprobados: Boolean = true,
     /** El recuento por estado calculado por el servidor; `null` = no lo mandó o no pudo calcularlo. */
     val resumen: AdminLoteResumenDto? = null,
+    /** `CODIGO_EXAMEN` de la cabecera del PDF (FA37). */
+    val codigoExamen: String? = null,
+    val huella: String? = null,
+    /** Lote ya importado con el mismo contenido en este examen, o `null`. */
+    val duplicadoDe: String? = null,
 )
 
 /** Cada cifra es anulable: una respuesta recortada no se lee como «0». */
@@ -1195,6 +1212,13 @@ private data class AdminStagingItemDto(
     /** Lectura: la pregunta va anulada en el examen destino (M10). Ortogonal a [estadoParseo]. */
     val anulada: Boolean = false,
     val motivoAnulacion: String? = null,
+    /** `PRINCIPAL` o `RESERVA` (FA37). Un backend anterior no lo manda: PRINCIPAL. */
+    val bloque: String = "PRINCIPAL",
+    /**
+     * FA38 (SOLO LECTURA): la estructura que el servidor derivó del razonamiento (`null` = texto sin estilo). `razonamiento`
+     * trae el texto FUENTE con marcas y es lo único que se escribe; este campo NUNCA se reenvía.
+     */
+    val razonamientoRico: JsonObject? = null,
 )
 
 @Serializable
@@ -1203,6 +1227,18 @@ private data class AdminImportDuplicadoDto(
     val preguntaId: String? = null,
     val codigoPregunta: String = "",
     val stagingOriginalId: String? = null,
+)
+
+private fun AdminImportResultadoDto.toDomain() = ContentImportPublishResult(
+    executed = ejecutado,
+    created = nuevas,
+    linked = vinculadas,
+    skipped = omitidas,
+    annulled = anuladas,
+    reserves = reservas,
+    fingerprint = huella,
+    problem = problema,
+    warnings = avisos,
 )
 
 private fun AdminLoteDto.toDomain() = ContentImportBatch(
@@ -1224,6 +1260,9 @@ private fun AdminLoteDto.toDomain() = ContentImportBatch(
             imported = it.importadas,
         )
     },
+    examCode = codigoExamen?.takeIf { it.isNotBlank() },
+    fingerprint = huella,
+    duplicateOfBatchId = duplicadoDe?.takeIf { it.isNotBlank() },
 )
 
 private fun AdminStagingItemDto.toDomain() = ContentImportStagingItem(
@@ -1253,6 +1292,8 @@ private fun AdminStagingItemDto.toDomain() = ContentImportStagingItem(
     },
     annulled = anulada,
     annulmentReason = motivoAnulacion,
+    block = if (bloque.equals(IMPORT_BLOCK_RESERVE, ignoreCase = true)) IMPORT_BLOCK_RESERVE else IMPORT_BLOCK_MAIN,
+    reasoningRich = razonamientoRico?.toRichDoc(),
 )
 
 /**
@@ -1298,6 +1339,8 @@ internal fun ContentImportStagingItem.toPatchBody(): JsonObject {
         put("vincularPreguntaId", JsonPrimitive(linkQuestionId?.takeIf { !lean && it.isNotBlank() }))
         put("anulada", JsonPrimitive(annulled))
         put("motivoAnulacion", JsonPrimitive(annulmentReason?.trim()?.takeIf { annulled && it.isNotEmpty() }))
+        // El bloque viaja siempre: reenviar el valor leído no mueve nada, y el servidor rechaza cualquier valor que no sea PRINCIPAL o RESERVA.
+        put("bloque", JsonPrimitive(if (isReserve) IMPORT_BLOCK_RESERVE else IMPORT_BLOCK_MAIN))
     }
 }
 
@@ -1659,3 +1702,40 @@ internal const val ADMIN_V1_BATCH_PUBLISH_TIMEOUT_MILLIS: Long = 300_000
 
 /** Portada de hasta 10 MB: subida a Storage + actualización del examen. */
 internal const val ADMIN_V1_COVER_UPLOAD_TIMEOUT_MILLIS: Long = 60_000
+
+private val RICH_HEX = Regex("^#[0-9A-Fa-f]{6}$")
+
+/**
+ * `razonamientoRico` (FA38, `{"v":1,"blocks":[{"k":"p|li","a":..,"spans":[{"text":..,"bold":true,..}]}]}`) como ÁRBOL TIPADO.
+ * Lector tolerante con lo que no entiende, tal como pide el contrato del renderizador: una versión desconocida devuelve
+ * `null` (se cae al texto fuente), y un color, tamaño o alineación fuera de las listas cerradas pierde ESE estilo pero
+ * conserva el texto. Nunca produce HTML ni interpreta el texto.
+ */
+private fun JsonObject.toRichDoc(): RazonadoMarkup.Doc? {
+    if ((this["v"] as? JsonPrimitive)?.content?.toIntOrNull() != RazonadoMarkup.VERSION) return null
+    val blocks = (this["blocks"] as? kotlinx.serialization.json.JsonArray)?.mapNotNull { element ->
+        val block = element as? JsonObject ?: return@mapNotNull null
+        val spans = (block["spans"] as? kotlinx.serialization.json.JsonArray)?.mapNotNull { s ->
+            val span = s as? JsonObject ?: return@mapNotNull null
+            val text = (span["text"] as? JsonPrimitive)?.takeIf { it.isString }?.content?.takeIf { it.isNotEmpty() } ?: return@mapNotNull null
+            fun flag(key: String) = (span[key] as? JsonPrimitive)?.content == "true"
+            val color = (span["color"] as? JsonPrimitive)?.content?.takeIf { it in RazonadoMarkup.COLORS || RICH_HEX.matches(it) }
+            RazonadoMarkup.Span(
+                text = text,
+                bold = flag("bold"),
+                italic = flag("italic"),
+                underline = flag("underline"),
+                strike = flag("strike"),
+                color = color,
+                size = (span["size"] as? JsonPrimitive)?.content?.takeIf { it in RazonadoMarkup.SIZES },
+            )
+        }.orEmpty()
+        if (spans.isEmpty()) return@mapNotNull null
+        RazonadoMarkup.Block(
+            kind = if ((block["k"] as? JsonPrimitive)?.content == "li") RazonadoMarkup.Kind.BULLET else RazonadoMarkup.Kind.PARAGRAPH,
+            align = (block["a"] as? JsonPrimitive)?.content?.takeIf { it in RazonadoMarkup.ALIGNS },
+            spans = spans,
+        )
+    }.orEmpty()
+    return blocks.takeIf { it.isNotEmpty() }?.let(RazonadoMarkup::Doc)
+}

@@ -379,6 +379,61 @@ private val SUPABASE_DOMAIN_ERRORS = mapOf(
         HttpStatusCode.Conflict,
         "Este pedido tiene un reembolso retenido; no se puede acreditar ni confirmar",
     ),
+    // ------------------------------------------------------------------
+    // Control V1 (rama de servidor feature/december-v1-server): los levantan las migraciones de reglas oficiales,
+    // comunidad obligatoria, foro e invitaciones. Mensajes constantes: sin ids, sin texto del cliente.
+    // ------------------------------------------------------------------
+    "EXAM_COMMUNITY_REQUIRED" to DomainErrorDefinition(
+        HttpStatusCode.UnprocessableEntity,
+        "Todo examen necesita una comunidad. Elige una antes de guardar o publicar.",
+    ),
+    "FORO_NOT_FOUND" to DomainErrorDefinition(HttpStatusCode.NotFound, "El contenido del foro no existe."),
+    "FORO_ACTION_INVALID" to DomainErrorDefinition(
+        HttpStatusCode.UnprocessableEntity,
+        "La acción de moderación no es válida para este contenido.",
+    ),
+    "REFERRAL_NOT_FOUND" to DomainErrorDefinition(HttpStatusCode.NotFound, "La invitación no existe."),
+    // ------------------------------------------------------------------
+    // Control V1, funciones de servicio (migracion 20261022102300). Estados sugeridos por E1. Los codigos IMPORT_*, OFFICIAL_RULES_INVALID y DEMO_CONFLICT los define E1 (feature/december-v1-server): no se duplican aqui.
+    // ------------------------------------------------------------------
+    "ADMIN_ACTOR_INVALID" to DomainErrorDefinition(
+        HttpStatusCode.Forbidden,
+        "Tu cuenta no puede realizar esta acción.",
+    ),
+    "REASON_INVALID" to DomainErrorDefinition(
+        HttpStatusCode.BadRequest,
+        "El motivo o la nota no cumple la longitud permitida. Revisa el texto.",
+    ),
+    "REFERRAL_FILTER_INVALID" to DomainErrorDefinition(HttpStatusCode.BadRequest, "El filtro de estado de invitaciones no es válido."),
+    "CURSOR_INVALID" to DomainErrorDefinition(HttpStatusCode.BadRequest, "La página solicitada no es válida. Recarga la lista."),
+    "FORO_BLOCK_INVALID" to DomainErrorDefinition(HttpStatusCode.BadRequest, "El patrón de bloqueo debe tener entre 2 y 100 caracteres."),
+    "FORO_BLOCK_LIMIT" to DomainErrorDefinition(HttpStatusCode.Conflict, "Se alcanzó el máximo de patrones de bloqueo. Quita alguno antes de añadir más."),
+    "FLAGS_INPUT_INVALID" to DomainErrorDefinition(HttpStatusCode.BadRequest, "Faltan datos de la pregunta (anulada y reserva son obligatorios)."),
+    "FLAGS_REASON_REQUIRES_ANNULLED" to DomainErrorDefinition(HttpStatusCode.BadRequest, "El motivo de anulación solo se admite si la pregunta está anulada."),
+    "FLAGS_ORDER_INVALID" to DomainErrorDefinition(HttpStatusCode.BadRequest, "El orden de reserva no es válido: solo las reservas llevan orden, de 1 al número de reservas más una."),
+    "EXAM_QUESTION_NOT_FOUND" to DomainErrorDefinition(HttpStatusCode.NotFound, "La pregunta no pertenece a este examen."),
+    "FLAGS_RESERVE_REQUIRES_OFFICIAL_EXAM" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "Solo un examen oficial puede tener preguntas de reserva."),
+    "FLAGS_OFFICIAL_RULES_INVALID" to DomainErrorDefinition(
+        HttpStatusCode.UnprocessableEntity,
+        "Ese cambio dejaría el examen sin reservas suficientes para sustituir las anuladas. No se ha cambiado nada.",
+    ),
+    "GRADING_INPUT_INVALID" to DomainErrorDefinition(HttpStatusCode.BadRequest, "Faltan datos de las reglas de puntuación."),
+    "GRADING_RULE_INVALID" to DomainErrorDefinition(HttpStatusCode.BadRequest, "La regla para preguntas anuladas no es válida."),
+    "GRADING_PENALTY_INVALID" to DomainErrorDefinition(HttpStatusCode.BadRequest, "La fracción de penalización no es válida (denominador de 1 a 100, numerador de 0 al denominador)."),
+    "GRADING_PENALTY_CONFLICT" to DomainErrorDefinition(
+        HttpStatusCode.UnprocessableEntity,
+        "La penalización racional y una fracción fija son excluyentes. Elige una de las dos.",
+    ),
+    "ORDER_DECISION_INVALID" to DomainErrorDefinition(HttpStatusCode.BadRequest, "La decisión sobre el pedido no es válida."),
+    "ORDER_NOT_FOUND" to DomainErrorDefinition(HttpStatusCode.NotFound, "El pedido no existe."),
+    "ORDER_NOT_IN_REVIEW" to DomainErrorDefinition(HttpStatusCode.Conflict, "El pedido ya no está en revisión. Recarga la lista."),
+    "ORDER_ALREADY_CREDITED" to DomainErrorDefinition(HttpStatusCode.Conflict, "Este pedido ya tiene los tickets acreditados: no se puede acreditar ni rechazar."),
+    "ORDER_NOT_CREDITED" to DomainErrorDefinition(HttpStatusCode.Conflict, "Este pedido nunca se acreditó: no se puede confirmar ni reembolsar."),
+    "REFUNDS_DISABLED" to DomainErrorDefinition(HttpStatusCode.UnprocessableEntity, "Los reembolsos están desactivados en este entorno. No se ha cambiado nada."),
+    "CONTROL_RPC_NOT_PROVISIONED" to DomainErrorDefinition(
+        HttpStatusCode.NotImplemented,
+        "Esta función todavía no está disponible en el servidor de datos conectado. No se ha cambiado nada.",
+    ),
 )
 
 /**

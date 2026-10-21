@@ -367,6 +367,25 @@ class ExamsViewModelTest {
     }
 
     @Test
+    fun `un examen sin comunidad no se guarda y se senala el campo`() = runTest {
+        val repository = ExamsTestRepository()
+        val viewModel = buildViewModel(repository)
+        advanceUntilIdle()
+
+        viewModel.dispatch(ExamsIntent.SelectExam("exam-tcae-marzo"))
+        advanceUntilIdle()
+        viewModel.dispatch(ExamsIntent.UpdateCommunityId(null))
+        viewModel.dispatch(ExamsIntent.SaveExam)
+        advanceUntilIdle()
+
+        val action = viewModel.state.value.actionState
+        assertTrue(action is UiAsync.Error)
+        assertEquals(EXAM_ERROR_COMMUNITY_REQUIRED, (action.error as AppError.Validation).code)
+        assertEquals(ExamField.COMMUNITY, examFieldError(viewModel.state.value)?.field)
+        assertNull(repository.lastUpsertedExam)
+    }
+
+    @Test
     fun `selecting exam loads related questions`() = runTest {
         val repository = ExamsTestRepository()
         val viewModel = buildViewModel(repository)
@@ -1478,6 +1497,7 @@ private class ExamsTestRepository(
                 id = "exam-tcae-marzo",
                 code = "TCAE-2026-03",
                 specialtyId = "specialty-tcae",
+                communityId = "com-test",
                 specialtyName = "TCAE",
                 title = "TCAE Marzo",
                 description = "",
@@ -1499,6 +1519,7 @@ private class ExamsTestRepository(
                 id = "exam-tcae-abril",
                 code = "TCAE-2026-04",
                 specialtyId = "specialty-tcae",
+                communityId = "com-test",
                 specialtyName = "TCAE",
                 title = "TCAE Abril",
                 description = "",
@@ -1519,6 +1540,7 @@ private class ExamsTestRepository(
                 id = "exam-mixto",
                 code = "TCAE-MIXTO",
                 specialtyId = "specialty-tcae",
+                communityId = "com-test",
                 specialtyName = "TCAE",
                 title = "TCAE Mixto",
                 description = "",

@@ -32,6 +32,7 @@ internal val AdminAuthorizationPlugin = createRouteScopedPlugin(
 ) {
     val appEnv = pluginConfig.appEnv
     val hasAdminRole = pluginConfig.hasAdminRole
+    val hasModeratorRole = pluginConfig.hasModeratorRole
     val isLocalPeer = pluginConfig.isLocalPeer
     on(AuthenticationChecked) { call ->
         // Falla cerrado, no abierto. Si algún día se añade otro proveedor a
@@ -48,6 +49,7 @@ internal val AdminAuthorizationPlugin = createRouteScopedPlugin(
             appEnv = appEnv,
             hasAdminRole = hasAdminRole,
             isLocalPeer = isLocalPeer,
+            hasModeratorRole = hasModeratorRole,
         )?.let { throw it }
     }
 }
@@ -55,6 +57,9 @@ internal val AdminAuthorizationPlugin = createRouteScopedPlugin(
 internal class AdminAuthorizationConfig {
     var appEnv: String = ""
     var hasAdminRole: (String) -> Boolean = { false }
+
+    /** Rol `moderador` con cuenta activa. Solo se consulta en [isModeratorAdminPath]; por defecto nadie es moderador. */
+    var hasModeratorRole: (String) -> Boolean = { false }
 
     /**
      * Cómo se decide que el par es local. El valor por defecto es la comprobación
@@ -101,6 +106,7 @@ internal fun adminAuthorizationFailure(
     appEnv: String,
     hasAdminRole: (String) -> Boolean,
     isLocalPeer: (String, String) -> Boolean = ::isLocalDevelopmentPeer,
+    hasModeratorRole: (String) -> Boolean = { false },
 ): Exception? {
     if (principalName == STATIC_TOKEN_PRINCIPAL) {
         val allowed = isLocalPeer(appEnv, remoteAddress) && isLegacyStaticTokenPath(path)
@@ -110,12 +116,26 @@ internal fun adminAuthorizationFailure(
             AppUnauthorized("El token estatico solo esta permitido en superficies legacy locales de desarrollo.")
         }
     }
-    return if (hasAdminRole(principalName)) {
+    return if (hasAdminRole(principalName) || (isModeratorAdminPath(path) && hasModeratorRole(principalName))) {
         null
     } else {
         AppForbidden("No tienes permisos para acceder al panel de administración.")
     }
 }
+
+/**
+ * Decisión del propietario 2026-10-20: el rol `moderador` entra en el panel SOLO para moderar el foro. Lista CERRADA y
+ * exacta (sin prefijos): la sesión, la cola, la acción de moderar y la lectura de restricciones. Canales, bloqueos,
+ * levantar una restricción (la RPC exige admin en SQL) y todo lo demás siguen siendo solo de admin.
+ */
+internal val MODERATOR_ADMIN_PATHS: Set<String> = setOf(
+    "/api/v1/admin/sesion",
+    "/api/v1/admin/foro/cola",
+    "/api/v1/admin/foro/moderar",
+    "/api/v1/admin/foro/restricciones",
+)
+
+internal fun isModeratorAdminPath(path: String): Boolean = path.trimEnd('/') in MODERATOR_ADMIN_PATHS
 
 /**
  * [adminAuthorizationFailure] con la lectura de rol FUERA del hilo de la petición (F-03).
@@ -144,6 +164,7 @@ internal suspend fun authorizeAdminCall(
     appEnv: String,
     hasAdminRole: (String) -> Boolean,
     isLocalPeer: (String, String) -> Boolean = ::isLocalDevelopmentPeer,
+    hasModeratorRole: (String) -> Boolean = { false },
 ): Exception? {
     if (principalName == STATIC_TOKEN_PRINCIPAL) {
         return adminAuthorizationFailure(
@@ -156,6 +177,8 @@ internal suspend fun authorizeAdminCall(
         )
     }
     val hasRole = withUpstreamIo { hasAdminRole(principalName) }
+    // El rol moderador solo se lee si hace falta: no admin y ruta de la lista cerrada.
+    val hasModerator = !hasRole && isModeratorAdminPath(path) && withUpstreamIo { hasModeratorRole(principalName) }
     return adminAuthorizationFailure(
         principalName = principalName,
         path = path,
@@ -163,6 +186,7 @@ internal suspend fun authorizeAdminCall(
         appEnv = appEnv,
         hasAdminRole = { hasRole },
         isLocalPeer = isLocalPeer,
+        hasModeratorRole = { hasModerator },
     )
 }
 

@@ -59,7 +59,8 @@ internal val CLIENT_CALL_ROWS: List<CallRow> = listOf(
     ROWS_C_ADMIN_V1_CONTENT_REPO + // R5-REC-C1: RowsCKtorAdminV1ContentRepo.kt
     ROWS_C2_AUTH_API + ROWS_C2_USERS_API + ROWS_C2_COMMERCIAL_CATALOG_REPO + ROWS_C2_CONNECTION_DIAGNOSTICS_REPO +
     ROWS_C2_FORUM_REPO + ROWS_C2_MODERATION_REPO + ROWS_C2_PRODUCT_ANALYTICS_REPO + ROWS_C2_RANKINGS_REPO + // R5-REC-C2: RowsC2*.kt
-    ROWS_D_ACCESS_REQUESTS_REPO // solicitudes de acceso al panel: RowsDKtorAccessRequestsRepo.kt
+    ROWS_D_ACCESS_REQUESTS_REPO + // solicitudes de acceso al panel: RowsDKtorAccessRequestsRepo.kt
+    ROWS_E_CONTROL_V1_REPO // Control V1 (E6-V1-PANEL): RowsEControlV1Repo.kt
 
 private const val DATA_MAIN = "data/src/commonMain/kotlin/com/oposicontrol/admin/data"
 private const val API_DIR = "$DATA_MAIN/remote/api"

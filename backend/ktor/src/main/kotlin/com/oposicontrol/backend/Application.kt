@@ -849,6 +849,7 @@ internal fun Route.installControlRoutes(deps: CombinedRoutingDeps, includeIntern
                 this.appEnv = environmentName
                 // MASTER-AUTH-002: rol admin Y cuenta `activa` (deny-by-default).
                 this.hasAdminRole = { appV1Gateway.hasActiveAdminRole(it) }
+                this.hasModeratorRole = { appV1Gateway.hasActiveModeratorRole(it) }
             }
             // DEBT-151: limite de mutaciones por administrador (despues de autorizar; las lecturas no cuentan).
             install(AdminMutationRateLimitPlugin) {
@@ -859,6 +860,7 @@ internal fun Route.installControlRoutes(deps: CombinedRoutingDeps, includeIntern
             installAdminAuditActor()
             adminRoutes(adminGateway, adminV1Gateway)
             adminV1Routes(adminV1Gateway, deps.adminIdempotencyStore)
+            adminControlV1Routes(adminV1Gateway.controlV1)
             // FA11: noticias canonicas de administracion (D4-01..D4-11), mismo servicio que `/content/noticias*`.
             adminNewsRoutes(deps.newsRuntime)
             adminRankingsRoutes(adminRankingsGateway)
