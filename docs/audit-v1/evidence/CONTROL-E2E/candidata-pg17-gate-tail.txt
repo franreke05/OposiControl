@@ -1,0 +1,9 @@
+ok:   manifiesto (34 pendientes) y bloques VERIFY/ROLLBACK
+ok:   PostgreSQL 17.6
+ok:   bootstrap + 34 migraciones aplicadas en orden; VERIFY = 0
+ok:   assertions.sql (comportamiento + grants/RLS)
+ok:   rollback inverso == bootstrap; re-aplicacion == primera aplicacion (VERIFY = 0)
+ok:   carreras de tienda con dos conexiones reales (R1..R4, S1..S3, D1 x2): cerrojo por clave, sin 40P01, libro = saldo
+ok:   carreras del intento con dos conexiones reales (F1..F5 x2): cierre serializado, nada tras el cierre, sin TIMEOUT
+db-pg17-gate OK
+gate rc=0
