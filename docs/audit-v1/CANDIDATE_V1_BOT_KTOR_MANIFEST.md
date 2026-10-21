@@ -9,8 +9,9 @@ Nothing was pushed. No existing branch was changed.
 | What | SHA |
 |---|---|
 | Base `develop` | `8fecd02` |
-| Code SHA tested (Ktor/dbtest ran on `b1b282a`; `baf4264` changes only `ops/local-exam/up.mjs`; the PG17 gate ran on `b1b282a`, and e2e and journeys ran on `baf4264`) | `baf4264ba3bdada5dcaa251a1a1c3735f2b532ad` |
-| HEAD | the commit that adds this file (docs only, on top of `baf4264`) |
+| Code SHA tested in the follow-up round | `4ba2a19`. Everything below was rerun fresh on it after Control killed two test JVMs: Ktor, dbtest, gate, gate test, manifests, ops, e2e and journeys. Ktor and dbtest started at `d7a6c42`; `4ba2a19` only adds a change to `ops/local-exam/up.mjs`, which e2e exercised. |
+| HEAD | the commit that updates this file (docs only, on top of `4ba2a19`) |
+| First round (superseded) | `baf4264` |
 
 Commits on top of `develop`, oldest first:
 
@@ -23,6 +24,14 @@ Commits on top of `develop`, oldest first:
 | `ab1870b` | merge feature/v1-p2-deploy-env-templates `aff478d` |
 | `b1b282a` | docs(deploy): cite V1 migrations 102500, 103200 and 103300 in DEPLOYMENT.md. The source branches did not cite them, so `verify-migrations-manifest.sh` failed. |
 | `baf4264` | fix(local-exam): `up.mjs` applies develop's `20261020100000` on the QA stack (see e2e) |
+| `3bdf3fb`, `aa223df` | manifest; owner approval of the DEBT-156b step 1b rewording (by COORD) |
+| `4a1af78` | fix(db-gate): step 1b follow-ups (item 1a/1b/1c) and scenario (f) on the live freeze function (item 2) |
+| `484365b` | fix(local-exam): `main-wallet-shape.txt` includes the 20261022102600 delta (item 3) |
+| `a148a6c` | docs(debt): DEBT-116-EXAM renamed to DEBT-160 (item 4) |
+| `5cf3fe5` | refactor(admin): drop unused `ContenidoDesbloqueadoInsertRow` (item 5) |
+| `e3b336c` | fix(server): CAND-03, the Bot periodic jobs run only where the Bot routes are mounted (item 6) |
+| `d7a6c42` | docs(deploy): CAND-04, `20261023100200` (manual) is applied after `20261022102600` (item 7) |
+| `4ba2a19` | fix(local-exam): `up.mjs` keeps 102600's ECO-11 grant narrowing after a re-run (found by the corrected WALLET check) |
 
 ## Conflict log
 
@@ -46,7 +55,7 @@ Commits on top of `develop`, oldest first:
   - Kept V1's revision-bound freeze assertion.
   - Kept develop's "annulled answer is never stored" checks.
   - Kept V1's "archived question is not in the set" check.
-- `docs/registry/TECH_DEBT.md`: develop rows DEBT-116..156 are kept. The V1 DEBT-116 row (exam engine) collides by id and is renamed `DEBT-116-EXAM` here.
+- `docs/registry/TECH_DEBT.md`: develop rows DEBT-116..156 are kept. The V1 DEBT-116 row (exam engine) collides by id. It was first renamed `DEBT-116-EXAM`, and is now **DEBT-160** (`a148a6c`), as agreed in `INTEGRATION_CONFLICTS.md:49`; the panel uses 157..159.
 - `ops/inventory/undocumented-routes.tsv`: union of the rows. `# max: 175` (base 168, develop +2, store +5).
 
 ### Merge 2: user-tables-revoke `11bae54`
@@ -174,14 +183,14 @@ The "35 new vs MAIN" expectation does not match: 34 PENDING plus 7 develop secur
 
 | Gate | Command | Result |
 |---|---|---|
-| Ktor | `./gradlew.bat :backend:ktor:test :backend:dbtest:test --console=plain --continue` (mutex `OposiBotGradleMutex`, `LOCALAPPDATA=OposiBotEnv-candidate`) | **2358 tests, 0 failures, 0 errors, 1 skipped** (`LocalExamStackIngestFixture`, assumeTrue on the local stack), 213 XML reports. BUILD SUCCESSFUL in 16m15s. |
+| Ktor | `./gradlew.bat :backend:ktor:cleanTest :backend:dbtest:cleanTest :backend:ktor:test :backend:dbtest:test --console=plain --continue` (mutex `OposiBotGradleMutex`, `LOCALAPPDATA=OposiBotEnv-candidate`), fresh | **2359 tests, 0 failures, 0 errors, 1 skipped** (`LocalExamStackIngestFixture`, assumeTrue on the local stack), 213 XML reports. The new test is `ServerProfileRuntimeTest.botJobsRunOnlyWhereTheBotRoutesAreMounted`. First round: 2358/0/1. |
 | dbtest | same command | **309 tests, 0 failures, 0 errors, 0 skipped**, 43 XML reports |
-| PG17 gate | `bash scripts/db-pg17-gate.sh` (own disposable container `db-pg17-gate-<pid>-<rand>`, no published port, removed on exit; it does not touch `oposi-exam-local`) | **rc=0**: 34 pending, VERIFY = 0, assertions, rollback == bootstrap, store races R1..R4/S1..S3/D1, attempt races F1..F5 |
-| PG17 gate negative controls | `bash scripts/db-pg17-gate.test.sh` | **rc=1 at scenario (f)**. See open problem 2. The manifest/DEBT-156b controls, the unmutated copy and (a), (a2), (b), (c), (d), (e) pass. |
-| Migration manifests | `bash scripts/verify-migrations-manifest.sh` / `.test.sh` | ok (V1 32) / OK (41 scenarios) |
-| Ops config | `bash scripts/verify-ops-config.sh` and `verify-ops-config.test.sh` on a clean `git archive HEAD` export | rc=0 (47 ok); test OK (90 mutations). In the worktree it reports "secretos en claro bajo ops/" only because of the gitignored `ops/local-exam/.local/` (QA stack keys), which is not tracked. |
-| e2e | `STACK_HOLDER=COORD APP_ENV=local node ops/local-exam/e2e.mjs` (fresh Ktor) | **166 PASS, 1 FAIL, 0 NOT_RUN** (167 checks). The first run, before `baf4264`, was 157/10: all 9 REGISTER_J6 checks failed with 503 (the 20261020 dependency). |
-| J15 admin grant | `admin-grant-journey.mjs` | 20/20 on a fresh Ktor. Run right after e2e on the same Ktor it was 15/5 (429 from the in-memory limiter used up by e2e). |
+| PG17 gate | `bash scripts/db-pg17-gate.sh` (own disposable container `db-pg17-gate-<pid>-<rand>`, no published port, removed on exit; it does not touch `oposi-exam-local`) | **rc=0** on `4ba2a19`: 34 pending, VERIFY = 0, assertions, rollback == bootstrap, store races R1..R4/S1..S3/D1 x2, attempt races F1..F5 x2 |
+| PG17 gate negative controls | `bash scripts/db-pg17-gate.test.sh` (clean export of `4a1af78`; its gate/test/supabase inputs are identical at `4ba2a19`) | **rc=0, `db-pg17-gate.test OK (20 escenarios)`**, run to the end. Each scenario fails for its own reason: manifest swap; VERIFY missing; non-V1 `_security_` without ROLLBACK / VERIFY / dbtest class; V1 20261022* `_security_` outside PENDING; **new:** V1 by `V1_MIGRATIONS.txt` outside PENDING; **new:** V1 `_security_` already in MAIN history leaves PENDING; unmutated copy passes; (a), (a2), (b), (c), (d), (e); **(f) now fails on `assertions.sql`, 'every frozen question bound to a revision'**; (g) mutA R1, (g2) mutA2 R2, (g3) credit R3/R4; (h) N3-1 D1 40P01. |
+| Migration manifests | `bash scripts/verify-migrations-manifest.sh` / `.test.sh` (clean export of `4ba2a19`) | ok (V1 32) / OK (41 scenarios) |
+| Ops config | `bash scripts/verify-ops-config.sh` and `verify-ops-config.test.sh` on a clean `git archive` export of `4ba2a19` | rc=0 (47 ok, 0 FAIL); test OK (90 mutations). In the worktree it reports "secretos en claro bajo ops/" only because of the gitignored `ops/local-exam/.local/` (QA stack keys), which is not tracked. |
+| e2e | `STACK_HOLDER=COORD APP_ENV=local node ops/local-exam/e2e.mjs` (fresh Ktor, `4ba2a19`) | **167 PASS, 0 FAIL, 0 NOT_RUN**. `WALLET.local_schema_matches_main` PASS (133 lines). Earlier runs: 157/10 before `baf4264` (all 9 REGISTER_J6 checks 503, the 20261020 dependency); 166/1 before `484365b` + `4ba2a19`. |
+| J15 admin grant | `admin-grant-journey.mjs` | 20/20 on a fresh Ktor (both rounds). Run right after e2e on the same Ktor it was 15/5 (429 from the in-memory limiter used up by e2e). |
 | J16 access v2 | `access-v2-journey.mjs` | 17/17 |
 | J17 challenge | `challenge-journey.mjs` | **25/25** |
 | J18 official rules | `official-rules-journey.mjs` | 24/24 |
@@ -193,6 +202,7 @@ The "35 new vs MAIN" expectation does not match: 34 PENDING plus 7 develop secur
 ### QA stack handling
 
 - STACK_LOCK was already held by `COORD` (since 2026-10-19). It was rewritten as COORD for this run and deleted (released) at the end.
+- In the follow-up round the lock was free. COORD took it, ran a plain `up.mjs` (no recreate, no reset), ran e2e and J15–J22 on a fresh Ktor, restored fixtures, stopped Ktor and released the lock.
 - `oposi-exam-local-db-1` and `oposi-exam-local-gateway-1` had exited 13 hours earlier (code 255).
 - `.local/secrets.json` and `ports.json` were copied (read only) from the stack owner worktree `OposiControl-PhaseB-Server`, as the harness README requires. Compose config hashes were checked BEFORE `up.mjs`:
   - db, rest and storage were unchanged, so `up.mjs` only **started** the db (plain start, data kept).
@@ -201,7 +211,7 @@ The "35 new vs MAIN" expectation does not match: 34 PENDING plus 7 develop secur
 - `--restore-fixtures` ran before e2e and again at the end.
 - Ktor bot (8089) and control (8090) were started from the candidate's installDist and stopped afterwards. The GoTrue stub was stopped by e2e.
 - The stack is left with db, rest, storage and gateway running. The db and gateway were down before this run because of the crash.
-- The QA DB now holds the candidate's V1 stamps (102500, 102700, 103x) and `20261020100000`.
+- The QA DB now holds the candidate's V1 stamps (102500, 102700, 103x) and `20261020100000`. The ECO-11 grant narrowing of 102600 was re-asserted by `4ba2a19`.
 
 ## What was NOT run, and why
 
@@ -215,10 +225,25 @@ The "35 new vs MAIN" expectation does not match: 34 PENDING plus 7 develop secur
 
 ## Open problems
 
-1. `WALLET.local_schema_matches_main` fails. The store payments migrations (20261022102600+) intentionally add `entorno`, `tienda_producto_id` and `tienda_finalizada_en` to `compras_usuario`; `suscripciones` also gets `version_evento`. They also add CHECK constraints and a unique index, and narrow the `service_role` grants. The e2e therefore differs from the 2026-10-14 MAIN capture (`main-wallet-shape.txt`). This is expected drift for pending migrations. The test was NOT changed: the owner of the harness decides whether to keep a pending-delta expectation.
-2. `db-pg17-gate.test.sh` (f) "el congelado no liga la revision" is now ineffective (TEST FAIL, the mutation passes the gate). It mutates the freeze insert of 20261022100000, but `20261022101000_v1_demo_mode` and `20261022101300_v1_official_rules` later replace the freeze function. **This is not caused by the merge:** the same test on a clean `git archive` of feature/v1-p3-store-payments `be9e0bd` also stops at `TEST FAIL: (f) el congelado no liga la revision paso` (rc=1). The fix would be to mutate the last definition (101300); this is not done here.
+1. RESOLVED (`484365b`, `4ba2a19`): `WALLET.local_schema_matches_main`. The correct description of the 20261022102600 delta (sections 1 and 2) is:
+   - `compras_usuario` gains 3 columns (`entorno`, `tienda_producto_id`, `tienda_finalizada_en`) and `compras_usuario_entorno_check`;
+   - `suscripciones` gains **4** columns (`entorno`, `tienda_producto_id`, `tienda_finalizada_en`, `version_evento`), `suscripciones_entorno_check` and `ux_suscripciones_proveedor_externo`;
+   - ECO-11 narrows `service_role` to REFERENCES,SELECT,TRIGGER on both tables.
+
+   Only that delta was added to `main-wallet-shape.txt`. A seeded drift (`version_evento integer`) still fails the comparison.
+
+   The corrected check also found a harness bug: `01_overlay_wallet_entitlement.sql` restored full `service_role` DML on every `up.mjs` run, and 102600 is not re-runnable, so the ECO-11 narrowing was lost on the QA stack. `up.mjs` now re-asserts the two revokes (`4ba2a19`).
+2. RESOLVED (`4a1af78`): (f) now mutates the live 3-arg `private.app_congelar_preguntas_intento` of 20261022101300. It removes `revision_pregunta_id` and `r.id` with an exact-line match and checks that exactly one line changed. The test fails on `assertions.sql` and runs to the end (20 scenarios). Previous text: (f) "el congelado no liga la revision" was ineffective (TEST FAIL, the mutation passes the gate). It mutates the freeze insert of 20261022100000, but `20261022101000_v1_demo_mode` and `20261022101300_v1_official_rules` later replace the freeze function. **This is not caused by the merge:** the same test on a clean `git archive` of feature/v1-p3-store-payments `be9e0bd` also stops at `TEST FAIL: (f) el congelado no liga la revision paso` (rc=1). The fix would be to mutate the last definition (101300); this is not done here.
 3. ~~The DEBT-156b step 1b rewording needs confirmation.~~ Approved by the owner on 2026-10-21.
 4. The QA stack gateway now mounts files from this worktree's `ops/local-exam/.local/`. Do not delete this worktree without first running `up.mjs` from the stack owner's worktree.
 5. Two harness facts to know before the next run:
    - J15 must run on a fresh Ktor: the in-memory limits of e2e and J15 add up.
    - J21 moves the Q1/Q4 balances (`--restore-fixtures` afterwards).
+6. **Info (no change):** forum writes share the per-user `PLAN_WRITE` quota with choosing an immersive. `ForoOperation.WRITE` is `OposiBotsAuthOperation.PLAN_WRITE` (`Foro.kt:44-47`), so a burst of forum posts can use up the D7-32 immersive-choice budget and the reverse.
+7. Leftover found while doing item 5: `ContenidoDesbloqueadoCierre` (`AdminV1Routes.kt`, the old PATCH body of the direct revoke) has no uses either. It was not removed because it was not in the request.
+8. Step 1b follow-ups (`4a1af78`):
+   - An applied V1 `_security_` (`20261022100100` once `MAIN_MIGRATION_HISTORY.txt` is recaptured) is no longer required in PENDING; the previous gate fails that case.
+   - New negative control for the `V1_MIGRATIONS.txt` branch of `is_v1`.
+   - The DEBT-156 row in `TECH_DEBT.md` records the approved rewording.
+9. CAND-03 (`e3b336c`): `ServerProfile.runsBotJobs` (= `mountsBot`) gates the daily challenge, deferred-OT and foro image purge job; `consumer` no longer starts it.
+10. CAND-04 (`d7a6c42`): `DEPLOYMENT.md` records that manual `20261023100200` goes after `20261022102600`.
