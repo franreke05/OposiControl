@@ -1015,6 +1015,20 @@ class ExamsViewModel(
                 }
                 it.copy(actionState = examSaveError(AppError.Validation(message)))
             }
+        // V1 (decisión del propietario 2026-10-15): todo examen tiene comunidad. Sin ella no se envía nada: el servidor y el
+        // trigger de la base rechazarían el guardado igual, pero el mensaje y el campo se dicen aquí, antes de salir.
+        if (currentState().editorCommunityId.isNullOrBlank()) {
+            return updateState {
+                it.copy(
+                    actionState = examSaveError(
+                        AppError.Validation(
+                            message = "Elige la comunidad del examen: todo examen necesita una.",
+                            code = EXAM_ERROR_COMMUNITY_REQUIRED,
+                        ),
+                    ),
+                )
+            }
+        }
         val priceTickets = currentState().editorPriceTickets.toIntOrNull()
             ?: return updateState {
                 it.copy(actionState = examSaveError(AppError.Validation("El precio en tickets debe ser un número válido.")))

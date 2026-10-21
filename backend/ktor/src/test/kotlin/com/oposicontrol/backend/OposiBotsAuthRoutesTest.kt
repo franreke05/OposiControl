@@ -45,6 +45,41 @@ class OposiBotsAuthRoutesTest {
         assertFalse(response.bodyAsText().contains("accessToken"))
     }
 
+    // --- FA39: binding of the email-link code (PKCE-style) ---
+
+    @Test
+    fun theCodeChallengeAndVerifierAreValidatedByShapeBeforeAnyWork() = testApplication {
+        val fake = FakeGateway()
+        application { authTestModule(fake) }
+
+        suspend fun post(path: String, body: String) = client.post(path) { contentType(ContentType.Application.Json); setBody(body) }
+        fun issueField(body: String) = Json.parseToJsonElement(body).jsonObject["details"]!!.jsonObject["issues"]!!.jsonArray.single().jsonObject["field"]!!.jsonPrimitive.content
+
+        val badChallenge = post("/v1/auth/recover", """{"email":"a@b.es","codeChallenge":"too-short"}""")
+        assertEquals(HttpStatusCode.BadRequest, badChallenge.status)
+        assertEquals("codeChallenge", issueField(badChallenge.bodyAsText()))
+        val badVerifier = post("/v1/auth/email/exchange", """{"code":"hash","codeVerifier":"short"}""")
+        assertEquals(HttpStatusCode.BadRequest, badVerifier.status)
+        assertEquals("codeVerifier", issueField(badVerifier.bodyAsText()))
+        val badEmail = post("/v1/auth/reset-password", """{"resetToken":"t","newPassword":"safe-password-12","codeVerifier":"vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvv","email":"not-an-email"}""")
+        assertEquals(HttpStatusCode.BadRequest, badEmail.status)
+
+        val ok = post("/v1/auth/recover", """{"email":"a@b.es","codeChallenge":"AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}""")
+        assertEquals(HttpStatusCode.NoContent, ok.status)
+        assertEquals("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", fake.recoverRequest?.codeChallenge)
+    }
+
+    @Test
+    fun theLegacyBodiesWithoutTheNewFieldsStillWork() = testApplication {
+        val fake = FakeGateway()
+        application { authTestModule(fake) }
+
+        val response = client.post("/v1/auth/email/exchange") { contentType(ContentType.Application.Json); setBody("""{"code":"hash"}""") }
+
+        assertEquals(HttpStatusCode.OK, response.status)
+        assertEquals(null, fake.exchangeRequest?.codeVerifier)
+    }
+
     @Test
     fun authRejectsNonJsonAndOversizedBodiesBeforeGateway() = testApplication {
         val fake = FakeGateway()
@@ -289,6 +324,29 @@ class OposiBotsAuthRoutesTest {
         val body = bodyOf(neither.bodyAsText())
         assertEquals("VALIDATION", body["code"]!!.jsonPrimitive.content)
         assertEquals(listOf("BLANK_IDENTIFIER"), body["issues"]!!.jsonArray.map { it.jsonPrimitive.content })
+    }
+
+    /** E2-V1-S02: un caracter de control en el correo (BEL, NUL, DEL) es un 400 en register, login, resend y recover; antes llegaba a la guarda (503) o enviaba correo. */
+    @Test
+    fun controlCharactersInTheEmailAreAnHttp400OnEveryEmailEntryPoint() = testApplication {
+        val fake = FakeGateway()
+        application { authTestModule(fake) }
+        val bad = listOf("a\\u0007b@example.com", "\\u0000@example.com", "ab\\u007f@example.com", "a@exam\\u001bple.com")
+        for (email in bad) {
+            for ((path, body) in listOf(
+                "/v1/auth/register" to """{"email":"$email","password":"safe-password-12"}""",
+                "/v1/auth/login" to """{"email":"$email","password":"safe-password-12"}""",
+                "/v1/auth/email/resend" to """{"email":"$email"}""",
+                "/v1/auth/recover" to """{"email":"$email"}""",
+            )) {
+                val response = client.post(path) { contentType(ContentType.Application.Json); setBody(body) }
+                assertEquals(HttpStatusCode.BadRequest, response.status, "$path $email -> ${response.bodyAsText()}")
+            }
+        }
+        assertEquals(null, fake.registerRequest, "ninguna peticion de registro llego al gateway")
+        // un correo normal sigue valiendo
+        val ok = client.post("/v1/auth/register") { contentType(ContentType.Application.Json); setBody("""{"email":"ok@example.com","password":"safe-password-12"}""") }
+        assertEquals(HttpStatusCode.Accepted, ok.status)
     }
 
     @Test
@@ -538,6 +596,67 @@ class OposiBotsAuthRoutesTest {
     }
 
     @Test
+    fun legacyRegisterProfileIsIdenticalWhateverTheInvitationCodeIs() = testApplication {
+        val attached = java.util.concurrent.CopyOnWriteArrayList<String?>()
+        val canonical = CanonicalTestEnv().apply {
+            upstream.onRpc = { _, _ -> rpcOk(profileRpcJson()) }
+            referral = ReferralAttach { _, code -> attached += code; if (code == "BOOM0001") error("the referral store is down") }
+        }
+        application { authTestModule(FakeGateway(), canonical = canonical) }
+        suspend fun save(extra: String) = client.post("/v1/auth/register/profile") {
+            header(HttpHeaders.Authorization, "Bearer $TEST_LONG_TOKEN")
+            contentType(ContentType.Application.Json)
+            setBody("""{"firstName":"Ada","lastName":"Lovelace","username":"ada_l","specialty":"Sanidad"$extra}""")
+        }
+        val none = save("")
+        val valid = save(""","codigoInvitacion":"ABCDEFGH"""")
+        val unknown = save(""","codigoInvitacion":"ZZZZZZZZ"""")
+        val own = save(""","codigoInvitacion":"OWNCODE2"""")
+        val failing = save(""","codigoInvitacion":"BOOM0001"""")
+        val garbage = save(""","codigoInvitacion":"x y z <script>"""")
+        for ((name, r) in listOf("none" to none, "valid" to valid, "unknown" to unknown, "own" to own, "failing" to failing, "garbage" to garbage)) {
+            assertEquals(HttpStatusCode.NoContent, r.status, name)
+            assertEquals("", r.bodyAsText(), name)
+        }
+        assertEquals(listOf(null, "ABCDEFGH", "ZZZZZZZZ", "OWNCODE2", "BOOM0001", "x y z <script>"), attached.toList(), "the code reaches the bridge as sent; the bridge decides, the route never differs")
+        assertEquals(6, canonical.upstream.rpcNames().count { it == "app_completar_onboarding" }, "onboarding ran every time")
+    }
+
+    @Test
+    fun legacyRegisterProfileAcceptsTheCanonicalSpecialtyIdAndTheIdWinsOverTheName() = testApplication {
+        val canonical = CanonicalTestEnv().apply { upstream.onRpc = { _, _ -> rpcOk(profileRpcJson()) } }
+        application { authTestModule(FakeGateway(), canonical = canonical) }
+        val otherId = "5a000000-0000-4000-8000-0000000000aa"
+        suspend fun save(body: String) = client.post("/v1/auth/register/profile") {
+            header(HttpHeaders.Authorization, "Bearer $TEST_LONG_TOKEN")
+            contentType(ContentType.Application.Json)
+            setBody(body)
+        }
+
+        // Solo el id (sin nombre): vale, y es el id lo que llega a la RPC canonica.
+        assertEquals(HttpStatusCode.NoContent, save("""{"firstName":"Ada","lastName":"L","username":"ada_l","especialidadId":"$otherId"}""").status)
+        assertEquals(otherId, canonical.upstream.lastArgs("app_completar_onboarding")["p_especialidad_id"]!!.jsonPrimitive.content)
+
+        // Los dos: GANA el id (el nombre "Sanidad" resolveria a TEST_SPECIALTY).
+        assertEquals(HttpStatusCode.NoContent, save("""{"firstName":"Ada","lastName":"L","username":"ada_l","specialty":"Sanidad","especialidadId":"$otherId"}""").status)
+        assertEquals(otherId, canonical.upstream.lastArgs("app_completar_onboarding")["p_especialidad_id"]!!.jsonPrimitive.content)
+
+        // Solo el nombre: sigue funcionando (compatibilidad).
+        assertEquals(HttpStatusCode.NoContent, save("""{"firstName":"Ada","lastName":"L","username":"ada_l","specialty":"Sanidad"}""").status)
+        assertEquals(TEST_SPECIALTY, canonical.upstream.lastArgs("app_completar_onboarding")["p_especialidad_id"]!!.jsonPrimitive.content)
+
+        // Un id mal formado es 400 y no llega a la RPC; uno inexistente o inactivo lo rechaza la base con 422.
+        val before = canonical.upstream.rpcNames().size
+        val malformed = save("""{"firstName":"Ada","lastName":"L","username":"ada_l","especialidadId":"not-a-uuid"}""")
+        assertEquals(HttpStatusCode.BadRequest, malformed.status)
+        assertEquals(before, canonical.upstream.rpcNames().size)
+        canonical.upstream.onRpc = { _, _ -> rpcError(422, "22023", "UNKNOWN_SPECIALTY") }
+        val unknown = save("""{"firstName":"Ada","lastName":"L","username":"ada_l","especialidadId":"$otherId"}""")
+        assertEquals(HttpStatusCode.UnprocessableEntity, unknown.status)
+        assertEquals("UNKNOWN_SPECIALTY", bodyOf(unknown.bodyAsText())["code"]!!.jsonPrimitive.content)
+    }
+
+    @Test
     fun legacyRegisterProfileKeepsItsLegacyErrorsAndAddsTheCanonicalOnes() = testApplication {
         val canonical = CanonicalTestEnv()
         application { authTestModule(FakeGateway(), canonical = canonical) }
@@ -647,6 +766,7 @@ private class FakeGateway : OposiBotsAuthGateway {
     var registerRequest: OposiBotsRegisterRequest? = null
     var loginRequest: OposiBotsLoginRequest? = null
     var recoverRequest: OposiBotsRecoverRequest? = null
+    var exchangeRequest: OposiBotsEmailExchangeRequest? = null
     var googleRequest: OposiBotsGoogleRequest? = null
     var appleRequest: OposiBotsAppleRequest? = null
     var loginCalls = 0
@@ -663,6 +783,7 @@ private class FakeGateway : OposiBotsAuthGateway {
     }
 
     override suspend fun exchangeEmail(request: OposiBotsEmailExchangeRequest, context: OposiBotsAuthContext): OposiBotsAuthSessionDto {
+        exchangeRequest = request
         failure?.let { throw it }
         return session()
     }

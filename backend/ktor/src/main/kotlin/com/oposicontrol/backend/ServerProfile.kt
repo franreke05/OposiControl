@@ -28,6 +28,12 @@ internal enum class ServerProfile(val wire: String) {
     /** Monta las rutas admin (`gateway-auth`): requiere los gateways de administracion. */
     val mountsControl: Boolean get() = this == CONTROL || this == COMBINED
 
+    /**
+     * CAND-03: los trabajos periodicos del Bot (reto diario, reintento de OT diferidos, purga de imagenes del foro) corren solo
+     * donde se montan las rutas del Bot. `consumer` (auth minima) y `control` no los arrancan.
+     */
+    val runsBotJobs: Boolean get() = mountsBot
+
     companion object {
         /** Vacio/nulo = `combined` (historico). Un valor desconocido NO cae a `combined`: aborta el arranque. */
         fun parse(raw: String?): ServerProfile {

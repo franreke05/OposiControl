@@ -135,11 +135,12 @@ metrics_known() {
   local m bad=0
   # Las lineas de comentario de las reglas pueden nombrar metricas con comodin (`jvm_gc_pause_seconds_*`): no cuentan.
   for m in $(cat ops/monitoring/grafana/dashboards/*.json ops/monitoring/prometheus/alert_rules.yml | grep -v '^[[:space:]]*#' \
-      | grep -oE '(ktor_http_server_requests_seconds_[a-z]+|jvm_[a-z_]+|legacy_route_requests_total|upstream_response_wire_bytes_total|upstream_supabase_up|process_[a-z_]+|system_[a-z_]+)' | sort -u); do
+      | grep -oE '(ktor_http_server_requests_seconds_[a-z]+|jvm_[a-z_]+|legacy_route_requests_total|upstream_response_wire_bytes_total|upstream_supabase_up|store_inbox_[a-z_]+|store_payments_[a-z_]+|process_[a-z_]+|system_[a-z_]+)' | sort -u); do
     case "$m" in
       ktor_http_server_requests_seconds_count|ktor_http_server_requests_seconds_sum|ktor_http_server_requests_seconds_bucket) ;;
       jvm_memory_used_bytes|jvm_memory_max_bytes|jvm_gc_pause_seconds_sum|jvm_gc_pause_seconds_count|jvm_threads_live_threads) ;;
       legacy_route_requests_total|upstream_response_wire_bytes_total|upstream_supabase_up) ;;
+      store_inbox_backlog|store_inbox_oldest_seconds|store_inbox_history_incomplete|store_payments_enabled) ;;  # StoreInboxMetrics (StorePaymentRoutes.kt)
       *) echo "metrica desconocida: $m" >&2; bad=1 ;;
     esac
   done

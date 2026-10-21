@@ -398,6 +398,7 @@ class CanonicalProfileRoutesTest {
         mount(env)
         val cases = listOf(
             Triple(rpcError(400, "22023", "UNKNOWN_COMMUNITY"), HttpStatusCode.UnprocessableEntity, "UNKNOWN_COMMUNITY"),
+            Triple(rpcError(409, "OC409", "SPECIALTY_ALREADY_SET"), HttpStatusCode.Conflict, "SPECIALTY_ALREADY_SET"),
             Triple(rpcError(409, "23505", "USERNAME_TAKEN"), HttpStatusCode.Conflict, "USERNAME_TAKEN"),
             Triple(rpcError(400, "22023", "INVALID_ARGUMENT", hint = "edad"), HttpStatusCode.BadRequest, "VALIDATION"),
             Triple(rpcError(400, "22023", "UNKNOWN_FIELD", hint = "detail.zzz"), HttpStatusCode.BadRequest, "VALIDATION"),

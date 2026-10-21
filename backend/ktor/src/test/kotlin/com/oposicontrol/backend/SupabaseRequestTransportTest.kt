@@ -144,6 +144,12 @@ class SupabaseRequestTransportTest {
         assertFalse(transport.storageDelete("exam-resources", "exam-covers/EX1/p.jpg"))
     }
 
+    @Test fun aMissingObjectAnsweredWithNoSuchKeyIsAlsoFalseNotAnError() {
+        val bodies = listOf("""{"statusCode":"404","error":"not_found","message":"Object not found"}""", """{"code":"NoSuchKey","message":"The specified key does not exist."}""")
+        for (body in bodies) assertFalse(transportWith { V1StubResponse(400, body) }.storageDelete("oposired-imagenes", "u/a.png"))
+        assertFailsWith<IllegalStateException> { transportWith { V1StubResponse(400, """{"message":"bad request"}""") }.storageDelete("oposired-imagenes", "u/a.png") }
+    }
+
     @Test fun deletingAnExistingObjectIsTrue() {
         val transport = transportWith { V1StubResponse(200, "{}") }
 

@@ -44,6 +44,8 @@ internal data class ParsedPregunta(
     val anulada: Boolean = false,
     /** `MOTIVO_ANULACION:` (≤ 500, sólo con [anulada]); `null` si no venía o venía vacío. */
     val motivoAnulacion: String? = null,
+    /** FA37: `PRINCIPAL` | `RESERVA`, from the last `--- BLOQUE: X ---` marker before the question (default PRINCIPAL). */
+    val bloque: String = BLOQUE_PRINCIPAL,
 )
 
 internal data class RafagaParseError(
@@ -84,6 +86,7 @@ internal data class RafagaBloqueConError(
     val anulada: Boolean = false,
     /** Lo que el PDF decía de `MOTIVO_ANULACION` (recortado; `null` si vacío). Puede pasar de 500: es justo el error. */
     val motivoAnulacion: String? = null,
+    val bloque: String = BLOQUE_PRINCIPAL,
 )
 
 /**
@@ -97,7 +100,23 @@ internal data class RafagaParseResult(
     val preguntas: List<ParsedPregunta>,
     val errores: List<RafagaParseError>,
     val bloquesConError: List<RafagaBloqueConError>,
+    /** FA37: every `CODIGO_EXAMEN: X` header line found before the first separator (normally exactly one or none). */
+    val codigosExamen: List<String> = emptyList(),
 )
+
+/** FA37: the two blocks of an official exam file. */
+internal const val BLOQUE_PRINCIPAL = "PRINCIPAL"
+internal const val BLOQUE_RESERVA = "RESERVA"
+
+/** `--- BLOQUE: PRINCIPAL ---` / `--- BLOQUE: RESERVA ---` (exact, upper case): the following questions belong to that block until the next marker. */
+private val BLOQUE_MARKER = Regex("^---\\s*BLOQUE\\s*:\\s*(PRINCIPAL|RESERVA)\\s*---$")
+
+/** Looks like a block marker but is not exact (`--- BLOQUE: RESERVAS ---`, `-- bloque reserva --`): opens an ERROR block instead of silently keeping the previous block. */
+private val SUSPECT_BLOQUE = Regex("^(?:[-–—_=*#]{2,}\\s*BLOQUE\\b.*|[–—]\\s*BLOQUE\\b.*[–—])$", RegexOption.IGNORE_CASE)
+internal const val INVALID_BLOQUE_DETAIL = "Marcador de bloque no válido: usa exactamente --- BLOQUE: PRINCIPAL --- o --- BLOQUE: RESERVA ---"
+
+/** `CODIGO_EXAMEN: IMP-1` in the preamble: the exam the file is for. */
+private val HEADER_CODIGO_EXAMEN = Regex("^CODIGO_EXAMEN\\s*:\\s*(\\S.*)$")
 
 private val TEXT_FIELDS = listOf("TITULO", "A", "B", "C", "D", "RESPUESTA", "RAZONAMIENTO", "FUENTE", "ETIQUETA")
 private const val FIELD_ESTADO = "ESTADO"
@@ -212,7 +231,7 @@ internal fun extractTextFromPdf(bytes: ByteArray): String =
 internal fun parseRafagaText(text: String): RafagaParseResult = parseQuestionBlocks(text, "rafaga")
 
 /** Un bloque ya recortado del texto: sus líneas y si lo abrió un separador sospechoso. */
-private class RawBlock(val separatorLine: String?, val invalidSeparator: Boolean, val lines: List<String>)
+private class RawBlock(val separatorLine: String?, val invalidSeparator: Boolean, val lines: List<String>, val bloque: String = BLOQUE_PRINCIPAL, val invalidBloqueMarker: Boolean = false, val bloqueIncierto: Boolean = false)
 
 /**
  * Corta el texto POR LÍNEAS (no con un `split` global):
@@ -223,7 +242,7 @@ private class RawBlock(val separatorLine: String?, val invalidSeparator: Boolean
  * - Un bloque oficial vacío (dos separadores seguidos, o uno al final) no es una pregunta.
  */
 /** Los bloques y si el PREÁMBULO ignorado tenía forma de pregunta (una pregunta 1 perdida). */
-private class SplitResult(val blocks: List<RawBlock>, val preambleLooksLikeQuestion: Boolean)
+private class SplitResult(val blocks: List<RawBlock>, val preambleLooksLikeQuestion: Boolean, val codigosExamen: List<String> = emptyList())
 
 private val PREAMBLE_TITLE_LINE = Regex("^TITULO\\s*:", RegexOption.IGNORE_CASE)
 private val PREAMBLE_BODY_LINE = Regex("^(?:[A-D]|RESPUESTA)\\s*:", RegexOption.IGNORE_CASE)
@@ -240,32 +259,48 @@ private fun splitBlocks(text: String): SplitResult {
     var invalid = false
     var lines = mutableListOf<String>()
     var open = false
+    var seenAny = false
+    var bloque = BLOQUE_PRINCIPAL
+    var invalidMarker = false
+    var uncertain = false
 
     fun close() {
         if (!open) return
-        if (invalid || lines.any { it.isNotBlank() }) blocks += RawBlock(separator, invalid, lines.toList())
+        if (invalid || lines.any { it.isNotBlank() }) blocks += RawBlock(separator, invalid, lines.toList(), bloque, invalidMarker, uncertain)
     }
 
     for (line in text.lines()) {
         val trimmed = line.trim()
+        val marker = BLOQUE_MARKER.matchEntire(trimmed)
         val oficial = OFFICIAL_SEPARATOR.matches(trimmed)
-        val sospechoso = !oficial && SUSPECT_SEPARATOR.matches(trimmed)
-        if (oficial || sospechoso) {
+        val sospechoso = !oficial && marker == null && SUSPECT_SEPARATOR.matches(trimmed)
+        val bloqueSospechoso = marker == null && !oficial && !sospechoso && SUSPECT_BLOQUE.matches(trimmed)
+        if (marker != null) {
+            close()
+            open = false
+            seenAny = true
+            bloque = marker.groupValues[1]
+            uncertain = false
+        } else if (oficial || sospechoso || bloqueSospechoso) {
             close()
             open = true
+            seenAny = true
             separator = trimmed
-            invalid = sospechoso
+            invalid = sospechoso || bloqueSospechoso
+            invalidMarker = bloqueSospechoso
+            if (bloqueSospechoso) uncertain = true
             lines = mutableListOf()
         } else if (open) {
             lines += line
-        } else {
+        } else if (!seenAny) {
             preamble += trimmed
         }
     }
     close()
     val looksLikeQuestion = preamble.any { PREAMBLE_TITLE_LINE.containsMatchIn(it) } &&
         preamble.any { PREAMBLE_BODY_LINE.containsMatchIn(it) }
-    return SplitResult(blocks, looksLikeQuestion)
+    val codigos = preamble.mapNotNull { HEADER_CODIGO_EXAMEN.matchEntire(it)?.groupValues?.get(1)?.trim() }
+    return SplitResult(blocks, looksLikeQuestion, codigos)
 }
 
 /**
@@ -326,7 +361,8 @@ internal fun parseQuestionBlocks(text: String, tipoPregunta: String): RafagaPars
             erroresDelBloque += RafagaParseError(numero, campo, detalle)
         }
 
-        if (raw.invalidSeparator) error("SEPARADOR", INVALID_SEPARATOR_DETAIL)
+        if (raw.bloqueIncierto && !raw.invalidBloqueMarker) error("BLOQUE", "Hay un marcador de bloque no valido antes de esta pregunta: no se sabe si es principal o reserva")
+        if (raw.invalidSeparator) error("SEPARADOR", if (raw.invalidBloqueMarker) INVALID_BLOQUE_DETAIL else INVALID_SEPARATOR_DETAIL)
         scan.clavesDesconocidas.forEach { clave -> error(clave, "Campo no admitido en el PDF") }
         scan.clavesMalEscritas.forEach { (escrita, correcta) ->
             error(escrita, "Clave mal escrita: usa $correcta")
@@ -411,6 +447,7 @@ internal fun parseQuestionBlocks(text: String, tipoPregunta: String): RafagaPars
                 advertencia = avisos.takeIf { it.isNotEmpty() }?.joinToString(" "),
                 anulada = anulada,
                 motivoAnulacion = motivo.takeIf { anulada },
+                bloque = raw.bloque,
             )
         } else {
             errores += erroresDelBloque
@@ -436,11 +473,12 @@ internal fun parseQuestionBlocks(text: String, tipoPregunta: String): RafagaPars
                     (if (i == 0 && split.preambleLooksLikeQuestion) " · $PREAMBLE_LOOKS_LIKE_QUESTION_WARNING" else ""),
                 anulada = anulada,
                 motivoAnulacion = motivo,
+                bloque = raw.bloque,
             )
         }
     }
 
-    return RafagaParseResult(preguntas, errores, bloquesConError)
+    return RafagaParseResult(preguntas, errores, bloquesConError, split.codigosExamen)
 }
 
 /** Todo lo que salió de leer un bloque: los campos (el PRIMER valor de cada uno) y sus anomalías. */

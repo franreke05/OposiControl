@@ -22,6 +22,14 @@ internal data class OposiBotsAuthConfiguration(
      * del de recuperacion. `null` (variable ausente o vacia) = no se envia `redirect_to`, el comportamiento de siempre.
      */
     val emailConfirmRedirectUrl: String? = null,
+    /** FA39 (`AUTH_PKCE_MODE`): off | optional (default) | required. See EmailCodeBinding.kt. */
+    val pkceMode: PkceMode = PkceMode.OPTIONAL,
+    /**
+     * SEC-V1-11 (`AUTH_OAUTH_NONCE_REQUIRED`, default false): Google/Apple sign-in must carry the raw `nonce` whose SHA-256 (hex)
+     * the client gave the provider; the ID token's `nonce` claim must equal it (checked here before GoTrue mints anything, and
+     * again by GoTrue). Turn on once every shipped client sends it.
+     */
+    val oauthNonceRequired: Boolean = false,
 ) {
     val development: Boolean
         get() = AppEnvironment.isDevelopment(appEnvironment)
@@ -87,6 +95,10 @@ internal data class OposiBotsAuthConfiguration(
                 rateLimitHmacSecret = hmacSecret,
                 valkeyUrl = optionalEnvironment("VALKEY_URL"),
                 emailConfirmRedirectUrl = optionalEnvironment("OPOSIBOTS_EMAIL_CONFIRM_REDIRECT_URL"),
+                pkceMode = PkceMode.parse(System.getenv("AUTH_PKCE_MODE")),
+                oauthNonceRequired = System.getenv("AUTH_OAUTH_NONCE_REQUIRED")?.trim()?.takeIf(String::isNotEmpty)?.let {
+                    it.toBooleanStrictOrNull() ?: error("AUTH_OAUTH_NONCE_REQUIRED debe ser true o false.")
+                } ?: false,
             )
             configuration.requireDeployable()
             return configuration
@@ -116,6 +128,40 @@ internal data class OposiBotsAuthConfiguration(
             }
             if (rateLimitMode == "valkey") require(!valkeyUrl.isNullOrBlank()) {
                 "VALKEY_URL es obligatorio cuando AUTH_RATE_LIMIT_MODE=valkey."
+            }
+            // RB-04 / SEC-V1-04: fuera de desarrollo el codigo del enlace de correo SIEMPRE va ligado al dispositivo (FA39). Sin
+            // esto, omitir `codeVerifier` saltaba el binding (`optional`) y un enlace interceptado bastaba para tomar la cuenta.
+            // Mas estricto que `development`: solo APP_ENV local|test (igual que el proveedor de pagos sandbox) admite off/optional.
+            require(AppEnvironment.resolve(appEnvironment) in PKCE_RELAXED_ENVIRONMENTS || pkceMode == PkceMode.REQUIRED) {
+                "AUTH_PKCE_MODE=required es obligatorio salvo con APP_ENV=local o test (off/optional solo ahi)."
+            }
+            // Callback/deep link: `redirect_to` sale SOLO de estas variables (nunca del cliente). Fuera de desarrollo, solo el
+            // esquema propio de la app (`oposibots://auth[/ruta]`) o https, sin userinfo, puerto en el esquema propio, query ni fragmento.
+            if (!development) {
+                listOf(
+                    "OPOSIBOTS_PASSWORD_RECOVERY_REDIRECT_URL" to passwordRecoveryRedirectUrl,
+                    "OPOSIBOTS_EMAIL_CONFIRM_REDIRECT_URL" to emailConfirmRedirectUrl,
+                ).forEach { (name, value) ->
+                    require(value == null || isAllowedAuthRedirect(value)) {
+                        "$name debe ser oposibots://auth[/ruta] o una URL https sin userinfo, query ni fragmento."
+                    }
+                }
+            }
+        }
+
+        /** RB-04 / SEC-V1-04: the only APP_ENV values where AUTH_PKCE_MODE may be off/optional. */
+        private val PKCE_RELAXED_ENVIRONMENTS = setOf("local", "test")
+
+        /** Allow-list of the `redirect_to` the backend may hand to GoTrue (startup check; GoTrue's own allow-list is the second gate). */
+        internal fun isAllowedAuthRedirect(value: String): Boolean {
+            val uri = runCatching { java.net.URI(value) }.getOrNull() ?: return false
+            if (!uri.isAbsolute || uri.isOpaque || uri.rawUserInfo != null || uri.rawQuery != null || uri.rawFragment != null) return false
+            val path = uri.rawPath.orEmpty()
+            if (path.contains("..") || path.contains("//") || path.contains('\\')) return false
+            return when (uri.scheme?.lowercase()) {
+                "oposibots" -> uri.host.equals("auth", ignoreCase = true) && uri.port == -1 && uri.rawAuthority.equals("auth", ignoreCase = true)
+                "https" -> !uri.host.isNullOrBlank()
+                else -> false
             }
         }
 
@@ -174,7 +220,9 @@ internal class OposiBotsAuthRuntime(
             jwtVerifier: SupabaseJwtVerifier? = null,
         ): OposiBotsAuthRuntime {
             val accessRequests = accessRequestMailGuard(configuration)
-            val gateway = SupabaseOposiBotsAuthGateway(configuration, json, accessRequestSessionGate = accessRequests)
+            val bindingTransport = SupabaseRequestTransport(configuration.supabaseUrl, SupabaseRequestAuthPolicy(configuration.secretKey))
+            val codeBinding = PostgrestEmailCodeBinding(rpc = { function, body -> bindingTransport.send("POST", "/rest/v1/rpc/$function", body) })
+            val gateway = SupabaseOposiBotsAuthGateway(configuration, json, accessRequestSessionGate = accessRequests, codeBinding = codeBinding)
             return OposiBotsAuthRuntime(
                 configuration = configuration,
                 gateway = gateway,
@@ -231,7 +279,11 @@ internal class OposiBotsAuthRuntime(
                 ),
                 profiles = profiles,
                 deletion = AccountDeletionService(upstream, authProvider, json = json),
-                legacy = LegacyProfileAdapter(profiles, PostgrestSpecialtyResolver(upstream, json)),
+                legacy = LegacyProfileAdapter(
+                    profiles,
+                    ReferralService(TransportEconomyUpstream(transport)).let { svc -> ReferralAttach { user, code -> svc.attach(user, code) } },
+                    PostgrestSpecialtyResolver(upstream, json),
+                ),
             )
         }
     }

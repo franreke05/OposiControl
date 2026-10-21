@@ -21,6 +21,14 @@ data class ContentImportBatch(
      * que llega en el listado de lotes.
      */
     val summary: ContentImportSummary? = null,
+    /** `CODIGO_EXAMEN` de la cabecera del PDF, o `null` si no la traía. El servidor lo compara con el examen elegido. */
+    val examCode: String? = null,
+    /** Huella del contenido del lote (solo en un lote aún sin importar). */
+    val fingerprint: String? = null,
+    /** Lote YA importado en este examen con el mismo contenido, o `null`. Con valor, publicar daría `IMPORT_LOT_DUPLICATE`. */
+    val duplicateOfBatchId: String? = null,
+    /** Lo que hizo la última publicación de este lote (solo justo después de publicar). */
+    val publishResult: ContentImportPublishResult? = null,
 )
 
 /**
@@ -74,10 +82,47 @@ data class ContentImportStagingItem(
     val annulled: Boolean = false,
     /** Sólo tiene sentido con [annulled]; `null` = sin motivo (o borrar el que hubiera). */
     val annulmentReason: String? = null,
+    /** Bloque del examen oficial: [IMPORT_BLOCK_MAIN] o [IMPORT_BLOCK_RESERVE]. Editable hasta que el lote se importa. */
+    val block: String = IMPORT_BLOCK_MAIN,
+    /** FA38, solo lectura: la estructura con estilo que derivó el servidor del texto fuente (`reasoning`); `null` = sin estilo. Nunca se reenvía. */
+    val reasoningRich: RazonadoMarkup.Doc? = null,
 )
+
+val ContentImportStagingItem.isReserve: Boolean get() = block.equals(IMPORT_BLOCK_RESERVE, ignoreCase = true)
 
 /** Tope del motivo de anulación que acepta el servidor (CHECK de la base). */
 const val IMPORT_ANNULMENT_REASON_MAX_LENGTH: Int = 500
+
+/** Bloques de una fila de staging en el servidor (`bloque`). */
+const val IMPORT_BLOCK_MAIN: String = "PRINCIPAL"
+const val IMPORT_BLOCK_RESERVE: String = "RESERVA"
+
+/**
+ * Lo que respondió el servidor al publicar un lote (`resultado`). Los avisos no bloquean; un [problem] distinto de `null`
+ * en un examen aún en borrador significa «falta completar el examen» (por ejemplo, llegan las principales y faltan las reservas).
+ */
+data class ContentImportPublishResult(
+    val executed: Boolean,
+    val created: Int,
+    val linked: Int,
+    val skipped: Int,
+    val annulled: Int,
+    val reserves: Int,
+    val fingerprint: String?,
+    val problem: String?,
+    val warnings: List<String>,
+)
+
+/**
+ * Número de reserva que tendría la fila al publicar: su lugar entre las filas RESERVA del lote, en el orden del fichero.
+ * `null` si la fila no es una reserva. Las omitidas no cuentan: no se publican.
+ */
+fun reserveOrderOf(staging: List<ContentImportStagingItem>, item: ContentImportStagingItem): Int? {
+    if (!item.isReserve) return null
+    val reserves = staging.filter { it.isReserve && !it.parseStatus.equals("omitida", ignoreCase = true) }.sortedBy { it.position }
+    val index = reserves.indexOfFirst { it.id == item.id }
+    return if (index >= 0) index + 1 else null
+}
 
 /**
  * Lo que falta para que una fila se pueda GUARDAR o APROBAR, o `null` si está completa.

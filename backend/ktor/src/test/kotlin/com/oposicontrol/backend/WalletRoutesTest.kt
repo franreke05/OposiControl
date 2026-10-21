@@ -115,7 +115,7 @@ class WalletRoutesTest {
 
     private val upstream = Upstream()
 
-    private fun Application.walletModule() {
+    private fun Application.walletModule(limit: suspend (CanonicalUserId) -> Unit = {}) {
         install(ContentNegotiation) { json(testJson) }
         installRequestCorrelation()
         installBackendStatusPages()
@@ -125,7 +125,7 @@ class WalletRoutesTest {
             V1StubHttpClient({ upstream.sent += it }, upstream::respond),
         )
         val gateway = WalletGateway(upstream = { path -> transport.get(path) })
-        routing { walletRoutes(WalletRuntime(resolver, WalletService(gateway) { now })) }
+        routing { walletRoutes(WalletRuntime(resolver, WalletService(gateway) { now }, limit)) }
     }
 
     private suspend fun HttpClient.getAs(path: String, token: String? = TEST_TOKEN): HttpResponse =
@@ -157,6 +157,39 @@ class WalletRoutesTest {
     private val listPath = "/api/v1/app/wallet/movimientos"
 
     // =================================================================== D6-01
+
+    @Test
+    fun walletReadsRejectUnknownQueryParametersLikeTheCatalog() = testApplication {
+        application { walletModule() }
+        for (path in listOf("/api/v1/app/wallet?foo=1", "/api/v1/app/wallet?usuarioId=dddddddd-dddd-4ddd-8ddd-000000000009", "/api/v1/app/wallet/movimientos?usuario=x")) {
+            val response = client.getAs(path)
+            assertEquals(HttpStatusCode.BadRequest, response.status, "$path -> ${response.bodyAsText()}")
+            assertTrue(response.bodyAsText().contains("UNKNOWN_FIELD"), response.bodyAsText())
+        }
+        assertTrue(upstream.sent.isEmpty(), "una consulta con parametros desconocidos no debe llegar a la base: ${upstream.urls}")
+        assertEquals(HttpStatusCode.OK, client.getAs("/api/v1/app/wallet/movimientos?limit=5&tipo=recarga&origen=compras").status)
+    }
+
+    // E2-P02 / FA20: limite por usuario WALLET_READ (60 / 60 s), un solo cubo para D6-01 y D6-02, ANTES de leer nada.
+    @Test
+    fun walletReadsShareOnePerUserBucketAnd429WithRetryAfterBeforeAnyUpstreamRead() = testApplication {
+        val limiter = InMemoryOposiBotsAuthRateLimiter()
+        application { walletModule(limiter.subjectLimit(OposiBotsAuthOperation.WALLET_READ)) }
+        repeat(OposiBotsAuthOperation.WALLET_READ.subjectLimit) { i ->
+            val path = if (i % 2 == 0) "/api/v1/app/wallet" else "/api/v1/app/wallet/movimientos"
+            assertTrue(client.getAs(path).status != HttpStatusCode.TooManyRequests, "peticion $i dentro del limite")
+        }
+        val before = upstream.sent.size
+        for (path in listOf("/api/v1/app/wallet", "/api/v1/app/wallet/movimientos")) {
+            val response = client.getAs(path)
+            assertEquals(HttpStatusCode.TooManyRequests, response.status, path)
+            assertEquals("RATE_LIMITED", code(response.bodyAsText()))
+            assertTrue(response.headers[HttpHeaders.RetryAfter] != null)
+        }
+        assertEquals(before, upstream.sent.size, "un limite agotado no paga lecturas upstream")
+        assertEquals(60, OposiBotsAuthOperation.WALLET_READ.subjectLimit)
+        assertEquals(60L, OposiBotsAuthOperation.WALLET_READ.windowSeconds)
+    }
 
     @Test
     fun summaryReturnsBalanceEarningsRecentsAndConsumablesAndConformsToTheFrozenWire() = testApplication {
@@ -442,10 +475,13 @@ class WalletRoutesTest {
     fun noQueryParameterCanSelectAnotherUsersWallet() = testApplication {
         application { walletModule() }
         upstream.ledger = listOf(Entry(uuid(1), "2026-10-08T09:00:00+00:00"))
+        // V1: un usuario en el query ya no se ignora en silencio, se RECHAZA (400 UNKNOWN_FIELD) y no llega ninguna lectura a la base.
         listOf("usuarioId", "userId", "usuario_id", "sub", "user").forEach { param ->
-            assertEquals(HttpStatusCode.OK, client.getAs("$summaryPath?$param=$other").status, param)
-            assertEquals(HttpStatusCode.OK, client.getAs("$listPath?$param=$other").status, param)
+            assertEquals(HttpStatusCode.BadRequest, client.getAs("$summaryPath?$param=$other").status, param)
+            assertEquals(HttpStatusCode.BadRequest, client.getAs("$listPath?$param=$other").status, param)
         }
+        assertTrue(upstream.sent.isEmpty(), "ninguna consulta con usuario forjado llega a la base: ${upstream.urls}")
+        assertEquals(HttpStatusCode.OK, client.getAs(summaryPath).status)
         assertOwnWalletOnly()
     }
 

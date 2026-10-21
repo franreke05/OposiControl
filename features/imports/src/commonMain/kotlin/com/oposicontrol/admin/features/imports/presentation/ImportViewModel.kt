@@ -253,7 +253,7 @@ class ImportViewModel(
             is AppResult.Failure -> when {
                 result.error.isPublishedExamConfirmation() -> updateState { it.copy(showPublishConfirm = true, actionState = UiAsync.Idle) }
                 result.error is AppError.Network -> rereadAfterUncertainPublish(batchId, result.error)
-                else -> updateState { it.copy(actionState = UiAsync.Error(result.error)) }
+                else -> updateState { it.copy(actionState = UiAsync.Error(result.error.withImportGuidance())) }
             }
             is AppResult.Success -> {
                 val batch = result.value

@@ -87,7 +87,7 @@ internal class AppReadsGateway(
     fun forumCategories(fetchLimit: Int): List<ForumCategoryRow> =
         decodeList(
             upstream.get(
-                "/rest/v1/categorias_oposired?select=id,nombre,slug,descripcion,posicion&activa=eq.true" +
+                "/rest/v1/categorias_oposired?select=id,nombre,slug,descripcion,posicion&activa=eq.true&especialidad_id=is.null" +
                     "&order=posicion.asc,nombre.asc,id.asc&limit=$fetchLimit",
             ),
         )

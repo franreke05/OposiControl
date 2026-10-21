@@ -37,7 +37,10 @@ import com.oposicontrol.admin.core.ui.theme.Spacing
 @Composable
 fun ImportScreen(viewModel: ImportViewModel) {
     val state by viewModel.state.collectAsState()
-    val pickPdf = rememberPdfPickerLauncher { picked -> viewModel.dispatch(ImportIntent.PdfPicked(picked)) }
+    val onPicked: (PickedPdf) -> Unit = { picked -> viewModel.dispatch(ImportIntent.PdfPicked(picked)) }
+    // Local estático: no cambia durante la composición, así que la rama es estable. En producción es null.
+    val override = LocalPdfPickerOverride.current
+    val pickPdf: () -> Unit = if (override != null) { { override()?.let(onPicked) } } else rememberPdfPickerLauncher(onPicked)
     ImportContent(
         state = state,
         onIntent = { viewModel.dispatch(it) },

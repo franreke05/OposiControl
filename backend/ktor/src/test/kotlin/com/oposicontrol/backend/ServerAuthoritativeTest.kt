@@ -30,7 +30,17 @@ class ServerAuthoritativeTest {
             setOf("OnboardingRequest", "ProfilePatchRequest", "LegalAcceptanceRequest", "AccountDeletionRequest", "AdminRoleIdsCommand",
                 "AdminUserPatchCommand",
                 // SLICE 3: D2-03, D2-09, D2-10 (cuerpo vacio) y D2-11.
-                "AttemptStartRequest", "AnswerRequest", "AttemptFinishRequest", "AbandonRequest"),
+                "AttemptStartRequest", "AnswerRequest", "AttemptFinishRequest", "AbandonRequest",
+                // V1 economia (FA22): D6-03, D6-12, D6-14.
+                "ExamRedeemRequest", "PaymentOrderRequest", "PaymentVerifyRequest",
+                // V1 wave 2 (FA29): D3-17.
+                "DailyChallengeAnswerRequest",
+                // V1 wave 4 (FA33): D3-25.
+                "RankingVisibilityRequest",
+                // V1 wave 5b (FA35): D5-06, D5-07, D5-14.
+                "ForoPostRequest", "ForoCommentRequest", "ForoReportRequest", "ForoImageInitRequest",
+                // V1 pagos de tienda (docs/payments/STORE_PAYMENTS_CONTRACT.md): S-03, S-04. Solo la prueba de la tienda, nunca precio ni cantidad.
+                "StoreVerifyRequest", "StoreRestoreRequest"),
             commands.map { it.simpleName }.toSet(),
             "comandos canonicos de SLICE 1 (D1-12, D1-13, D1-17, D1-19, D1-26 admin: MASTER-API-005; D1-25 admin: MASTER2-API-001) " +
                 "y de SLICE 3 (D2-03, D2-09, D2-10, D2-11)",

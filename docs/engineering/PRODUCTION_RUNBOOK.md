@@ -54,7 +54,10 @@ Los limites de CPU son topes, no reservas: con menos nucleos que la suma, los co
   * `backend.bot.env` (SOLO `ktor-bot-1` y `ktor-bot-2`, el MISMO fichero; nombres en `ops/deploy/backend.bot.env.example`): el runtime de
     auth de consumidor (`OposiBotsAuthConfiguration.kt`, que `control` no construye): `SUPABASE_PUBLISHABLE_KEY`, `AUTH_RATE_LIMIT_MODE=valkey`,
     `AUTH_RATE_LIMIT_HMAC_SECRET` (>= 32 car., **identico en las dos replicas bot**), `VALKEY_URL`, `TRUST_PROXY_HEADERS=true`,
-    `TRUSTED_PROXY_HOSTS` (IP literal de Caddy, por defecto la `.10` de `EDGE_SUBNET`), `OPOSIBOTS_AUTH_ENABLED`, captcha, recuperacion y Apple.
+    `TRUSTED_PROXY_HOSTS` (IP literal de Caddy, por defecto la `.10` de `EDGE_SUBNET`), `OPOSIBOTS_AUTH_ENABLED`, captcha, recuperacion y Apple,
+    `AUTH_PKCE_MODE=required` (obligatorio fuera de `APP_ENV=local|test`: con off/optional el arranque falla, SEC-V1-04 / RB-04), y de economia/trabajos
+    `PAYMENTS_REFUNDS_ENABLED=false` (hasta decision del propietario) y `CHALLENGE_JOB_SECONDS` (vacia = 900). `PAYMENTS_SANDBOX_SECRET`
+    **nunca** en produccion: con valor y `APP_ENV` distinto de `local`/`test` el proceso sale con codigo 78 antes de escuchar.
   * `backend.control.env` (SOLO `ktor-control`; nombres en `ops/deploy/backend.control.env.example`): `OPOSICONTROL_BACKEND_TOKEN` (secreto de
     administracion: **nunca** en los otros dos ficheros), `ENABLE_VERBOSE_NETWORK_LOGS`, `SUPABASE_BUCKET_NEWS_ASSETS`.
   * Migrar desde un `backend.env` unico: repartir sus lineas en los tres ficheros segun los `.example` y borrar el antiguo. Comprobar el

@@ -26,6 +26,18 @@ class BackendErrorsTest {
         assertEquals("record_answer_option_not_in_question", result?.errorCode?.lowercase())
     }
 
+    /** SEC-V1-05: el P0001 ORDER_REFUND_PENDING de admin_payment_order_resolve es un 409 legible, no un 5xx generico. */
+    @Test
+    fun orderRefundPendingIsAConflictWithItsOwnMessage() {
+        val body = "{\"code\":\"P0001\",\"details\":null,\"hint\":null,\"message\":\"ORDER_REFUND_PENDING\"}"
+
+        val result = mapSupabaseDomainError(400, body)
+
+        assertEquals("ORDER_REFUND_PENDING", result?.errorCode)
+        assertEquals(HttpStatusCode.Conflict, result?.status)
+        assertEquals("Este pedido tiene un reembolso retenido; no se puede acreditar ni confirmar", result?.message)
+    }
+
     @Test
     fun leavesUnknownSupabaseErrorsForInternalHandling() {
         assertNull(mapSupabaseDomainError(500, "unexpected database failure"))
@@ -584,6 +596,14 @@ class BackendErrorsTest {
             "IMPORT_EXAM_TYPE_UNKNOWN" to HttpStatusCode.UnprocessableEntity,
             "IMPORT_EXAM_PUBLISHED_CONFIRMATION_REQUIRED" to HttpStatusCode.Conflict,
             "STAGING_ROW_ALREADY_IMPORTED" to HttpStatusCode.Conflict,
+            // FA37
+            "IMPORT_EXAM_CODE_MISMATCH" to HttpStatusCode.UnprocessableEntity,
+            "IMPORT_LOT_DUPLICATE" to HttpStatusCode.Conflict,
+            "IMPORT_RESERVE_REQUIRES_OFFICIAL_EXAM" to HttpStatusCode.UnprocessableEntity,
+            "IMPORT_MAIN_AFTER_RESERVE" to HttpStatusCode.UnprocessableEntity,
+            "IMPORT_BLOCK_CONFLICT" to HttpStatusCode.UnprocessableEntity,
+            "IMPORT_DEMO_CONFLICT" to HttpStatusCode.UnprocessableEntity,
+            "IMPORT_OFFICIAL_RULES_INVALID" to HttpStatusCode.UnprocessableEntity,
         )
         esperados.forEach { (codigo, estado) ->
             val cuerpo = "{\"code\":\"P0001\",\"details\":null,\"hint\":null,\"message\":\"$codigo\"}"

@@ -70,6 +70,8 @@ internal fun normalizeSpecialtyText(value: String): String =
  */
 internal class LegacyProfileAdapter(
     private val profiles: CanonicalProfileService,
+    /** V1 wave 5a: adjunta el codigo de invitacion del registro (opcional, nunca falla). Va ANTES de [specialties] para no romper la lambda final (SAM) de los llamadores. */
+    private val referral: ReferralAttach? = null,
     private val specialties: SpecialtyResolver,
 ) {
     /** `GET /v1/auth/me` (EP-124) sobre `GET /api/v1/app/me`. */
@@ -100,7 +102,8 @@ internal class LegacyProfileAdapter(
         request: OposiBotsProfileRequest,
         context: OposiBotsAuthContext,
     ) {
-        val specialtyId = specialties.resolve(request.specialty)
+        // V1: el id canonico gana sobre el nombre; la base lo valida (existe y esta activa -> 422 UNKNOWN_SPECIALTY).
+        val specialtyId = request.especialidadId?.lowercase() ?: specialties.resolve(request.specialty)
             ?: throw OposiBotsAuthProblem.validation(OposiBotsValidationIssue.SPECIALTY_NOT_SELECTED)
         val username = request.username?.trim()?.takeIf(String::isNotEmpty)
             ?: profiles.me(identity, accessToken, context).me.profile.username
@@ -117,5 +120,13 @@ internal class LegacyProfileAdapter(
             ),
             context,
         )
+        // E2-V1: the invitation code NEVER changes the outcome of the registration (a failure or an unusable code is invisible)
+        try {
+            referral?.attach(identity.userId.value, request.codigoInvitacion)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // ignored on purpose
+        }
     }
 }

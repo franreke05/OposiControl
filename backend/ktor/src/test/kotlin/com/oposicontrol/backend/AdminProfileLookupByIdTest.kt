@@ -100,6 +100,8 @@ class AdminProfileLookupByIdTest {
             """[{"id":"m1","conversacion_id":"$conversation","remitente_id":"$oldStaff","cuerpo":"hola","es_staff":true}]""",
         )
         "/rest/v1/auditoria_log" in uri -> V1StubResponse(201, "")
+        "/rest/v1/rpc/admin_grant_exam_access" in uri ->
+            V1StubResponse(200, """[{"outcome":"CREATED","grant_id":"g1","valido_desde":"2026-10-16T10:00:00+00:00","valido_hasta":"2026-11-15T10:00:00+00:00"}]""")
         "/rest/v1/examenes" in uri -> V1StubResponse(200, examsFor(uri))
         // La comprobacion previa de «ya tiene acceso» (por usuario y examen): no lo tiene.
         "/rest/v1/contenido_desbloqueado_usuario" in uri && "usuario_id=eq." in uri -> V1StubResponse(200, "[]")
@@ -182,7 +184,7 @@ class AdminProfileLookupByIdTest {
     )
 
     private fun List<HttpRequest>.grantWrites() =
-        filter { it.method() == "POST" && "contenido_desbloqueado_usuario" in it.uri().toString() }
+        filter { it.method() == "POST" && "admin_grant_exam_access" in it.uri().toString() }
 
     @Test
     fun anAmbiguousDisplayNameIs409AndGrantsNothing() {
@@ -206,9 +208,9 @@ class AdminProfileLookupByIdTest {
     fun theUuidPathGrantsExactlyTheSelectedUserAndExam() {
         val sent = CopyOnWriteArrayList<HttpRequest>()
         val result = gateway(sent).upsertExamAccess(grant("Ana", "Examen A", userId = anaTwo, examId = examA2))
-        val written = Json.parseToJsonElement(readRequestBody(sent.grantWrites().single())).jsonArray.single().jsonObject
-        assertEquals(anaTwo, written["usuario_id"]!!.jsonPrimitive.content)
-        assertEquals(examA2, written["examen_id"]!!.jsonPrimitive.content)
+        val written = Json.parseToJsonElement(readRequestBody(sent.grantWrites().single())).jsonObject
+        assertEquals(anaTwo, written["p_usuario"]!!.jsonPrimitive.content)
+        assertEquals(examA2, written["p_examen"]!!.jsonPrimitive.content)
         assertEquals(anaTwo, result.userId)
     }
 
@@ -216,8 +218,8 @@ class AdminProfileLookupByIdTest {
     fun aUserOutsideTheNewest1000CanBeGrantedByUniqueName() {
         val sent = CopyOnWriteArrayList<HttpRequest>()
         gateway(sent).upsertExamAccess(grant("Usuaria Antigua", "Examen B"))
-        val written = Json.parseToJsonElement(readRequestBody(sent.grantWrites().single())).jsonArray.single().jsonObject
-        assertEquals(oldUser, written["usuario_id"]!!.jsonPrimitive.content)
+        val written = Json.parseToJsonElement(readRequestBody(sent.grantWrites().single())).jsonObject
+        assertEquals(oldUser, written["p_usuario"]!!.jsonPrimitive.content)
         assertTrue(sent.profileQueries().none { "limit=1000" in it })
     }
 

@@ -11,7 +11,7 @@ private const val REPO = "$DATA_MAIN/repository"
 /** Ninguna exclusion descuenta una llamada con receptor (`(?<![.\w])`): un `client.get<X>(` nuevo siempre cuenta. */
 internal val SITE_EXCLUSIONS: List<SiteExclusion> = listOf(
     SiteExclusion(
-        "$REPO/KtorAdminV1ContentRepositoryImpl.kt", """(?<![.\w])put\((key|"\w+"), JsonPrimitive\(""", 21,
+        "$REPO/KtorAdminV1ContentRepositoryImpl.kt", """(?<![.\w])put\((key|"\w+"), JsonPrimitive\(""", 22,
         "JsonObjectBuilder.put de toPatchBody/toExamPatchBody/toRafagaPatchBody: construye el cuerpo, no es una peticion",
     ),
     SiteExclusion(

@@ -85,7 +85,7 @@ components:
         x-pagination: NONE
         x-idempotency: NONE
         x-error-codes: [VALIDATION, UNAUTHENTICATED, EXAM_NOT_FOUND, INTERNAL, UPSTREAM_ERROR]
-        description: 'No question bodies. precio values are pending DEC-035 (nullable). Cache private, no-store for accessState.'
+        description: 'No question bodies. FA23 (owner 2026-10-16): an exam outside the caller specialty is 404 EXAM_NOT_FOUND here and absent from the lists (D2-01, D2-13 are scoped to the own specialty; another specialty returns an empty page). precio is the OT price stored in the database (FA22, null when not purchasable) and accesoValidoHasta the server-decided end of the caller access. Cache private, no-store for accessState. intentoAbiertoId and ultimoIntentoFinalizadoId (FA19) come from one bounded read of the caller attempts on this exam (command-created only).'
         security:
           - bearerAuth: []
         parameters:
@@ -105,6 +105,9 @@ components:
             $ref: '../common/errors.yaml#/components/responses/BadRequest'
           '401':
             $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+            description: 'RATE_LIMITED (FA20, per-user read limit; Retry-After).'
           '404':
             $ref: '../common/errors.yaml#/components/responses/NotFound'
             description: 'EXAM_NOT_FOUND (also draft or archived).'
@@ -174,6 +177,9 @@ components:
                             properties:
                               comunidadCodigo:
                                 type: string
+                              comunidadNombre:
+                                type: [string, 'null']
+                                description: 'V1: readable community name (e.g. Comunidad de Madrid) served by the API; clients never show the raw code. Null only for legacy exams without a community.'
                               total:
                                 type: integer
                                 minimum: 0
@@ -181,6 +187,9 @@ components:
             $ref: '../common/errors.yaml#/components/responses/BadRequest'
           '401':
             $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+            description: 'RATE_LIMITED (FA20, per-user read limit; Retry-After).'
     PublicExams:
       get:
         operationId: listPublicExams
@@ -287,7 +296,7 @@ components:
         x-pagination: NONE
         x-idempotency: NONE
         x-error-codes: [RATE_LIMITED, INTERNAL, UPSTREAM_ERROR]
-        description: 'Bounded catalog of active specialties with their capabilities.'
+        description: 'Bounded catalog of active specialties with their capabilities. ids are the real especialidades ids (the ones of the profile and of D2-01 especialidadId). Served by Ktor since 2026-10-14 (FA19), public cache.'
         security: []
         responses:
           '200':
@@ -2006,6 +2015,9 @@ components:
           $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
         comunidadCodigo:
           type: [string, 'null']
+        comunidadNombre:
+          type: [string, 'null']
+          description: 'V1: readable community name (e.g. Comunidad de Madrid) served by the API; clients never show the raw code. Null only for legacy exams without a community.'
         totalPreguntas:
           type: integer
           minimum: 0
@@ -2038,7 +2050,7 @@ components:
             $ref: '../common/identifiers.yaml#/components/schemas/TipoExamen'
     ExamPrice:
       type: [object, 'null']
-      description: 'Values pending DEC-035; null until decided.'
+      description: 'FA22 (V1): the OposiTickets price and access days exactly as stored in the database, only when the exam is paid, purchasable with tickets and BOTH values are set; null otherwise (a price is never invented). The wallet redeem D6-03 charges this value.'
       required: [tickets, diasAcceso]
       properties:
         tickets:
@@ -2067,6 +2079,9 @@ components:
           $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
         comunidadCodigo:
           type: [string, 'null']
+        comunidadNombre:
+          type: [string, 'null']
+          description: 'V1: readable community name (e.g. Comunidad de Madrid) served by the API; clients never show the raw code. Null only for legacy exams without a community.'
         duracionMinutos:
           type: [integer, 'null']
           minimum: 0
@@ -2083,8 +2098,30 @@ components:
         intentoAbiertoId:
           type: [string, 'null']
           format: uuid
+        ultimoIntentoFinalizadoId:
+          type: [string, 'null']
+          format: uuid
+          description: 'FA19 (2026-10-14, PERF01): the most recent FINISHED attempt of the caller on this exam (result D2-12 / review D2-65), so a cover never pages D2-13. One bounded read on (usuario_id, examen_id); null when there is none.'
         precio:
           $ref: '#/components/schemas/ExamPrice'
+        penalizacion:
+          type: object
+          required: [tipo]
+          description: 'FA36: the penalty per wrong answer this exam applies (each attempt freezes it when it starts). Absent = no penalty. tipo FIJA = numerador/denominador per wrong answer; tipo RACIONAL = each wrong answer subtracts 1/(n-1) of a correct one (n = options of that question). Show it on the cover ("penaliza") before the user starts.'
+          properties:
+            tipo:
+              type: string
+              enum: [FIJA, RACIONAL]
+            numerador:
+              type: integer
+              minimum: 1
+            denominador:
+              type: integer
+              minimum: 1
+        accesoValidoHasta:
+          type: [string, 'null']
+          format: date-time
+          description: 'FA22 (V1): when the caller current access ends, decided by the server (database clock), when accessState is GRANTED with an end date; null when there is no grant or it does not expire. A re-purchase extends it from max(now, this end).'
     MyExamItem:
       type: object
       required: [examen, accessState]
@@ -2101,11 +2138,18 @@ components:
               $ref: '../common/identifiers.yaml#/components/schemas/TipoExamen'
             comunidadCodigo:
               type: [string, 'null']
+            comunidadNombre:
+              type: [string, 'null']
+              description: 'V1: readable community name (e.g. Comunidad de Madrid) served by the API; clients never show the raw code. Null only for legacy exams without a community.'
             portadaUrl:
               type: [string, 'null']
               format: uri
         accessState:
           $ref: '../common/identifiers.yaml#/components/schemas/AccessState'
+        accesoValidoHasta:
+          type: [string, 'null']
+          format: date-time
+          description: 'FA22 (V1): end of the caller current access (server decided) when accessState is GRANTED with an end date; null otherwise.'
         intentoId:
           type: [string, 'null']
           format: uuid
@@ -2207,6 +2251,7 @@ components:
         comunidadId:
           type: [string, 'null']
           format: uuid
+          description: 'Null only for legacy exams created before the V1 rule; they stay editable but cannot be published until a community is assigned (409 EXAM_PUBLISH_REQUIRES_COMMUNITY).'
         titulo:
           type: string
         descripcion:
@@ -2247,7 +2292,7 @@ components:
           format: date-time
     AdminExamenCreateRequest:
       type: object
-      required: [codigoExamen, especialidadId, titulo, tipoExamen, tipoAcceso]
+      required: [codigoExamen, especialidadId, comunidadId, titulo, tipoExamen, tipoAcceso]
       additionalProperties: false
       properties:
         codigoExamen:
@@ -2256,6 +2301,7 @@ components:
         especialidadId:
           $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
         comunidadId:
+          description: 'V1 (owner 2026-10-15): MANDATORY. Missing, null or blank is 422 EXAM_COMMUNITY_REQUIRED; an id that is not an active community is 422 UNKNOWN_COMMUNITY.'
           $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
         titulo:
           type: string
@@ -2294,9 +2340,9 @@ components:
         especialidadId:
           $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
         comunidadId:
-          type: [string, 'null']
+          type: string
           format: uuid
-          description: 'null clears the community.'
+          description: 'V1: replaces the community; it can no longer be cleared (null is 422 EXAM_COMMUNITY_REQUIRED). Unknown or inactive community is 422 UNKNOWN_COMMUNITY.'
         duracionMinutos:
           type: [integer, 'null']
           minimum: 1

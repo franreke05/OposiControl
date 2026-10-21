@@ -121,6 +121,7 @@ class OposiBotsLoginAccountCeilingTest {
         rateLimitMode = mode,
         rateLimitHmacSecret = "test-only-rate-limit-secret-32chars",
         valkeyUrl = if (mode == "valkey") "redis://127.0.0.1:6379" else null,
+        pkceMode = PkceMode.REQUIRED,
     )
 
     private fun ApplicationTestBuilder.mount(gateway: OposiBotsAuthGateway) {

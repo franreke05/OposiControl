@@ -18,7 +18,7 @@ class EntitlementPolicyTest {
         ExamAccessSubject("e1", kind, free, demo)
 
     private fun grant(from: Instant = past, until: Instant? = null, motivo: String = "compra") = ExamGrantFact(motivo, from, until)
-    private fun premium(end: Instant? = future, status: String = "activa", flag: Boolean = true) = PremiumFact(flag, status, end)
+    private fun premium(end: Instant? = future, status: String = "activa", flag: Boolean = true, level: Int? = 3) = PremiumFact(flag, status, end, level)
     private fun check(
         exam: ExamAccessSubject,
         user: UserAccessFacts = UserAccessFacts(),
@@ -171,5 +171,30 @@ class EntitlementPolicyTest {
         assertNull(ExamKind.fromWireOrNull("Rafaga"))
         assertNull(ExamKind.fromWireOrNull("otro"))
         assertNull(ExamKind.fromWireOrNull(null))
+    }
+
+    // ---- Access v2 (client 2026-10-16): the plan covers rafagas from nivel 1, razonados from nivel 2 and NEVER an immersive by itself
+
+    @Test
+    fun aPlanCoversRafagasFromLevelOneRazonadosFromLevelTwoAndNeverAnImmersive() {
+        for (level in listOf(null, 0, 1, 2, 3)) {
+            val expected = mapOf(
+                ExamKind.RAFAGA to ((level ?: 0) >= 1),
+                ExamKind.RAZONADO to ((level ?: 0) >= 2),
+                ExamKind.INMERSIVO to false,
+            )
+            for ((kind, covered) in expected) {
+                val state = check(exam(kind), UserAccessFacts(premium = premium(level = level), specialtyId = "E")).state
+                assertEquals(if (covered) AccessState.SUBSCRIPTION else AccessState.LOCKED, state, "nivel $level, $kind")
+            }
+        }
+    }
+
+    @Test
+    fun aCancelledSubscriptionKeepsAccessOnlyWithAKnownEnd() {
+        val user = { p: PremiumFact -> UserAccessFacts(premium = p, specialtyId = "E") }
+        assertEquals(AccessState.SUBSCRIPTION, check(exam(), user(premium(status = "cancelada"))).state, "cancelada with paid time left")
+        assertEquals(AccessState.LOCKED, check(exam(), user(premium(end = null, status = "cancelada"))).state, "cancelada without a known end: fail closed")
+        assertEquals(AccessState.SUBSCRIPTION, check(exam(), user(premium(end = null, status = "activa"))).state, "activa without an end is still open ended")
     }
 }

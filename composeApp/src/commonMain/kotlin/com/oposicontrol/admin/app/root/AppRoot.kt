@@ -1,10 +1,13 @@
 package com.oposicontrol.admin.app.root
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -48,6 +51,10 @@ import com.oposicontrol.admin.features.dashboard.presentation.DashboardV2Screen
 import com.oposicontrol.admin.features.dashboard.presentation.DashboardV2ViewModel
 import com.oposicontrol.admin.features.dashboard.presentation.DashboardViewModel
 import com.oposicontrol.admin.features.dashboard.presentation.MobileDashboardScreen
+import com.oposicontrol.admin.features.exams.presentation.ExamGradingRulesViewModel
+import com.oposicontrol.admin.features.exams.presentation.ExamOfficialQuestionsViewModel
+import com.oposicontrol.admin.features.exams.presentation.LocalOfficialQuestionsViewModel
+import com.oposicontrol.admin.features.exams.presentation.LocalGradingRulesViewModel
 import com.oposicontrol.admin.features.examaccess.presentation.ExamAccessIntent
 import com.oposicontrol.admin.features.examaccess.presentation.ExamAccessScreen
 import com.oposicontrol.admin.features.examaccess.presentation.ExamAccessViewModel
@@ -58,7 +65,6 @@ import com.oposicontrol.admin.features.exams.presentation.ContentUploadScreen
 import com.oposicontrol.admin.features.exams.presentation.MobileContentView
 import com.oposicontrol.admin.features.questions.presentation.QuestionsScreen
 import com.oposicontrol.admin.features.questions.presentation.QuestionsViewModel
-import com.oposicontrol.admin.features.imports.presentation.ImportScreen
 import com.oposicontrol.admin.features.imports.presentation.ImportViewModel
 import com.oposicontrol.admin.features.forum.presentation.ForumIntent
 import com.oposicontrol.admin.features.forum.presentation.ForumScreen
@@ -109,6 +115,9 @@ import org.koin.compose.koinInject
 import org.koin.core.parameter.parametersOf
 import androidx.compose.runtime.rememberCoroutineScope
 import com.oposicontrol.admin.domain.repository.AuthRepository
+import com.oposicontrol.admin.domain.repository.SystemStatusRepository
+import com.oposicontrol.admin.features.controlv1.presentation.ForumModerationQueueScreen
+import com.oposicontrol.admin.features.controlv1.presentation.ForumQueueViewModel
 import kotlinx.coroutines.launch
 
 private const val TEMPORARILY_DISABLE_LOGIN = false
@@ -394,6 +403,17 @@ fun AppRoot(
         }
     }
 
+    // Qué parte del panel corresponde a la sesión, según el servidor (decisión 2026-10-20: el moderador solo modera el foro).
+    val systemStatusRepository: SystemStatusRepository = koinInject()
+    val accessAuthRepository: AuthRepository = koinInject()
+    val accessScope = rememberCoroutineScope()
+    var panelAccess by remember { mutableStateOf<PanelAccess>(PanelAccess.Checking) }
+    LaunchedEffect(authState.isAuthenticated) {
+        panelAccess = PanelAccess.Checking
+        if (authState.isAuthenticated) panelAccess = panelAccessFor(systemStatusRepository.loadSession())
+    }
+    val logoutFromAccess: () -> Unit = { accessScope.launch { accessAuthRepository.logout() } }
+
     when {
         !TEMPORARILY_DISABLE_LOGIN && authState.isRestoring -> AuthScreen(
             viewModel = authViewModel,
@@ -406,6 +426,15 @@ fun AppRoot(
             onAuthenticated = { navigator.replace(AppRoute.Home) },
             accessRequestViewModel = accessRequestViewModel,
         )
+
+        !TEMPORARILY_DISABLE_LOGIN && panelAccess == PanelAccess.Checking -> PanelAccessChecking()
+
+        !TEMPORARILY_DISABLE_LOGIN && panelAccess == PanelAccess.ForumModerator -> ModeratorPanel(onLogout = logoutFromAccess) {
+            ForumModerationQueueScreen(queueViewModel = koinInject<ForumQueueViewModel>())
+        }
+
+        !TEMPORARILY_DISABLE_LOGIN && panelAccess is PanelAccess.Denied ->
+            PanelAccessDenied(message = (panelAccess as PanelAccess.Denied).message, onLogout = logoutFromAccess)
 
         else -> {
             // Único punto de enganche del botón/gesto Atrás del sistema, y va
@@ -612,7 +641,7 @@ fun AppRoot(
                             ContentUploadScreen(viewModel = koinInject())
                         } else {
                             val importViewModel: ImportViewModel = koinInject()
-                            ImportScreen(importViewModel)
+                            ImportHubScreen(importViewModel)
                         }
                     }
                     AppContentTarget.SYSTEM_STATUS -> {
@@ -648,7 +677,12 @@ fun AppRoot(
                         val testerId = (route as AppRoute.OposiTester.Detail).testerId
                         TesterDetailScreen(viewModel = koinInject(parameters = { parametersOf(testerId) }))
                     }
-                    AppContentTarget.EXAM_WORKSPACE -> ExamWorkspaceScreen(
+                    AppContentTarget.EXAM_WORKSPACE -> CompositionLocalProvider(
+                        // Reglas de puntuación del examen (Control V1): el editor las pinta solo si alguien las provee.
+                        LocalGradingRulesViewModel provides koinInject<ExamGradingRulesViewModel>(),
+                        LocalOfficialQuestionsViewModel provides koinInject<ExamOfficialQuestionsViewModel>(),
+                    ) {
+                        ExamWorkspaceScreen(
                         // El mismo ViewModel que alimenta «Nuevo examen» en la
                         // cabecera; en esta rama nunca es null.
                         viewModel = requireNotNull(examsViewModel),
@@ -657,7 +691,8 @@ fun AppRoot(
                         // pantalla de Preguntas. El enlace es real, no un atajo
                         // decorativo: lleva justo donde se hace.
                         onOpenQuestionBank = { navigator.push(AppRoute.Content.Questions) },
-                    )
+                        )
+                    }
                     AppContentTarget.MOBILE_CONTENT_ROOT -> MobileContentRoot(
                         appConfig = appConfig,
                         initialView = route.toMobileContentView(),

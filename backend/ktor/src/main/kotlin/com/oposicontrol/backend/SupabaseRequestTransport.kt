@@ -329,6 +329,8 @@ class SupabaseRequestTransport internal constructor(
             )
         }
         if (response.statusCode() == 404) return false
+        // E2-V1-F08: Storage answers a DELETE of a missing object with 400 NoSuchKey / `Object not found` (statusCode 404 inside the body) on some versions: same meaning as 404
+        if (response.statusCode() == 400 && response.body().let { it.contains("NoSuchKey") || it.contains("Object not found") || it.contains("not_found") }) return false
         if (response.statusCode() !in 200..299) {
             throw IllegalStateException(
                 "Supabase storage DELETE -> ${response.statusCode()}: ${response.body().take(200)}",
@@ -445,6 +447,8 @@ class SupabaseRequestTransport internal constructor(
         path: String,
         request: () -> HttpRequest,
     ): HttpResponse<String> = try {
+        // EX12/EX13: viaje de ida y vuelta al upstream contado para la peticion en curso (solo si alguien la mide).
+        UpstreamCallLedger.record(org.slf4j.MDC.get(MDC_REQUEST_ID))
         client.send(request(), HttpResponse.BodyHandlers.ofString())
     } catch (error: Exception) {
         throw IllegalStateException(

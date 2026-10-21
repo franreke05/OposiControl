@@ -7,6 +7,8 @@ import com.oposicontrol.admin.domain.model.ContentImportBatch
 import com.oposicontrol.admin.domain.model.ContentImportStagingItem
 import com.oposicontrol.admin.domain.model.Exam
 import com.oposicontrol.admin.domain.model.ExamStatus
+import com.oposicontrol.admin.domain.model.RazonadoMarkup
+import com.oposicontrol.admin.domain.model.isReserve
 import com.oposicontrol.admin.domain.model.stagingCompletenessProblem
 
 /**
@@ -419,6 +421,24 @@ enum class ImportPreflightKind {
     EXAM_LIMIT,
     NOTHING_READY,
     EXAM_PUBLISHED,
+
+    /** El mismo contenido ya se importó en este examen (huella igual): publicar daría `IMPORT_LOT_DUPLICATE`. */
+    DUPLICATE_LOT,
+
+    /** Hay filas RESERVA y el examen no es oficial (`IMPORT_RESERVE_REQUIRES_OFFICIAL_EXAM`). */
+    RESERVES_NEED_OFFICIAL,
+
+    /** Solo hay reservas y el examen aún no tiene principales: las reservas se añaden DESPUÉS de las principales. */
+    RESERVES_WITHOUT_MAIN,
+
+    /** Aviso: las reservas se numeran y se añaden tras las principales. */
+    RESERVES_NOTE,
+
+    /** Hay filas anuladas sin el motivo del tribunal (decisión 2026-10-20; el servidor responde ANNULMENT_REASON_REQUIRED). */
+    ANNULMENT_REASON_MISSING,
+
+    /** La explicación de alguna fila lleva marcado que el servidor rechazaría (gramática de razonados, FA38). */
+    MARKUP_INVALID,
 }
 
 /** Un motivo concreto. [blocking] `false` = aviso: se puede publicar, pero conviene saberlo antes. */
@@ -452,6 +472,8 @@ data class ImportPublishPreflight(
     /** Preguntas que tendría el examen después de publicar, si se conoce el actual. */
     val examTotalAfter: Int?,
     val requiresPublishedExamConfirmation: Boolean,
+    /** De las que se publicarían, las que van como RESERVA. */
+    val reserves: Int = 0,
 ) {
     val blockers: List<ImportPreflightIssue> get() = issues.filter { it.blocking }
     val warnings: List<ImportPreflightIssue> get() = issues.filterNot { it.blocking }
@@ -511,6 +533,13 @@ fun importPublishPreflight(
     if (published) {
         blocker(ImportPreflightKind.ALREADY_PUBLISHED, "Este lote ya se ha publicado.")
     } else {
+        batch.duplicateOfBatchId?.let { earlier ->
+            blocker(
+                ImportPreflightKind.DUPLICATE_LOT,
+                "Este contenido ya se importó en este examen (lote $earlier): publicarlo otra vez duplicaría las preguntas. " +
+                    "Ábrelo desde el historial o sube un fichero distinto.",
+            )
+        }
         // La RPC sólo publica lotes `parseado`, `revisado` o `fallido` (reintento); `pendiente`
         // (aún sin parsear) lo rechaza con IMPORT_LOTE_STATE_INVALID.
         if (batch.status.trim().equals("pendiente", ignoreCase = true)) {
@@ -527,6 +556,16 @@ fun importPublishPreflight(
         when {
             errors == 1 -> blocker(ImportPreflightKind.ROW_ERRORS, "Corrige el error antes de publicar.")
             errors > 1 -> blocker(ImportPreflightKind.ROW_ERRORS, "Corrige los $errors errores antes de publicar.")
+        }
+
+        // Decisión del propietario 2026-10-20: una pregunta no se publica anulada sin el motivo del tribunal.
+        val annulledWithoutReason = pending.filter { tone(it) != ReviewFilter.OMITIDA && it.annulled && it.annulmentReason.isNullOrBlank() }
+        if (annulledWithoutReason.isNotEmpty()) {
+            blocker(
+                ImportPreflightKind.ANNULMENT_REASON_MISSING,
+                plural(annulledWithoutReason.size, "pregunta anulada no tiene", "preguntas anuladas no tienen") +
+                    " el motivo del tribunal: indícalo en la revisión antes de publicar.",
+            )
         }
 
         val warnings = pending.count { tone(it) == ReviewFilter.ADVERTENCIA }
@@ -557,6 +596,14 @@ fun importPublishPreflight(
                     "complétalas u omítelas.",
             )
         }
+        // FA38: el servidor vuelve a analizar el marcado de cada explicación y rechaza la fila si es inválido; se avisa antes.
+        val badMarkup = creating.count { it.reasoning.isNotBlank() && RazonadoMarkup.parse(it.reasoning) is RazonadoMarkup.Result.Rejected }
+        if (badMarkup > 0) {
+            blocker(
+                ImportPreflightKind.MARKUP_INVALID,
+                "${plural(badMarkup, "fila tiene", "filas tienen")} marcado de explicación no válido: corrígelo (el editor «Marcado de razonados» dice qué falla).",
+            )
+        }
         if (reasoningRequired) {
             val noReasoning = creating.count { stagingCompletenessProblem(it) == null && it.reasoning.isBlank() }
             if (noReasoning > 0) {
@@ -573,6 +620,30 @@ fun importPublishPreflight(
                 ImportPreflightKind.TYPE_MISMATCH,
                 "El lote es de tipo ${importTypeLabel(questionType)} y el examen destino es " +
                     "${importTypeLabel(importTypeFromWire(exam.typeExam))}: no coinciden.",
+            )
+        }
+        val reserveRows = ready.count { it.isReserve }
+        if (reserveRows > 0) {
+            if (exam != null && !exam.isOfficial) {
+                blocker(
+                    ImportPreflightKind.RESERVES_NEED_OFFICIAL,
+                    "${plural(reserveRows, "fila va como reserva", "filas van como reserva")} y el examen no es oficial: " +
+                        "márcalo como oficial o pasa esas filas a principales.",
+                )
+            }
+            if (exam != null && exam.questionCount == 0 && ready.size == reserveRows) {
+                blocker(
+                    ImportPreflightKind.RESERVES_WITHOUT_MAIN,
+                    "Las reservas se añaden después de las principales y este examen aún no tiene ninguna: importa primero las principales.",
+                )
+            }
+            issues.add(
+                ImportPreflightIssue(
+                    ImportPreflightKind.RESERVES_NOTE,
+                    "${plural(reserveRows, "reserva", "reservas")}: se añaden después de las principales, numeradas por el orden del fichero. " +
+                        "Solo puntúan si se anula alguna principal.",
+                    blocking = false,
+                ),
             )
         }
         if (exam != null && fresh > 0 && exam.questionCount + fresh > IMPORT_EXAM_QUESTION_LIMIT) {
@@ -611,6 +682,7 @@ fun importPublishPreflight(
         annulled = annulled,
         examTotalAfter = exam?.let { it.questionCount + fresh },
         requiresPublishedExamConfirmation = confirmation,
+        reserves = ready.count { it.isReserve },
     )
 }
 
@@ -649,6 +721,7 @@ fun importPublishGate(state: ImportState, batch: ContentImportBatch): ImportPubl
     val extras = buildList {
         if (preflight.linked > 0) add(plural(preflight.linked, "vinculada a una existente", "vinculadas a existentes"))
         if (preflight.annulled > 0) add(plural(preflight.annulled, "anulada por el tribunal", "anuladas por el tribunal"))
+        if (preflight.reserves > 0) add(plural(preflight.reserves, "como reserva", "como reservas"))
     }
     val reason = "$what en el examen del lote" + if (extras.isEmpty()) "." else " (${extras.joinToString(", ")})."
     return ImportPublishGate(true, reason, preflight.issues, preflight.requiresPublishedExamConfirmation)

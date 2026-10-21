@@ -36,6 +36,9 @@ dependencies {
     implementation("io.lettuce:lettuce-core:6.5.5.RELEASE")
     // Verificacion de JWT de Supabase (ES256). La clave EC se construye desde el JWKS publico.
     implementation("com.auth0:java-jwt:4.4.0")
+    // Pagos de tienda (P3): verificacion de JWS de Apple (cadena x5c hasta la raiz de Apple, OIDs, bundleId, entorno) con la libreria
+    // oficial de Apple en lugar de una verificacion hecha a mano (requisito de auditoria de Control). Trae java-jwt 4.5.1, okhttp 4.12 y bcprov 1.84.
+    implementation("com.apple.itunes.storekit:app-store-server-library:5.2.0")
     // Extraccion de texto de PDFs para importacion de rafagas.
     implementation("org.apache.pdfbox:pdfbox:3.0.2")
     // S1D1/DAY_02 (2026-08-13): sin binding SLF4J los logs (incluidos los
@@ -45,6 +48,8 @@ dependencies {
     implementation("io.sentry:sentry-logback:8.57.0")
     runtimeOnly(libs.logback.classic)
     testImplementation(kotlin("test"))
+    // Certificados de PRUEBA (raiz, intermedio y hoja con los OIDs de Apple) generados en cada test: nunca claves reales.
+    testImplementation("org.bouncycastle:bcpkix-jdk18on:1.84")
     testImplementation(libs.kotlinx.coroutines.test)
     testImplementation("io.ktor:ktor-client-mock:${libs.versions.ktor.get()}")
     testImplementation("io.ktor:ktor-server-test-host:${libs.versions.ktor.get()}")

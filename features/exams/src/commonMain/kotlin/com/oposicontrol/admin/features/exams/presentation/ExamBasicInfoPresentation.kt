@@ -276,8 +276,8 @@ fun communityPickerNotice(
         message = when {
             selectedId != null ->
                 "No se ha podido cargar el catálogo. El examen conserva la comunidad que tenga guardada."
-            isNew -> "No se ha podido cargar el catálogo de comunidades. El examen se creará como nacional."
-            else -> "No se ha podido cargar el catálogo de comunidades. Este examen es nacional."
+            isNew -> "No se ha podido cargar el catálogo de comunidades. Sin ellas no se puede guardar el examen: reintenta."
+            else -> "No se ha podido cargar el catálogo de comunidades. Este examen no tiene comunidad: elige una cuando carguen."
         },
         kind = ExamPickerNoticeKind.PROBLEM,
         canRetry = true,
@@ -295,9 +295,9 @@ fun communityPickerNotice(
     } else {
         ExamPickerNoticeText(
             message = if (isNew) {
-                "No hay comunidades en el catálogo. El examen se creará como nacional."
+                "No hay comunidades en el catálogo: crea una en Contenido > Comunidades antes de guardar el examen."
             } else {
-                "No hay comunidades en el catálogo. Este examen es nacional."
+                "No hay comunidades en el catálogo. Este examen no tiene comunidad: crea una en Contenido > Comunidades."
             },
             kind = ExamPickerNoticeKind.INFO,
             canRetry = false,
@@ -564,6 +564,9 @@ internal const val EXAM_ERROR_CODE_DUPLICATE: String = "EXAM_CODE_DUPLICATE"
  */
 internal const val EXAM_ERROR_CODE_REQUIRED: String = "EXAM_CODE_REQUIRED"
 
+/** Todo examen necesita una comunidad (V1): lo rechaza el trigger de la base con este mismo código. */
+internal const val EXAM_ERROR_COMMUNITY_REQUIRED: String = "EXAM_COMMUNITY_REQUIRED"
+
 /**
  * El campo del editor al que un rechazo puede apuntar, con la pestaña en la que
  * vive.
@@ -578,6 +581,9 @@ internal enum class ExamField(val tab: ExamWorkspaceTabId, val label: String) {
 
     /** «Número de preguntas», en Configuración. De sólo lectura: se deriva (D1). */
     QUESTION_COUNT(ExamWorkspaceTabId.CONFIGURACION, "Número de preguntas"),
+
+    /** «Comunidad autónoma», en Información básica. Obligatoria en V1: todo examen tiene una (el servidor y la base lo repiten). */
+    COMMUNITY(ExamWorkspaceTabId.BASICA, "Comunidad autónoma"),
 }
 
 /** De dónde viene la acusación. Cambia si hay que MOVER al usuario o sólo marcar. */
@@ -647,6 +653,7 @@ internal fun examFieldError(state: ExamsState): ExamFieldError? {
     val rejectedField = when (rejection?.code?.uppercase()) {
         EXAM_ERROR_QUESTION_COUNT_INVALID -> ExamField.QUESTION_COUNT
         EXAM_ERROR_CODE_DUPLICATE, EXAM_ERROR_CODE_REQUIRED -> ExamField.CODE
+        EXAM_ERROR_COMMUNITY_REQUIRED -> ExamField.COMMUNITY
         else -> null
     }
     if (rejection != null && rejectedField != null) {

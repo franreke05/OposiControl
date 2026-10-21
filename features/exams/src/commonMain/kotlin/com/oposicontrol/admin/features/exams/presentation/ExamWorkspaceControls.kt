@@ -497,6 +497,8 @@ internal fun ExamCommunityPicker(
     selectedId: String?,
     isNew: Boolean,
     onSelected: (String?) -> Unit,
+    /** El guardado se intentó sin comunidad (o el servidor la exigió): se marca el campo. */
+    isError: Boolean = false,
     onRetry: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -506,9 +508,10 @@ internal fun ExamCommunityPicker(
         DropdownField(
             label = "Comunidad autónoma",
             help = Help.comunidadAutonoma,
-            selectedLabel = label.text,
-            options = (if (unresolved) emptyList() else listOf<Pair<String?, String>>(null to "Nacional")) +
-                communities.value.map { it.id to it.name },
+            selectedLabel = if (selectedId == null) COMMUNITY_PLACEHOLDER else label.text,
+            required = true,
+            // V1: no hay «Nacional» sin comunidad. Todo examen tiene una; elegirla es obligatorio.
+            options = communities.value.map { it.id to it.name },
             onSelect = onSelected,
             modifier = modifier,
             maxWidth = Dp.Unspecified,
@@ -516,7 +519,7 @@ internal fun ExamCommunityPicker(
             // advertir y una línea de apoyo permanente debajo de un desplegable
             // que funciona es ruido que se aprende a no leer.
             supportingText = "Si eliges otra, se perderá la referencia a la que tenía.".takeIf { unresolved },
-            isError = unresolved,
+            isError = unresolved || isError,
         )
     } else {
         ExamPickerCell(
@@ -639,3 +642,6 @@ internal fun ExamPickerNotices(notices: List<ExamPickerNoticeText>, modifier: Mo
         }
     }
 }
+
+/** Lo que enseña el selector de comunidad mientras no se ha elegido ninguna. */
+internal const val COMMUNITY_PLACEHOLDER: String = "Elige una comunidad"

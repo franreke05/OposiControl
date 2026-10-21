@@ -32,6 +32,9 @@ components:
                   $ref: '#/components/schemas/WalletSummary'
           '401':
             $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+            description: 'RATE_LIMITED (FA20, per-user read limit; Retry-After).'
           '403':
             $ref: '../common/errors.yaml#/components/responses/Forbidden'
           '502':
@@ -86,6 +89,9 @@ components:
             description: 'VALIDATION, INVALID_FILTER or INVALID_CURSOR.'
           '401':
             $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+            description: 'RATE_LIMITED (FA20, per-user read limit; Retry-After).'
           '403':
             $ref: '../common/errors.yaml#/components/responses/Forbidden'
           '502':

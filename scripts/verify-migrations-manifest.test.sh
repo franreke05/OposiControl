@@ -5,8 +5,8 @@ cd "$(dirname "$0")/.."
 bash scripts/verify-migrations-manifest.sh >/dev/null || { echo "TEST FAIL: el repo deberia pasar"; exit 1; }
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 n=0
-fresh() { n=$((n + 1)); w="$tmp/w$n"; mkdir -p "$w/supabase/migrations" "$w/scripts"; cp supabase/SLICE1_MIGRATIONS.txt supabase/SLICE2_MIGRATIONS.txt supabase/SLICE3_MIGRATIONS.txt supabase/SLICE7_MIGRATIONS.txt "$w/supabase/"; cp scripts/verify-migrations-manifest.sh "$w/scripts/"; mkdir -p "$w/docs/engineering"; cp docs/engineering/DEPLOYMENT.md "$w/docs/engineering/"
-  while IFS= read -r s; do [ -n "$s" ] && : > "$w/supabase/migrations/$s.sql"; done < <(cat supabase/SLICE1_MIGRATIONS.txt supabase/SLICE2_MIGRATIONS.txt supabase/SLICE3_MIGRATIONS.txt supabase/SLICE7_MIGRATIONS.txt | tr -d '\015'); }
+fresh() { n=$((n + 1)); w="$tmp/w$n"; mkdir -p "$w/supabase/migrations" "$w/scripts"; cp supabase/SLICE1_MIGRATIONS.txt supabase/SLICE2_MIGRATIONS.txt supabase/SLICE3_MIGRATIONS.txt supabase/SLICE7_MIGRATIONS.txt supabase/V1_MIGRATIONS.txt "$w/supabase/"; cp scripts/verify-migrations-manifest.sh "$w/scripts/"; mkdir -p "$w/docs/engineering"; cp docs/engineering/DEPLOYMENT.md "$w/docs/engineering/"
+  while IFS= read -r s; do [ -n "$s" ] && : > "$w/supabase/migrations/$s.sql"; done < <(cat supabase/SLICE1_MIGRATIONS.txt supabase/SLICE2_MIGRATIONS.txt supabase/SLICE3_MIGRATIONS.txt supabase/SLICE7_MIGRATIONS.txt supabase/V1_MIGRATIONS.txt | tr -d '\r' | grep -Ev '^[[:space:]]*(#|$)'); }
 expect_fail() { MIG_ROOT="$w" bash "$w/scripts/verify-migrations-manifest.sh" >"$tmp/out" 2>&1 && { echo "TEST FAIL: $1 paso"; exit 1; }; grep -q '^FAIL:' "$tmp/out" || { echo "TEST FAIL: $1 sin FAIL"; exit 1; }; }
 fresh; MIG_ROOT="$w" bash "$w/scripts/verify-migrations-manifest.sh" >/dev/null || { echo "TEST FAIL: copia coincidente deberia pasar"; exit 1; }
 fresh; : > "$w/supabase/migrations/20260930109999_extra.sql"; expect_fail "migracion de mas"
@@ -29,7 +29,7 @@ fresh; rm "$w/supabase/migrations/20261008100100_slice3_attempt_command_rpcs.sql
 fresh; echo "20261008109999_solo_manifiesto" >> "$w/supabase/SLICE3_MIGRATIONS.txt"; expect_fail "entrada de manifiesto Slice 3 sin migracion"
 fresh; : > "$w/supabase/SLICE3_MIGRATIONS.txt"; expect_fail "manifiesto Slice 3 vacio"
 fresh; rm "$w/supabase/SLICE3_MIGRATIONS.txt"; expect_fail "manifiesto Slice 3 ausente"; grep -q 'SLICE3_MIGRATIONS.txt' "$tmp/out" || { echo "TEST FAIL: manifiesto Slice 3 ausente sin su mensaje"; exit 1; }
-fresh; sed -i 's/20261008100000..20261010100000/20261008100000..100200/' "$w/docs/engineering/DEPLOYMENT.md"; cmp -s "$w/docs/engineering/DEPLOYMENT.md" docs/engineering/DEPLOYMENT.md && { echo "TEST FAIL: mutacion vacua"; exit 1; }; expect_fail "DEPLOYMENT con rango Slice 3 antiguo"; grep -q 'no cita el rango Slice 3' "$tmp/out" || { echo "TEST FAIL: rango Slice 3 sin su mensaje"; exit 1; }
+fresh; sed -i 's/20261008100000..20261022100000/20261008100000..20261010100000/' "$w/docs/engineering/DEPLOYMENT.md"; cmp -s "$w/docs/engineering/DEPLOYMENT.md" docs/engineering/DEPLOYMENT.md && { echo "TEST FAIL: mutacion vacua"; exit 1; }; expect_fail "DEPLOYMENT con rango Slice 3 antiguo"; grep -q 'no cita el rango Slice 3' "$tmp/out" || { echo "TEST FAIL: rango Slice 3 sin su mensaje"; exit 1; }
 # Borrada de las dos partes a la vez (la ultima sigue siendo la 100200, el rango de DEPLOYMENT no cambia): la igualdad pasa, la lista de obligatorias no.
 fresh; sed -i '/20261008100100_/d' "$w/supabase/SLICE3_MIGRATIONS.txt"; rm "$w/supabase/migrations/20261008100100_slice3_attempt_command_rpcs.sql"; expect_fail "100100 de Slice 3 borrada del manifiesto y de las migraciones a la vez"; grep -q 'no lista 20261008100100' "$tmp/out" || { echo "TEST FAIL: 100100 Slice 3 ausente sin su mensaje"; exit 1; }
 # GATE SLICE 3: el endurecimiento (100200) tampoco se puede quitar de las dos partes y del runbook a la vez.

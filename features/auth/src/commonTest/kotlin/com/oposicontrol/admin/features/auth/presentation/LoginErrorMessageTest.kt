@@ -1,6 +1,7 @@
 package com.oposicontrol.admin.features.auth.presentation
 
 import com.oposicontrol.admin.core.common.result.AppError
+import com.oposicontrol.admin.core.ui.components.humanMessage
 import kotlin.test.Test
 import kotlin.test.assertEquals
 
@@ -17,6 +18,13 @@ class LoginErrorMessageTest {
     fun anAuthenticationErrorShowsItsOwnMessage() {
         assertEquals(pendingApproval, loginErrorMessage(AppError.Authentication(pendingApproval)))
         assertEquals("Usuario o contraseña incorrectos.", loginErrorMessage(AppError.Authentication("Usuario o contraseña incorrectos.")))
+    }
+
+    @Test
+    fun aForbiddenLoginShowsTheServerTextForANonAdminOrABlockedAdmin() {
+        val forbidden = "No tienes permisos para acceder al panel de administración."
+        assertEquals(forbidden, loginErrorMessage(AppError.Authorization(forbidden)))
+        assertEquals(AppError.Authorization("").humanMessage(), loginErrorMessage(AppError.Authorization("")))
     }
 
     @Test

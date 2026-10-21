@@ -247,6 +247,8 @@ internal const val AUTH_REQUEST_ACCESS_LINK_TAG: String = "auth-request-access-l
  */
 internal fun loginErrorMessage(error: AppError): String = when (error) {
     is AppError.Authentication -> error.message.ifBlank { error.humanMessage() }
+    // 403 del servidor (no es administrador o la cuenta esta bloqueada): su texto ya esta redactado para la persona.
+    is AppError.Authorization -> error.message.ifBlank { error.humanMessage() }
     else -> error.humanMessage()
 }
 

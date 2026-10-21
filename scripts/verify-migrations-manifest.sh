@@ -42,7 +42,7 @@ expected3="$(tr -d '\r' < "$man3" | grep -Ev '^[[:space:]]*(#|$)' | sort)"
 [ -n "$expected3" ] || { echo "FAIL: manifiesto Slice 3 sin entradas"; exit 1; }
 # Las 202610*_slice2_*.sql (SLICE 2) y 202610*_slice7_*.sql (SLICE 7), mas abajo, tienen su propio manifiesto: toda otra 202610* es de Slice 3.
 # Las 202610*_security_*.sql son endurecimiento transversal (pasada de seguridad), no pertenecen a ningun slice ni a su manifiesto.
-actual3="$( (cd supabase/migrations 2>/dev/null && ls | grep -E '^202610.*\.sql$' | grep -Ev '^[0-9]+_(slice[27]|security)_' | sed 's/\.sql$//' | sort) )"
+actual3="$( (cd supabase/migrations 2>/dev/null && ls | grep -E '^202610.*\.sql$' | grep -Ev '^[0-9]+_(slice[27]|security|v1)_' | sed 's/\.sql$//' | sort) )"
 if [ "$actual3" != "$expected3" ]; then
   echo "FAIL: el manifiesto Slice 3 y supabase/migrations/202610*.sql difieren (< manifiesto, > real):"
   diff <(echo "$expected3") <(echo "$actual3")
@@ -119,3 +119,18 @@ for need in 20261008100500_slice7_wallet_ledger_keyset_index; do
   echo "$expected7" | grep -qx "$need" || { echo "FAIL: el manifiesto Slice 7 no lista $need"; exit 1; }
 done
 echo "ok:   manifiesto Slice 7 == migraciones 202610*_slice7_* ($(echo "$actual7" | wc -l | tr -d ' '))"
+# V1 (propietario 2026-10-15): supabase/V1_MIGRATIONS.txt y los supabase/migrations/202610*_v1_*.sql (comunidad obligatoria, economia).
+manv1=supabase/V1_MIGRATIONS.txt
+[ -s "$manv1" ] || { echo "FAIL: manifiesto vacio o ausente: $manv1"; exit 1; }
+expectedv1="$(tr -d '\r' < "$manv1" | grep -Ev '^[[:space:]]*(#|$)' | sort)"
+[ -n "$expectedv1" ] || { echo "FAIL: manifiesto V1 sin entradas"; exit 1; }
+actualv1="$( (cd supabase/migrations 2>/dev/null && ls | grep -E '^202610[0-9]*_v1_.*\.sql$' | sed 's/\.sql$//' | sort) )"
+if [ "$actualv1" != "$expectedv1" ]; then
+  echo "FAIL: el manifiesto V1 y supabase/migrations/202610*_v1_*.sql difieren (< manifiesto, > real):"
+  diff <(echo "$expectedv1") <(echo "$actualv1")
+  exit 1
+fi
+for vv1 in $(echo "$expectedv1" | cut -d_ -f1); do
+  grep -qF "$vv1" "$dep" || { echo "FAIL: $dep no cita la migracion V1 $vv1"; exit 1; }
+done
+echo "ok:   manifiesto V1 == migraciones 202610*_v1_* ($(echo "$actualv1" | wc -l | tr -d ' '))"
