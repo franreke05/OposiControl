@@ -1,0 +1,11 @@
+backend/ktor: 2152 tests, 0 omitidos, 0 fallos, 0 errores
+backend/dbtest: 304 tests, 0 omitidos, 0 fallos, 0 errores
+core/common: 15 tests, 0 omitidos, 0 fallos, 0 errores
+features/questions: 85 tests, 0 omitidos, 0 fallos, 0 errores
+features/imports: 121 tests, 0 omitidos, 0 fallos, 0 errores
+features/exams: 335 tests, 0 omitidos, 0 fallos, 0 errores
+features/exam-access: 18 tests, 0 omitidos, 0 fallos, 0 errores
+features/control-v1: 37 tests, 0 omitidos, 0 fallos, 0 errores
+data: 299 tests, 0 omitidos, 0 fallos, 0 errores
+composeApp: 171 tests, 0 omitidos, 0 fallos, 0 errores
+EXIT=0

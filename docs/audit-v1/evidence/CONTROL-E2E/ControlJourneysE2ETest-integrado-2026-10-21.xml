@@ -1,0 +1,97 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.oposicontrol.admin.data.e2e.ControlJourneysE2ETest" tests="12" skipped="0" failures="1" errors="0" timestamp="2026-10-21T09:58:56.141Z" hostname="ERMENEJILDO" time="18.038">
+  <properties/>
+  <testcase name="j03PublishAndStates[jvm]" classname="com.oposicontrol.admin.data.e2e.ControlJourneysE2ETest" time="8.54"/>
+  <testcase name="j12AuditLog[jvm]" classname="com.oposicontrol.admin.data.e2e.ControlJourneysE2ETest" time="0.476"/>
+  <testcase name="j11ForumModeration[jvm]" classname="com.oposicontrol.admin.data.e2e.ControlJourneysE2ETest" time="1.296"/>
+  <testcase name="j10AccessGrantAndRevoke[jvm]" classname="com.oposicontrol.admin.data.e2e.ControlJourneysE2ETest" time="0.966">
+    <failure message="java.lang.AssertionError: conceder: Validation(message=Alguno de los valores enviados no está permitido para este campo., code=check_violation)" type="java.lang.AssertionError">java.lang.AssertionError: conceder: Validation(message=Alguno de los valores enviados no está permitido para este campo., code=check_violation)
+	at org.junit.Assert.fail(Assert.java:89)
+	at kotlin.test.junit.JUnitAsserter.fail(JUnitSupport.kt:56)
+	at kotlin.test.AssertionsKt__AssertionsKt.fail(Assertions.kt:564)
+	at kotlin.test.AssertionsKt.fail(Unknown Source)
+	at com.oposicontrol.admin.data.e2e.ControlJourneysE2ETest.ok(ControlJourneysE2ETest.kt:133)
+	at com.oposicontrol.admin.data.e2e.ControlJourneysE2ETest.access$ok(ControlJourneysE2ETest.kt:70)
+	at com.oposicontrol.admin.data.e2e.ControlJourneysE2ETest$j10AccessGrantAndRevoke$1.invokeSuspend(ControlJourneysE2ETest.kt:411)
+	at kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:34)
+	at kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:100)
+	at kotlinx.coroutines.EventLoopImplBase.processNextEvent(EventLoop.common.kt:263)
+	at kotlinx.coroutines.BlockingCoroutine.joinBlocking(Builders.kt:94)
+	at kotlinx.coroutines.BuildersKt__BuildersKt.runBlocking(Builders.kt:70)
+	at kotlinx.coroutines.BuildersKt.runBlocking(Unknown Source)
+	at kotlinx.coroutines.BuildersKt__BuildersKt.runBlocking$default(Builders.kt:48)
+	at kotlinx.coroutines.BuildersKt.runBlocking$default(Unknown Source)
+	at com.oposicontrol.admin.data.e2e.ControlJourneysE2ETest.journey(ControlJourneysE2ETest.kt:95)
+	at com.oposicontrol.admin.data.e2e.ControlJourneysE2ETest.j10AccessGrantAndRevoke(ControlJourneysE2ETest.kt:407)
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at org.junit.runners.model.FrameworkMethod$1.runReflectiveCall(FrameworkMethod.java:59)
+	at org.junit.internal.runners.model.ReflectiveCallable.run(ReflectiveCallable.java:12)
+	at org.junit.runners.model.FrameworkMethod.invokeExplosively(FrameworkMethod.java:56)
+	at org.junit.internal.runners.statements.InvokeMethod.evaluate(InvokeMethod.java:17)
+	at org.junit.runners.ParentRunner$3.evaluate(ParentRunner.java:306)
+	at org.junit.runners.BlockJUnit4ClassRunner$1.evaluate(BlockJUnit4ClassRunner.java:100)
+	at org.junit.runners.ParentRunner.runLeaf(ParentRunner.java:366)
+	at org.junit.runners.BlockJUnit4ClassRunner.runChild(BlockJUnit4ClassRunner.java:103)
+	at org.junit.runners.BlockJUnit4ClassRunner.runChild(BlockJUnit4ClassRunner.java:63)
+	at org.junit.runners.ParentRunner$4.run(ParentRunner.java:331)
+	at org.junit.runners.ParentRunner$1.schedule(ParentRunner.java:79)
+	at org.junit.runners.ParentRunner.runChildren(ParentRunner.java:329)
+	at org.junit.runners.ParentRunner.access$100(ParentRunner.java:66)
+	at org.junit.runners.ParentRunner$2.evaluate(ParentRunner.java:293)
+	at org.junit.runners.ParentRunner$3.evaluate(ParentRunner.java:306)
+	at org.junit.runners.ParentRunner.run(ParentRunner.java:413)
+	at org.gradle.api.internal.tasks.testing.junit.JUnitTestClassExecutor.runTestClass(JUnitTestClassExecutor.java:112)
+	at org.gradle.api.internal.tasks.testing.junit.JUnitTestClassExecutor.execute(JUnitTestClassExecutor.java:58)
+	at org.gradle.api.internal.tasks.testing.junit.JUnitTestClassExecutor.execute(JUnitTestClassExecutor.java:40)
+	at org.gradle.api.internal.tasks.testing.junit.AbstractJUnitTestClassProcessor.processTestClass(AbstractJUnitTestClassProcessor.java:54)
+	at org.gradle.api.internal.tasks.testing.SuiteTestClassProcessor.processTestClass(SuiteTestClassProcessor.java:53)
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580)
+	at org.gradle.internal.dispatch.ReflectionDispatch.dispatch(ReflectionDispatch.java:36)
+	at org.gradle.internal.dispatch.ReflectionDispatch.dispatch(ReflectionDispatch.java:24)
+	at org.gradle.internal.dispatch.ContextClassLoaderDispatch.dispatch(ContextClassLoaderDispatch.java:33)
+	at org.gradle.internal.dispatch.ProxyDispatchAdapter$DispatchingInvocationHandler.invoke(ProxyDispatchAdapter.java:92)
+	at jdk.proxy1/jdk.proxy1.$Proxy4.processTestClass(Unknown Source)
+	at org.gradle.api.internal.tasks.testing.worker.TestWorker$2.run(TestWorker.java:183)
+	at org.gradle.api.internal.tasks.testing.worker.TestWorker.executeAndMaintainThreadName(TestWorker.java:132)
+	at org.gradle.api.internal.tasks.testing.worker.TestWorker.execute(TestWorker.java:103)
+	at org.gradle.api.internal.tasks.testing.worker.TestWorker.execute(TestWorker.java:63)
+	at org.gradle.process.internal.worker.child.ActionExecutionWorker.execute(ActionExecutionWorker.java:56)
+	at org.gradle.process.internal.worker.child.SystemApplicationClassLoaderWorker.call(SystemApplicationClassLoaderWorker.java:122)
+	at org.gradle.process.internal.worker.child.SystemApplicationClassLoaderWorker.call(SystemApplicationClassLoaderWorker.java:72)
+	at worker.org.gradle.process.internal.worker.GradleWorkerMain.run(GradleWorkerMain.java:69)
+	at worker.org.gradle.process.internal.worker.GradleWorkerMain.main(GradleWorkerMain.java:74)
+</failure>
+  </testcase>
+  <testcase name="j01AccessAndPermissions[jvm]" classname="com.oposicontrol.admin.data.e2e.ControlJourneysE2ETest" time="0.657"/>
+  <testcase name="j05GradingRules[jvm]" classname="com.oposicontrol.admin.data.e2e.ControlJourneysE2ETest" time="1.23"/>
+  <testcase name="j08OrdersAdmin[jvm]" classname="com.oposicontrol.admin.data.e2e.ControlJourneysE2ETest" time="0.967"/>
+  <testcase name="j06ContentImport[jvm]" classname="com.oposicontrol.admin.data.e2e.ControlJourneysE2ETest" time="0.783"/>
+  <testcase name="j04AnnulledAndReserve[jvm]" classname="com.oposicontrol.admin.data.e2e.ControlJourneysE2ETest" time="1.198"/>
+  <testcase name="j09RefundEffects[jvm]" classname="com.oposicontrol.admin.data.e2e.ControlJourneysE2ETest" time="0.521"/>
+  <testcase name="j02ExamManagement[jvm]" classname="com.oposicontrol.admin.data.e2e.ControlJourneysE2ETest" time="0.35"/>
+  <testcase name="j07PricesAndPacks[jvm]" classname="com.oposicontrol.admin.data.e2e.ControlJourneysE2ETest" time="1.051"/>
+  <system-out><![CDATA[E2E RUN J03 publish
+E2E RUN J12 audit
+E2E J12 detail=AuditDetail(id=3e7639af-cfcd-46eb-8eba-cb241112eb6b, before=null, after=null)
+E2E RUN J11 forum
+E2E J11 post state=oculta
+E2E RUN J10 access
+E2E RUN J01 access
+E2E RUN J05 grading
+E2E RUN J08 orders
+E2E RUN J06 import
+E2E RUN J04 official
+E2E RUN J09 refund
+E2E J09 refund on a never-credited order: Validation(message=Este pedido nunca se acreditó: no se puede confirmar ni reembolsar., code=order_not_credited)
+E2E J09 outcome=null state=en_revision refund_case=0 balance 1625->1625
+E2E J09 refund webhook -> {"result":"REFUNDED"}; state=reembolsada balance=1625 refund_case=0
+E2E RUN J02 exams
+E2E RUN J07 prices
+]]></system-out>
+  <system-err><![CDATA[SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+]]></system-err>
+</testsuite>

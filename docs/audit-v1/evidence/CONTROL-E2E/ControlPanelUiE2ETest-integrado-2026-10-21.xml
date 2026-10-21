@@ -1,0 +1,182 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuite name="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" tests="15" skipped="0" failures="1" errors="0" timestamp="2026-10-21T09:59:38.302Z" hostname="ERMENEJILDO" time="236.088">
+  <properties/>
+  <testcase name="uiAdminGrantsAnExamAccess[jvm]" classname="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" time="53.921">
+    <failure message="androidx.compose.ui.test.ComposeTimeoutException: Condition still not satisfied after 20000 ms" type="androidx.compose.ui.test.ComposeTimeoutException">androidx.compose.ui.test.ComposeTimeoutException: Condition still not satisfied after 20000 ms
+	at app//androidx.compose.ui.test.SkikoComposeUiTest.waitUntil(ComposeUiTest.skiko.kt:397)
+	at app//androidx.compose.ui.test.ComposeUiTest.waitUntil$default(ComposeUiTest.skiko.kt:540)
+	at app//com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest.uiAdminGrantsAnExamAccess$lambda$0(ControlPanelUiE2ETest.kt:412)
+	at app//com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest$flow$2.invokeSuspend(ControlPanelUiE2ETest.kt:111)
+	at app//com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest$flow$2.invoke(ControlPanelUiE2ETest.kt)
+	at app//com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest$flow$2.invoke(ControlPanelUiE2ETest.kt)
+	at app//androidx.compose.ui.test.ComposeUiTest_desktopKt$runDesktopComposeUiTest$1$1$1.invokeSuspend(ComposeUiTest.desktop.kt:52)
+	at app//androidx.compose.ui.test.ComposeUiTest_desktopKt$runDesktopComposeUiTest$1$1$1.invoke(ComposeUiTest.desktop.kt)
+	at app//androidx.compose.ui.test.ComposeUiTest_desktopKt$runDesktopComposeUiTest$1$1$1.invoke(ComposeUiTest.desktop.kt)
+	at app//androidx.compose.ui.test.SkikoComposeUiTest$runTest$1$1$1$1$1.invokeSuspend(ComposeUiTest.skiko.kt:259)
+	at app//androidx.compose.ui.test.SkikoComposeUiTest$runTest$1$1$1$1$1.invoke(ComposeUiTest.skiko.kt)
+	at app//androidx.compose.ui.test.SkikoComposeUiTest$runTest$1$1$1$1$1.invoke(ComposeUiTest.skiko.kt)
+	at app//androidx.compose.ui.scene.BaseComposeScene$withMonotonicFrameClock$2.invokeSuspend(BaseComposeScene.skiko.kt:289)
+	at app//androidx.compose.ui.scene.BaseComposeScene$withMonotonicFrameClock$2.invoke(BaseComposeScene.skiko.kt)
+	at app//androidx.compose.ui.scene.BaseComposeScene$withMonotonicFrameClock$2.invoke(BaseComposeScene.skiko.kt)
+	at app//kotlinx.coroutines.intrinsics.UndispatchedKt.startUndspatched(Undispatched.kt:66)
+	at app//kotlinx.coroutines.intrinsics.UndispatchedKt.startUndispatchedOrReturn(Undispatched.kt:43)
+	at app//kotlinx.coroutines.BuildersKt__Builders_commonKt.withContext(Builders.common.kt:165)
+	at app//kotlinx.coroutines.BuildersKt.withContext(Unknown Source)
+	at app//androidx.compose.ui.scene.BaseComposeScene.withMonotonicFrameClock$suspendImpl(BaseComposeScene.skiko.kt:288)
+	at app//androidx.compose.ui.scene.BaseComposeScene.withMonotonicFrameClock(BaseComposeScene.skiko.kt)
+	at app//androidx.compose.ui.test.SkikoComposeUiTest$runTest$1.invokeSuspend(ComposeUiTest.skiko.kt:258)
+	at app//androidx.compose.ui.test.SkikoComposeUiTest$runTest$1.invoke(ComposeUiTest.skiko.kt)
+	at app//androidx.compose.ui.test.SkikoComposeUiTest$runTest$1.invoke(ComposeUiTest.skiko.kt)
+	at app//kotlinx.coroutines.test.TestBuildersKt__TestBuildersKt$runTest$2$1$1.invokeSuspend(TestBuilders.kt:317)
+	at _COROUTINE._BOUNDARY._(CoroutineDebugging.kt:42)
+	at androidx.compose.ui.test.SkikoComposeUiTest$runTest$1.invokeSuspend(ComposeUiTest.skiko.kt:258)
+	at kotlinx.coroutines.test.TestBuildersKt__TestBuildersKt$runTest$2$1$1.invokeSuspend(TestBuilders.kt:317)
+Caused by: androidx.compose.ui.test.ComposeTimeoutException: Condition still not satisfied after 20000 ms
+	at app//androidx.compose.ui.test.SkikoComposeUiTest.waitUntil(ComposeUiTest.skiko.kt:397)
+	at app//androidx.compose.ui.test.ComposeUiTest.waitUntil$default(ComposeUiTest.skiko.kt:540)
+	at app//com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest.uiAdminGrantsAnExamAccess$lambda$0(ControlPanelUiE2ETest.kt:412)
+	at app//com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest$flow$2.invokeSuspend(ControlPanelUiE2ETest.kt:111)
+	at app//com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest$flow$2.invoke(ControlPanelUiE2ETest.kt)
+	at app//com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest$flow$2.invoke(ControlPanelUiE2ETest.kt)
+	at app//androidx.compose.ui.test.ComposeUiTest_desktopKt$runDesktopComposeUiTest$1$1$1.invokeSuspend(ComposeUiTest.desktop.kt:52)
+	at app//androidx.compose.ui.test.ComposeUiTest_desktopKt$runDesktopComposeUiTest$1$1$1.invoke(ComposeUiTest.desktop.kt)
+	at app//androidx.compose.ui.test.ComposeUiTest_desktopKt$runDesktopComposeUiTest$1$1$1.invoke(ComposeUiTest.desktop.kt)
+	at app//androidx.compose.ui.test.SkikoComposeUiTest$runTest$1$1$1$1$1.invokeSuspend(ComposeUiTest.skiko.kt:259)
+	at app//androidx.compose.ui.test.SkikoComposeUiTest$runTest$1$1$1$1$1.invoke(ComposeUiTest.skiko.kt)
+	at app//androidx.compose.ui.test.SkikoComposeUiTest$runTest$1$1$1$1$1.invoke(ComposeUiTest.skiko.kt)
+	at app//androidx.compose.ui.scene.BaseComposeScene$withMonotonicFrameClock$2.invokeSuspend(BaseComposeScene.skiko.kt:289)
+	at app//androidx.compose.ui.scene.BaseComposeScene$withMonotonicFrameClock$2.invoke(BaseComposeScene.skiko.kt)
+	at app//androidx.compose.ui.scene.BaseComposeScene$withMonotonicFrameClock$2.invoke(BaseComposeScene.skiko.kt)
+	at app//kotlinx.coroutines.intrinsics.UndispatchedKt.startUndspatched(Undispatched.kt:66)
+	at app//kotlinx.coroutines.intrinsics.UndispatchedKt.startUndispatchedOrReturn(Undispatched.kt:43)
+	at app//kotlinx.coroutines.BuildersKt__Builders_commonKt.withContext(Builders.common.kt:165)
+	at app//kotlinx.coroutines.BuildersKt.withContext(Unknown Source)
+	at app//androidx.compose.ui.scene.BaseComposeScene.withMonotonicFrameClock$suspendImpl(BaseComposeScene.skiko.kt:288)
+	at app//androidx.compose.ui.scene.BaseComposeScene.withMonotonicFrameClock(BaseComposeScene.skiko.kt)
+	at app//androidx.compose.ui.test.SkikoComposeUiTest$runTest$1.invokeSuspend(ComposeUiTest.skiko.kt:258)
+	at app//androidx.compose.ui.test.SkikoComposeUiTest$runTest$1.invoke(ComposeUiTest.skiko.kt)
+	at app//androidx.compose.ui.test.SkikoComposeUiTest$runTest$1.invoke(ComposeUiTest.skiko.kt)
+	at app//kotlinx.coroutines.test.TestBuildersKt__TestBuildersKt$runTest$2$1$1.invokeSuspend(TestBuilders.kt:317)
+	at app//kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:34)
+	at app//kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:100)
+	at app//kotlinx.coroutines.test.TestDispatcher.processEvent$kotlinx_coroutines_test(TestDispatcher.kt:24)
+	at app//kotlinx.coroutines.test.TestCoroutineScheduler.tryRunNextTaskUnless$kotlinx_coroutines_test(TestCoroutineScheduler.kt:99)
+	at app//kotlinx.coroutines.test.TestBuildersKt__TestBuildersKt$runTest$2$1$workRunner$1.invokeSuspend(TestBuilders.kt:326)
+	at app//kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:34)
+	at app//kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:100)
+	at app//kotlinx.coroutines.EventLoopImplBase.processNextEvent(EventLoop.common.kt:263)
+	at app//kotlinx.coroutines.BlockingCoroutine.joinBlocking(Builders.kt:94)
+	at app//kotlinx.coroutines.BuildersKt__BuildersKt.runBlocking(Builders.kt:70)
+	at app//kotlinx.coroutines.BuildersKt.runBlocking(Unknown Source)
+	at app//kotlinx.coroutines.BuildersKt__BuildersKt.runBlocking$default(Builders.kt:48)
+	at app//kotlinx.coroutines.BuildersKt.runBlocking$default(Unknown Source)
+	at app//kotlinx.coroutines.test.TestBuildersJvmKt.createTestResult(TestBuildersJvm.kt:10)
+	at app//kotlinx.coroutines.test.TestBuildersKt__TestBuildersKt.runTest-8Mi8wO0(TestBuilders.kt:309)
+	at app//kotlinx.coroutines.test.TestBuildersKt.runTest-8Mi8wO0(Unknown Source)
+	at app//kotlinx.coroutines.test.TestBuildersKt__TestBuildersKt.runTest-8Mi8wO0(TestBuilders.kt:167)
+	at app//kotlinx.coroutines.test.TestBuildersKt.runTest-8Mi8wO0(Unknown Source)
+	at app//androidx.compose.ui.test.SkikoComposeUiTest.runTest(ComposeUiTest.skiko.kt:246)
+	at app//androidx.compose.ui.test.ComposeUiTest_desktopKt$runDesktopComposeUiTest$1.invokeSuspend(ComposeUiTest.desktop.kt:52)
+	at app//androidx.compose.ui.test.ComposeUiTest_desktopKt$runDesktopComposeUiTest$1.invoke(ComposeUiTest.desktop.kt)
+	at app//androidx.compose.ui.test.ComposeUiTest_desktopKt$runDesktopComposeUiTest$1.invoke(ComposeUiTest.desktop.kt)
+	at app//kotlinx.coroutines.test.TestBuildersKt__TestBuildersKt$runTest$2$1$1.invokeSuspend(TestBuilders.kt:317)
+	at app//kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:34)
+	at app//kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:100)
+	at app//kotlinx.coroutines.test.TestDispatcher.processEvent$kotlinx_coroutines_test(TestDispatcher.kt:24)
+	at app//kotlinx.coroutines.test.TestCoroutineScheduler.tryRunNextTaskUnless$kotlinx_coroutines_test(TestCoroutineScheduler.kt:99)
+	at app//kotlinx.coroutines.test.TestBuildersKt__TestBuildersKt$runTest$2$1$workRunner$1.invokeSuspend(TestBuilders.kt:326)
+	at app//kotlin.coroutines.jvm.internal.BaseContinuationImpl.resumeWith(ContinuationImpl.kt:34)
+	at app//kotlinx.coroutines.DispatchedTask.run(DispatchedTask.kt:100)
+	at app//kotlinx.coroutines.EventLoopImplBase.processNextEvent(EventLoop.common.kt:263)
+	at app//kotlinx.coroutines.BlockingCoroutine.joinBlocking(Builders.kt:94)
+	at app//kotlinx.coroutines.BuildersKt__BuildersKt.runBlocking(Builders.kt:70)
+	at app//kotlinx.coroutines.BuildersKt.runBlocking(Unknown Source)
+	at app//kotlinx.coroutines.BuildersKt__BuildersKt.runBlocking$default(Builders.kt:48)
+	at app//kotlinx.coroutines.BuildersKt.runBlocking$default(Unknown Source)
+	at app//kotlinx.coroutines.test.TestBuildersJvmKt.createTestResult(TestBuildersJvm.kt:10)
+	at app//kotlinx.coroutines.test.TestBuildersKt__TestBuildersKt.runTest-8Mi8wO0(TestBuilders.kt:309)
+	at app//kotlinx.coroutines.test.TestBuildersKt.runTest-8Mi8wO0(Unknown Source)
+	at app//kotlinx.coroutines.test.TestBuildersKt__TestBuildersKt.runTest-8Mi8wO0(TestBuilders.kt:167)
+	at app//kotlinx.coroutines.test.TestBuildersKt.runTest-8Mi8wO0(Unknown Source)
+	at app//kotlinx.coroutines.test.TestBuildersKt__TestBuildersKt.runTest-8Mi8wO0$default(TestBuilders.kt:159)
+	at app//kotlinx.coroutines.test.TestBuildersKt.runTest-8Mi8wO0$default(Unknown Source)
+	at app//androidx.compose.ui.test.ComposeUiTest_desktopKt.runDesktopComposeUiTest-myKFqkg(ComposeUiTest.desktop.kt:42)
+	at app//androidx.compose.ui.test.ComposeUiTest_desktopKt.runDesktopComposeUiTest-myKFqkg$default(ComposeUiTest.desktop.kt:33)
+	at app//com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest.flow(ControlPanelUiE2ETest.kt:95)
+	at app//com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest.uiAdminGrantsAnExamAccess(ControlPanelUiE2ETest.kt:382)
+	at java.base@21.0.10/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
+	at java.base@21.0.10/java.lang.reflect.Method.invoke(Method.java:580)
+	at app//org.junit.runners.model.FrameworkMethod$1.runReflectiveCall(FrameworkMethod.java:59)
+	at app//org.junit.internal.runners.model.ReflectiveCallable.run(ReflectiveCallable.java:12)
+	at app//org.junit.runners.model.FrameworkMethod.invokeExplosively(FrameworkMethod.java:56)
+	at app//org.junit.internal.runners.statements.InvokeMethod.evaluate(InvokeMethod.java:17)
+	at app//org.junit.runners.ParentRunner$3.evaluate(ParentRunner.java:306)
+	at app//org.junit.runners.BlockJUnit4ClassRunner$1.evaluate(BlockJUnit4ClassRunner.java:100)
+	at app//org.junit.runners.ParentRunner.runLeaf(ParentRunner.java:366)
+	at app//org.junit.runners.BlockJUnit4ClassRunner.runChild(BlockJUnit4ClassRunner.java:103)
+	at app//org.junit.runners.BlockJUnit4ClassRunner.runChild(BlockJUnit4ClassRunner.java:63)
+	at app//org.junit.runners.ParentRunner$4.run(ParentRunner.java:331)
+	at app//org.junit.runners.ParentRunner$1.schedule(ParentRunner.java:79)
+	at app//org.junit.runners.ParentRunner.runChildren(ParentRunner.java:329)
+	at app//org.junit.runners.ParentRunner.access$100(ParentRunner.java:66)
+	at app//org.junit.runners.ParentRunner$2.evaluate(ParentRunner.java:293)
+	at app//org.junit.runners.ParentRunner$3.evaluate(ParentRunner.java:306)
+	at app//org.junit.runners.ParentRunner.run(ParentRunner.java:413)
+	at org.gradle.api.internal.tasks.testing.junit.JUnitTestClassExecutor.runTestClass(JUnitTestClassExecutor.java:112)
+	at org.gradle.api.internal.tasks.testing.junit.JUnitTestClassExecutor.execute(JUnitTestClassExecutor.java:58)
+	at org.gradle.api.internal.tasks.testing.junit.JUnitTestClassExecutor.execute(JUnitTestClassExecutor.java:40)
+	at org.gradle.api.internal.tasks.testing.junit.AbstractJUnitTestClassProcessor.processTestClass(AbstractJUnitTestClassProcessor.java:54)
+	at org.gradle.api.internal.tasks.testing.SuiteTestClassProcessor.processTestClass(SuiteTestClassProcessor.java:53)
+	at java.base@21.0.10/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103)
+	at java.base@21.0.10/java.lang.reflect.Method.invoke(Method.java:580)
+	at org.gradle.internal.dispatch.ReflectionDispatch.dispatch(ReflectionDispatch.java:36)
+	at org.gradle.internal.dispatch.ReflectionDispatch.dispatch(ReflectionDispatch.java:24)
+	at org.gradle.internal.dispatch.ContextClassLoaderDispatch.dispatch(ContextClassLoaderDispatch.java:33)
+	at org.gradle.internal.dispatch.ProxyDispatchAdapter$DispatchingInvocationHandler.invoke(ProxyDispatchAdapter.java:92)
+	at jdk.proxy1/jdk.proxy1.$Proxy4.processTestClass(Unknown Source)
+	at org.gradle.api.internal.tasks.testing.worker.TestWorker$2.run(TestWorker.java:183)
+	at org.gradle.api.internal.tasks.testing.worker.TestWorker.executeAndMaintainThreadName(TestWorker.java:132)
+	at org.gradle.api.internal.tasks.testing.worker.TestWorker.execute(TestWorker.java:103)
+	at org.gradle.api.internal.tasks.testing.worker.TestWorker.execute(TestWorker.java:63)
+	at org.gradle.process.internal.worker.child.ActionExecutionWorker.execute(ActionExecutionWorker.java:56)
+	at org.gradle.process.internal.worker.child.SystemApplicationClassLoaderWorker.call(SystemApplicationClassLoaderWorker.java:122)
+	at org.gradle.process.internal.worker.child.SystemApplicationClassLoaderWorker.call(SystemApplicationClassLoaderWorker.java:72)
+	at app//worker.org.gradle.process.internal.worker.GradleWorkerMain.run(GradleWorkerMain.java:69)
+	at app//worker.org.gradle.process.internal.worker.GradleWorkerMain.main(GradleWorkerMain.java:74)
+</failure>
+  </testcase>
+  <testcase name="uiAnnullingWithoutEnoughReservesIsRejectedAndChangesNothing[jvm]" classname="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" time="23.814"/>
+  <testcase name="uiLoginBlockedAdminSeesNoAccess[jvm]" classname="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" time="4.425"/>
+  <testcase name="uiLoginAdminEntersThePanel[jvm]" classname="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" time="5.862"/>
+  <testcase name="uiAdminPublishesAnExam[jvm]" classname="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" time="16.491"/>
+  <testcase name="uiLoginModeratorSeesOnlyForumModeration[jvm]" classname="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" time="4.781"/>
+  <testcase name="uiAdminCreditsAnOrderInReview[jvm]" classname="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" time="15.168"/>
+  <testcase name="uiAdminAnnulsAQuestionWithItsReason[jvm]" classname="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" time="20.476"/>
+  <testcase name="uiModeratorRejectsAPendingPost[jvm]" classname="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" time="8.355"/>
+  <testcase name="uiLoginWrongPasswordStaysOnLogin[jvm]" classname="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" time="4.144"/>
+  <testcase name="uiAdminImportsAPdfIntoAnExam[jvm]" classname="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" time="18.664"/>
+  <testcase name="uiAdminEditsAnExam[jvm]" classname="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" time="14.457"/>
+  <testcase name="uiAdminReadsTheAuditLog[jvm]" classname="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" time="9.09"/>
+  <testcase name="uiAdminChangesTheGradingRules[jvm]" classname="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" time="19.716"/>
+  <testcase name="uiAdminSetsAnExamPrice[jvm]" classname="com.oposicontrol.admin.app.e2e.ControlPanelUiE2ETest" time="16.724"/>
+  <system-out><![CDATA[UI E2E RUN ui-access
+UI E2E RUN ui-annul-rejected
+UI E2E RUN ui-login-blocked
+UI E2E RUN ui-login-admin
+UI E2E RUN ui-publish
+UI E2E RUN ui-login-moderator
+UI E2E RUN ui-orders
+UI E2E RUN ui-annul
+UI E2E RUN ui-moderator
+UI E2E RUN ui-login-wrong
+UI E2E RUN ui-import
+UI E2E RUN ui-edit-exam
+UI E2E RUN ui-audit
+UI E2E RUN ui-grading
+UI E2E RUN ui-price
+]]></system-out>
+  <system-err><![CDATA[SLF4J(W): No SLF4J providers were found.
+SLF4J(W): Defaulting to no-operation (NOP) logger implementation
+SLF4J(W): See https://www.slf4j.org/codes.html#noProviders for further details.
+]]></system-err>
+</testsuite>

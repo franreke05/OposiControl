@@ -1,0 +1,7 @@
+ok:   manifiesto (25 pendientes) y bloques VERIFY/ROLLBACK
+ok:   PostgreSQL 17.6
+ok:   bootstrap + 25 migraciones aplicadas en orden; VERIFY = 0
+ok:   assertions.sql (comportamiento + grants/RLS)
+ok:   rollback inverso == bootstrap; re-aplicacion == primera aplicacion (VERIFY = 0)
+db-pg17-gate OK
+gate rc=0

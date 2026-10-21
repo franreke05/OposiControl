@@ -7,7 +7,8 @@
 - **Petición del propietario (2026-10-21), hecha:** los recursos de las preguntas inmersivas muestran su formato y un botón «Abrir» (URL firmada del Storage propio, abierta fuera de la app) para comprobar qué archivo se subió (CP-E2E-09). PRODUCT_DECISION_PENDING: guardar el nombre original del archivo exige una columna nueva.
 - **Pagos de tienda de Bot, ronda 7 (`be9e0bd`): CERRADA.** N6-1 FIXED y N6-2 FIXED; un P3 nuevo (N7-1, la alerta de historial puede no dispararse si el guardado se rechaza de forma persistente) y 3 Info. Expediente: `docs/audit-v1/HANDOFF_BOT_store_payments_round7.md`.
 - Pruebas (2026-10-21): core:common 15/0, questions 85/0, imports 121/0, exams 335/0, exam-access 18/0, control-v1 37/0, data 299/0 y composeApp 171/0. `:backend:ktor:test` 2141/0 (sin cambios de backend desde esa pasada).
-- Pendiente para «preparado para integración»: integrar el panel con develop actual y repetir los E2E sobre ese candidato (condición 2 de abajo); GO del propietario para staging aislado; los RB P1 siguen abiertos (NO APTO PARA PRODUCCIÓN).
+- **Integración local (GO del propietario):** rama `integration/control-panel-on-develop` (merge `43d699a` sobre develop `8fecd02`, sin push). Pruebas en verde (ktor 2152/0, dbtest 304/0, gate PG17 OK y módulos del panel). E2E contra el Ktor integrado con el límite de mutaciones activo: datos 11/12 y UI 14/15. **INT-01:** conceder acceso falla porque develop no lleva el servidor V1 de Bot (migración `20261022100700_v1_admin_grant` + `rpc/admin_grant_exam_access`, que van juntos). Orden recomendado: primero la candidata de Bot y el panel encima.
+- Pendiente para «preparado para integración»: fusionar el panel sobre la candidata validada de Bot y repetir los E2E (condición 2 de abajo); GO del propietario para staging aislado; los RB P1 siguen abiertos (NO APTO PARA PRODUCCIÓN).
 
 ## Control panel E2E — 2026-10-20 (`develop` ae62375 + este ciclo, panel `c655116`)
 
