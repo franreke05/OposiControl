@@ -73,11 +73,12 @@ await scenario('PUBLIC_V1', async () => {
   const qs = await call(null, 'GET', `/v1/examenes/${EX.FUTURE}/preguntas`);
   check('PUBLIC_V1.future_exam_questions_not_served', qs.status !== 200 || !qs.text.includes('E2B enunciado'), `${qs.status} ${qs.text.includes('E2B enunciado') ? 'questions of a FUTURE exam served without auth' : ''}`, 'E2-P03');
   const draft = await call(null, 'GET', `/v1/examenes/${EX.DRAFT}/preguntas`);
-  check('PUBLIC_V1.draft_exam_questions_not_served', draft.status === 404, `${draft.status}`);
+  // EP-128 retired (CERT-EXAMS-2026-10-21 B-07): 410 for every exam, no content
+  check('PUBLIC_V1.draft_exam_questions_not_served', draft.status === 410, `${draft.status}`);
   const prem = await call(null, 'GET', `/v1/examenes/${EX.PREMIUM_OTHER}/preguntas`);
-  check('PUBLIC_V1.premium_exam_questions_forbidden', prem.status === 403 && !prem.text.includes('E2B enunciado'), `${prem.status}`);
+  check('PUBLIC_V1.premium_exam_questions_not_served', prem.status === 410 && !prem.text.includes('E2B enunciado'), `${prem.status}`);
   const free = await call(null, 'GET', `/v1/examenes/${EX.FREE_OTHER}/preguntas`);
-  check('PUBLIC_V1.free_questions_without_solution', free.status === 200 && !/opcionCorrecta|esCorrecta|razonamiento|solucion/i.test(free.text), `${free.status}`);
+  check('PUBLIC_V1.free_questions_route_retired', free.status === 410 && !free.text.includes('E2B enunciado'), `${free.status}`);
 });
 
 // ---------- RATE LIMIT on the Phase B read routes (E2-P02 verification; dedicated user E, fresh buckets of THIS Ktor) ----------

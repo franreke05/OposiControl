@@ -424,6 +424,12 @@ private val SUPABASE_DOMAIN_ERRORS = mapOf(
         HttpStatusCode.UnprocessableEntity,
         "La penalización racional y una fracción fija son excluyentes. Elige una de las dos.",
     ),
+    // 20261022103400 (propietario 2026-10-17): la penalización solo existe en exámenes OFICIALES. La levantan la RPC de reglas, el
+    // trigger de la tabla (un PATCH directo, p. ej. el respaldo DEBT-159) y nada más: el CHECK de la base es el último respaldo.
+    "GRADING_PENALTY_REQUIRES_OFFICIAL_EXAM" to DomainErrorDefinition(
+        HttpStatusCode.UnprocessableEntity,
+        "La penalización solo se aplica a exámenes oficiales. Marca el examen como oficial o deja la penalización desactivada. No se ha cambiado nada.",
+    ),
     "ORDER_DECISION_INVALID" to DomainErrorDefinition(HttpStatusCode.BadRequest, "La decisión sobre el pedido no es válida."),
     "ORDER_NOT_FOUND" to DomainErrorDefinition(HttpStatusCode.NotFound, "El pedido no existe."),
     "ORDER_NOT_IN_REVIEW" to DomainErrorDefinition(HttpStatusCode.Conflict, "El pedido ya no está en revisión. Recarga la lista."),

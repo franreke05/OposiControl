@@ -1166,6 +1166,27 @@ class AttemptRoutesTest {
         assertEquals("FIJA", fixed["tipo"]!!.jsonPrimitive.content)
     }
 
+    /**
+     * 20261022103400: la penalizacion se CONGELA por intento. Si el examen deja de ser oficial despues de empezar, el intento ya
+     * congelado la conserva (y su nota de la base); uno congelado sin ella nunca la gana. El resultado lee SOLO la fila del intento:
+     * no se consulta el estado vivo del examen (es_oficial / penalizacion_*) para decidir la regla.
+     */
+    @Test
+    fun theResultUsesOnlyThePenaltyFrozenInTheAttemptNeverTheLiveExam() = testApplication {
+        application { attemptModule() }
+        finishedFixture()
+        upstream.resultQuestions = "[]"
+        upstream.attemptRow = ruledAttemptRow("finalizado", "1.11", regla = "NO_PUNTUA", num = 0, den = 1).dropLast(1) + ""","penalizacion_racional":true,"penalizacion_descuento":0.67}"""
+        val frozenOn = obj(client.call(HttpMethod.Get, "$base/resultado").bodyAsText())["resumen"]!!.jsonObject
+        assertEquals("RACIONAL", frozenOn["penalizacion"]!!.jsonObject["tipo"]!!.jsonPrimitive.content, "frozen while official: kept")
+        assertEquals("1.11", frozenOn["nota"]!!.jsonPrimitive.content)
+        upstream.attemptRow = ruledAttemptRow("finalizado", "3.33", regla = "NO_PUNTUA", num = 0, den = 1).dropLast(1) + ""","penalizacion_racional":false,"penalizacion_descuento":null}"""
+        val frozenOff = obj(client.call(HttpMethod.Get, "$base/resultado").bodyAsText())["resumen"]!!.jsonObject
+        assertTrue(frozenOff["penalizacion"] == null, "frozen without penalty (non-official exam): none")
+        assertEquals("3.33", frozenOff["nota"]!!.jsonPrimitive.content)
+        assertTrue(upstream.urls.none { "es_oficial" in it || ("/rest/v1/examenes?" in it && "penalizacion" in it) }, "the live exam rule is never read: ${upstream.urls}")
+    }
+
     @Test
     fun theRationalPenaltyTwinMatchesTheDatabaseMatrixAndTheWorkedExamples() {
         // The SAME matrix and md5 as supabase/baseline/assertions.sql (private.official_nota_racional); weights per option count are the owner example (4 options: 3 wrong cancel 1 right).

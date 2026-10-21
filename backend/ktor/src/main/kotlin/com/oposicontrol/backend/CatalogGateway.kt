@@ -102,6 +102,8 @@ internal data class CatalogExamRow(
     @SerialName("penalizacion_num") val penalizacionNum: Int = 0,
     @SerialName("penalizacion_den") val penalizacionDen: Int = 1,
     @SerialName("penalizacion_racional") val penalizacionRacional: Boolean = false,
+    /** 20261022103400: la penalizacion solo existe en un examen OFICIAL (la base lo impone; la portada lo respeta igual). */
+    @SerialName("es_oficial") val esOficial: Boolean = false,
 )
 
 @Serializable
@@ -482,7 +484,7 @@ internal class CatalogGateway(
         /** Solo metadatos de examen. NUNCA preguntas, opciones ni soluciones (SEC-004). */
         internal const val EXAM_COLUMNS =
             "id,codigo_examen,titulo,descripcion,tipo_examen,tipo_acceso,especialidad_id,total_preguntas,duracion_minutos,anio," +
-                "portada_storage_path,publicado_en,demo_disponible,comprable_con_tickets,precio_tickets,dias_acceso_compra,penalizacion_num,penalizacion_den,penalizacion_racional,comunidades_autonomas(codigo)"
+                "portada_storage_path,publicado_en,demo_disponible,comprable_con_tickets,precio_tickets,dias_acceso_compra,penalizacion_num,penalizacion_den,penalizacion_racional,es_oficial,comunidades_autonomas(codigo)"
         internal const val LATEST_ATTEMPTS_FETCH_LIMIT = 500
 
         /** `supabase/migrations/20261008100300_slice2_my_exams_read_rpc.sql` (STABLE, EXECUTE solo `service_role`). */

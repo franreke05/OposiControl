@@ -502,7 +502,7 @@ await scenario('SCHEDULED', async () => {
   const SCHED = 'e0000000-0000-4000-8000-000000000009';
   const anon = async (p) => { const r = await fetch(KTOR + p); return { status: r.status, text: await r.text() }; };
   const [list, detail, questions] = await Promise.all([anon('/v1/examenes'), anon(`/v1/examenes/${SCHED}`), anon(`/v1/examenes/${SCHED}/preguntas`)]);
-  check('SCHEDULED.v1_public_routes_hide_it', list.status === 200 && !list.text.includes(SCHED) && detail.status === 404 && questions.status === 404,
+  check('SCHEDULED.v1_public_routes_hide_it', list.status === 200 && !list.text.includes(SCHED) && detail.status === 404 && questions.status === 410 /* EP-128 retired: CERT-EXAMS-2026-10-21 B-07 */,
     `list=${list.status}/${list.text.includes(SCHED)} detail=${detail.status} preguntas=${questions.status}`);
   const d202 = await call('A', 'GET', `/api/v1/app/examenes/${SCHED}`);
   check('SCHEDULED.d2_02_not_found', d202.status === 404, `${d202.status} ${d202.json?.code}`);

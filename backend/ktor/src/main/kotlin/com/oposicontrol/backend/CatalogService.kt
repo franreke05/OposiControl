@@ -526,7 +526,9 @@ internal class CatalogService(
 
     /** Precio en OT y dias de acceso, solo si el examen es de pago, comprable y la base tiene AMBOS valores; si no, `null` (nada se inventa). */
     private fun CatalogExamRow.penaltyRule(): Penalizacion? = when {
-        penalizacionRacional -> Penalizacion(tipo = "RACIONAL")
+        // Propietario 2026-10-17: un examen NO oficial nunca penaliza (CHECK + trigger de 20261022103400); nada se anuncia.
+        !esOficial -> null
+        penalizacionRacional ->Penalizacion(tipo = "RACIONAL")
         penalizacionNum > 0 -> Penalizacion(penalizacionNum, penalizacionDen.coerceAtLeast(1))
         else -> null
     }

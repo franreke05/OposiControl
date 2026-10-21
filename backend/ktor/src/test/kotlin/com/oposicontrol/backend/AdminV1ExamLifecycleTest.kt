@@ -482,6 +482,31 @@ class AdminV1ExamLifecycleTest {
         assertTrue(sent.any { it.startsWith("GET") && it.contains("comunidades_autonomas") && it.contains("activa=eq.true") }, "$sent")
     }
 
+    /**
+     * CERT-EXAMS-2026-10-21 B-03: crear un examen OFICIAL es UNA escritura (el INSERT). La penalizacion racional por defecto la pone
+     * la base en esa misma sentencia (trigger de 20261022103400); antes era un PATCH de mejor esfuerzo posterior cuyo fallo solo se
+     * registraba en el log y dejaba el examen oficial SIN penalizacion.
+     */
+    @Test
+    fun creatingAnOfficialExamIsOneInsertWithNoBestEffortPenaltyPatch() = testApplication {
+        val sent = CopyOnWriteArrayList<String>()
+        application {
+            examModule(record = { sent += "${it.method()} ${it.uri()}" }) { uri ->
+                if (uri.contains("comunidades_autonomas")) V1StubResponse(200, """[{"id":"$comunidadId"}]""")
+                else V1StubResponse(200, "[${examenRowJson().dropLast(1)},\"es_oficial\":true}]")
+            }
+        }
+
+        val response = client.post("/api/v1/admin/examenes") {
+            contentType(ContentType.Application.Json)
+            setBody(createBody("\"$comunidadId\"").replace("\"tipoAcceso\":\"gratuito\"", "\"tipoAcceso\":\"gratuito\",\"esOficial\":true"))
+        }
+
+        assertEquals(HttpStatusCode.Created, response.status, response.bodyAsText())
+        assertEquals(1, sent.count { it.startsWith("POST") && it.contains("/rest/v1/examenes") }, "un solo INSERT del examen: $sent")
+        assertTrue(sent.none { it.startsWith("PATCH") || it.contains("penalizacion_racional") }, "sin PATCH de mejor esfuerzo tras crear: $sent")
+    }
+
     @Test
     fun theCommunityCanBeReplacedButNeverCleared() = testApplication {
         val sent = CopyOnWriteArrayList<String>()

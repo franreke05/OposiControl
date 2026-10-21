@@ -1,6 +1,7 @@
 package com.oposicontrol.backend
 
 import io.ktor.client.request.get
+import io.ktor.client.request.header
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
@@ -32,165 +33,89 @@ import kotlin.test.assertIs
 import kotlin.test.assertTrue
 
 /**
- * EXAM-009: la frontera entre lo publicado y lo que aun es un borrador.
+ * CERT-EXAMS-2026-10-21 B-07: `GET /v1/examenes/{id}/preguntas` (EP-128) esta RETIRADA.
  *
- * `GET /v1/examenes/{id}/preguntas` es PUBLICA por diseno —la consume OposiBot
- * sin sesion— y debe seguir siendolo. Lo que estaba mal no era donde se
- * registra la ruta, sino que el gateway no aplicaba el mismo filtro de
- * publicacion que su funcion vecina. Estos casos fijan esa frontera desde
- * fuera, que es el unico sitio desde el que se puede comprobar.
+ * Era ANONIMA y servia los enunciados y opciones de cualquier rafaga gratuita publicada: sin el limite diario de preguntas
+ * (C-L1), sin la puerta de especialidad ni de capacidad del intento y con las preguntas de RESERVA que el intento oculta (C-O1).
+ * No tiene llamador vivo (ni OposiBot ni el panel). Ahora responde 410 ANTES de tocar upstream, igual para cualquier id (no
+ * confirma que un examen exista), con o sin sesion, y sigue contada como ruta legacy hasta tener telemetria a cero.
  */
 class SupabaseV1GatewayExamAccessTest {
 
     private val examenId = "11111111-1111-4111-8111-111111111111"
 
-    /**
-     * El caso del defecto. Un anonimo con el UUID de un examen rafaga gratuito
-     * **en borrador** recibia 200 con enunciados y opciones, mientras
-     * `GET /v1/examenes/{id}` devolvia 404 para ese mismo examen.
-     *
-     * Dos aserciones y las dos hacen falta:
-     *
-     * 1. **Comportamiento**: el resultado es `NotFound`, no `Forbidden`. Un 403
-     *    confirmaria a un anonimo que ese UUID nombra un examen real, que es
-     *    justo el hecho que un borrador no debe revelar.
-     * 2. **La query**, que es la garantia de verdad. Sin esta segunda asercion
-     *    el test pasaria por accidente si alguien filtrara en memoria, y filtrar
-     *    en memoria no es lo que se esta fijando: se fija que **el borrador no
-     *    sale de la base**.
-     */
-    @Test fun draftExamServesNoQuestionsToAnonymous() {
-        val uris = mutableListOf<String>()
-        val gateway = gatewayWith(record = { uris += it.uri().toString() }) { uri ->
-            when {
-                // El doble solo entrega el borrador si la query NO filtra
-                // publicacion: asi el test falla si el filtro desaparece.
-                uri.contains("/rest/v1/examenes") && !uri.contains("publicado_en=not.is.null") ->
-                    V1StubResponse(200, "[${examenRow(publicadoEn = null)}]")
-                uri.contains("/rest/v1/examenes") -> V1StubResponse(200, "[]")
-                else -> V1StubResponse(200, "[]")
+    private fun io.ktor.server.application.Application.v1Module(uris: MutableList<String>) {
+        install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; explicitNulls = false }) }
+        install(StatusPages) {
+            exception<BackendDomainException> { call, cause ->
+                call.respond(cause.status, ErrorDto(error = cause.errorCode.lowercase(), message = cause.message))
+            }
+            exception<IllegalArgumentException> { call, cause ->
+                call.respond(HttpStatusCode.BadRequest, ErrorDto(error = "bad_request", message = cause.message ?: ""))
             }
         }
-
-        val result = gateway.getPreguntasExamenRafaga(examenId)
-
-        assertEquals(V1PreguntasExamenResult.NotFound, result)
-        assertTrue(
-            uris.first().contains("publicado_en=not.is.null"),
-            "la consulta del examen debe descartar borradores en la base, no en memoria: ${uris.first()}",
-        )
-        assertEquals(1, uris.size, "un borrador no debe provocar ni una peticion mas de contenido")
-    }
-
-    /**
-     * E2-P03: un examen PROGRAMADO (`publicado_en` futuro) no sale por las rutas publicas /v1 antes de su hora. El doble
-     * solo lo entrega si la query no filtra `publicado_en=lte.<ahora>`: lista, detalle y preguntas filtran en la base.
-     */
-    @Test fun scheduledExamIsNotServedBeforeItsPublicationTime() {
-        val uris = mutableListOf<String>()
-        val gateway = gatewayWith(record = { uris += java.net.URLDecoder.decode(it.uri().toString(), Charsets.UTF_8) }) { uri ->
-            when {
-                uri.contains("/rest/v1/examenes") && !uri.contains("publicado_en=lte.") ->
-                    V1StubResponse(200, "[${examenRow(publicadoEn = "\"2999-01-01T00:00:00Z\"")}]")
-                else -> V1StubResponse(200, "[]")
-            }
+        // El doble serviria un examen rafaga gratuito PUBLICADO con preguntas y opciones si alguien volviera a leerlas.
+        routing {
+            v1Routes(
+                gatewayWith(record = { uris += it.uri().toString() }) { uri ->
+                    when {
+                        uri.contains("/rest/v1/examenes") -> V1StubResponse(200, "[${examenRow(publicadoEn = "\"2026-01-01T00:00:00Z\"")}]")
+                        uri.contains("/rest/v1/preguntas_examen") -> V1StubResponse(200, """[{"pregunta_id":"p1","posicion":1,"es_reserva":true}]""")
+                        uri.contains("/rest/v1/preguntas") -> V1StubResponse(200, """[{"id":"p1","titulo":"E2B enunciado","tipo_pregunta":"rafaga","activa":true}]""")
+                        uri.contains("/rest/v1/opciones_pregunta") -> V1StubResponse(200, """[{"id":"o1","pregunta_id":"p1","letra":"A","texto_opcion":"Opcion"}]""")
+                        else -> V1StubResponse(200, "[]")
+                    }
+                },
+            )
         }
-
-        assertTrue(gateway.listExamenes(V1ExamenesFilter()).isEmpty())
-        assertEquals(null, gateway.getExamen(examenId))
-        assertEquals(V1PreguntasExamenResult.NotFound, gateway.getPreguntasExamenRafaga(examenId))
-        assertEquals(3, uris.size)
-        uris.forEach { assertTrue(Regex("publicado_en=not\\.is\\.null&publicado_en=lte\\.\\d{4}-").containsMatchIn(it), it) }
     }
 
-    /**
-     * No-regresion. Sin este caso, "devolver NotFound siempre" pasaria el test
-     * principal y el endpoint quedaria roto para su uso legitimo.
-     */
-    @Test fun publishedFreeBurstExamStillServesQuestions() {
-        val gateway = gatewayWith { uri ->
-            when {
-                uri.contains("/rest/v1/examenes") ->
-                    V1StubResponse(200, "[${examenRow(publicadoEn = "\"2026-01-01T00:00:00Z\"")}]")
-                uri.contains("/rest/v1/preguntas_examen") -> V1StubResponse(
-                    200,
-                    """[{"examen_id":"$examenId","pregunta_id":"P1","posicion":1}]""",
-                )
-                uri.contains("/rest/v1/preguntas?") -> V1StubResponse(
-                    200,
-                    """[{"id":"P1","codigo_pregunta":"P-1","titulo":"¿Cuál?","tipo_pregunta":"rafaga","activa":true}]""",
-                )
-                uri.contains("/rest/v1/opciones_pregunta") -> V1StubResponse(
-                    200,
-                    """[{"id":"O1","pregunta_id":"P1","letra":"A","texto_opcion":"Primera","posicion":1,"es_correcta":true},""" +
-                        """{"id":"O2","pregunta_id":"P1","letra":"B","texto_opcion":"Segunda","posicion":2,"es_correcta":false}]""",
-                )
-                else -> V1StubResponse(200, "[]")
-            }
-        }
+    @Test fun thePublicQuestionsRouteIsGoneForAPublishedFreeBurstExamAndReadsNothing() = testApplication {
+        val uris = java.util.concurrent.CopyOnWriteArrayList<String>()
+        application { v1Module(uris) }
 
-        val result = assertIs<V1PreguntasExamenResult.Success>(gateway.getPreguntasExamenRafaga(examenId))
+        val response = client.get("/v1/examenes/$examenId/preguntas")
+        val body = response.bodyAsText()
 
-        assertEquals(1, result.data.preguntas.size)
-        assertEquals("P1", result.data.preguntas.single().id)
-        assertEquals(listOf("A", "B"), result.data.preguntas.single().opciones.map { it.letra })
+        assertEquals(HttpStatusCode.Gone, response.status, body)
+        assertTrue(body.contains("public_exam_questions_retired"), body)
+        assertTrue(!body.contains("E2B enunciado") && !body.contains("Opcion"), "no content travels: $body")
+        assertTrue(uris.isEmpty(), "a retired route reads nothing upstream: $uris")
+        assertTrue(response.headers["Deprecation"] != null, "still marked and counted as a legacy route (EP-128)")
     }
 
-    /**
-     * Una pregunta anulada en ESTE examen ya no se sirve como si fuera normal: el DTO expone
-     * `anulada` y `motivoAnulacion` (aditivo; sin puntuación aquí).
-     */
-    @Test fun annulledQuestionsAreExposedAsAnnulledWithTheirReason() {
-        val gateway = gatewayWith { uri ->
-            when {
-                uri.contains("/rest/v1/examenes") ->
-                    V1StubResponse(200, "[${examenRow(publicadoEn = "\"2026-01-01T00:00:00Z\"")}]")
-                uri.contains("/rest/v1/preguntas_examen") -> V1StubResponse(
-                    200,
-                    """[{"examen_id":"$examenId","pregunta_id":"P1","posicion":1,"anulada":true,"motivo_anulacion":"Error del tribunal"},""" +
-                        """{"examen_id":"$examenId","pregunta_id":"P2","posicion":2,"anulada":false,"motivo_anulacion":null},""" +
-                        """{"examen_id":"$examenId","pregunta_id":"P3","posicion":3}]""",
-                )
-                uri.contains("/rest/v1/preguntas?") -> V1StubResponse(
-                    200,
-                    """[{"id":"P1","titulo":"Uno","tipo_pregunta":"rafaga","activa":true},""" +
-                        """{"id":"P2","titulo":"Dos","tipo_pregunta":"rafaga","activa":true},""" +
-                        """{"id":"P3","titulo":"Tres","tipo_pregunta":"rafaga","activa":true}]""",
-                )
-                else -> V1StubResponse(200, "[]")
-            }
-        }
+    @Test fun theSameGoneAnswerForAnyIdWithOrWithoutASessionSoNoExistenceOracle() = testApplication {
+        val uris = java.util.concurrent.CopyOnWriteArrayList<String>()
+        application { v1Module(uris) }
 
-        val result = assertIs<V1PreguntasExamenResult.Success>(gateway.getPreguntasExamenRafaga(examenId))
+        val known = client.get("/v1/examenes/$examenId/preguntas")
+        val unknown = client.get("/v1/examenes/22222222-2222-4222-8222-222222222222/preguntas")
+        val notUuid = client.get("/v1/examenes/not-a-uuid/preguntas")
+        val withSession = client.get("/v1/examenes/$examenId/preguntas") { header(io.ktor.http.HttpHeaders.Authorization, "Bearer some.jwt.token") }
 
-        val (p1, p2, p3) = result.data.preguntas
-        assertTrue(p1.anulada)
-        assertEquals("Error del tribunal", p1.motivoAnulacion)
-        assertEquals(false, p2.anulada)
-        assertEquals(null, p2.motivoAnulacion)
-        assertEquals(false, p3.anulada, "sin columna, default false")
+        listOf(known, unknown, notUuid, withSession).forEach { assertEquals(HttpStatusCode.Gone, it.status) }
+        assertEquals(known.bodyAsText(), unknown.bodyAsText(), "the body never depends on the exam")
+        assertEquals(known.bodyAsText(), notUuid.bodyAsText())
+        assertEquals(known.bodyAsText(), withSession.bodyAsText(), "a session does not reopen the route")
+        assertTrue(uris.isEmpty(), "$uris")
     }
 
-    /**
-     * No-regresion sobre la otra mitad: el arreglo no puede colapsar las dos
-     * respuestas en una. Un examen **publicado** que no es gratuito sigue siendo
-     * `Forbidden`, porque ahi su existencia ya es publica por
-     * `GET /v1/examenes/{id}` y no se revela nada nuevo.
-     */
-    @Test fun publishedPremiumExamStaysForbidden() {
-        val gateway = gatewayWith { uri ->
-            if (uri.contains("/rest/v1/examenes")) {
-                V1StubResponse(
-                    200,
-                    "[${examenRow(publicadoEn = "\"2026-01-01T00:00:00Z\"", tipoAcceso = "premium")}]",
-                )
-            } else {
-                V1StubResponse(200, "[]")
-            }
-        }
+    @Test fun theNeighbourPublicReadsStillWork() = testApplication {
+        val uris = java.util.concurrent.CopyOnWriteArrayList<String>()
+        application { v1Module(uris) }
 
-        assertEquals(V1PreguntasExamenResult.Forbidden, gateway.getPreguntasExamenRafaga(examenId))
+        assertEquals(HttpStatusCode.OK, client.get("/v1/examenes/$examenId").status)
+        assertEquals(HttpStatusCode.OK, client.get("/v1/examenes").status)
+        assertTrue(uris.none { it.contains("preguntas") }, "the exam reads never touch questions: $uris")
     }
+
+    @Test fun theRetiredRouteIsRegisteredAsLegacyWithoutASuccessorLink() {
+        val ep = LegacyEndpoints.EP_128
+        assertEquals("GET /v1/examenes/{examenId}/preguntas", "${ep.method} ${ep.legacyPath}")
+        assertEquals(null, ep.successorPath, "D2-08 needs an attempt id the legacy URL does not carry")
+        assertTrue(ep in LegacyEndpoints.RETIRED_PUBLIC_READS)
+    }
+
 
     /**
      * El gateway esta migrado a [SupabaseRequestTransport], asi que hereda la

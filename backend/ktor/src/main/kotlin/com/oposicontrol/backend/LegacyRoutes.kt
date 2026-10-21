@@ -179,6 +179,19 @@ object LegacyEndpoints {
     fun retiredWriter(method: String, path: String): LegacyEndpoint =
         RETIRED_LEGACY_WRITERS.single { it.method == method && it.legacyPath == path }
 
+    /**
+     * CERT-EXAMS-2026-10-21 B-07: `GET /v1/examenes/{examenId}/preguntas` (EP-128, ANONIMA) servia enunciados y opciones de
+     * cualquier rafaga gratuita publicada SIN sesion: sin limite diario de preguntas (C-L1), sin la puerta de especialidad ni de
+     * capacidad (`private.exam_gate`) y con las preguntas de RESERVA que el intento oculta mientras esta abierto (C-O1). Sin
+     * llamador vivo: ni OposiBot (ninguna rama ni su historial la nombran) ni el panel de Control (solo una constante muerta,
+     * `BackendRoutes.v1ExamenPreguntas`). Responde 410 ANTES de tocar upstream y sigue montada y contada: el registro dice
+     * "retirar solo con telemetria a cero" y borrar la ruta exige tocar `ops/inventory` (propiedad de Control). Su sucesora
+     * canonica es D2-08 (`/api/v1/app/intentos/{attemptId}/preguntas`), que no se puede derivar del id de examen: sin `Link`.
+     */
+    val EP_128 = LegacyEndpoint("EP-128", "GET", "/v1/examenes/{examenId}/preguntas", null, Instant.parse("2026-10-21T00:00:00Z"))
+
+    val RETIRED_PUBLIC_READS: List<LegacyEndpoint> = listOf(EP_128)
+
     val SLICE_1_APP: List<LegacyEndpoint> = listOf(
         APP_HOME, APP_ESTADISTICAS, APP_COMMERCIAL_CATALOG, APP_COMMERCIAL_PURCHASES, APP_COMMERCIAL_SUBSCRIPTIONS,
         APP_EVENTOS, APP_INICIAR, APP_RESPONDER,
