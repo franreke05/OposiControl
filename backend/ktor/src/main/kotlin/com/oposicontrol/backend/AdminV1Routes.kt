@@ -4116,15 +4116,6 @@ private data class ContenidoDesbloqueadoCierre(@SerialName("valido_hasta") val v
 private const val PURCHASE_UNLOCK_REASON = "compra"
 
 @Serializable
-private data class ContenidoDesbloqueadoInsertRow(
-    val id: String,
-    @SerialName("usuario_id") val usuarioId: String,
-    @SerialName("examen_id") val examenId: String,
-    val motivo: String,
-    @SerialName("valido_hasta") val validoHasta: String? = null,
-)
-
-@Serializable
 private data class AccionModeracionRow(
     val id: String,
     @SerialName("reporte_id") val reporteId: String,

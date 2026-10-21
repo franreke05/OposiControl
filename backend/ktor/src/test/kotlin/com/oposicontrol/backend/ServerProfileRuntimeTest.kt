@@ -27,6 +27,18 @@ import kotlin.test.assertTrue
  */
 class ServerProfileRuntimeTest {
 
+    // ------------------------------------------------------------------ CAND-03: trabajos periodicos del Bot por perfil
+
+    @Test
+    fun botJobsRunOnlyWhereTheBotRoutesAreMounted() {
+        assertEquals(
+            setOf(ServerProfile.BOT, ServerProfile.COMBINED),
+            ServerProfile.entries.filter { it.runsBotJobs }.toSet(),
+            "the daily challenge job must not start in consumer or control",
+        )
+        for (profile in ServerProfile.entries) assertEquals(profile.mountsBot, profile.runsBotJobs, "$profile")
+    }
+
     // ------------------------------------------------------------------ /health/live y /health/ready por perfil
 
     @Test

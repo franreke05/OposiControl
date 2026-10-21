@@ -535,7 +535,8 @@ fun Application.module() {
         null
     }
     // V1 wave 2: generacion diaria del reto + reintento de OT diferidos (ambos idempotentes y bajo cerrojo consultivo en la base; apagado con CHALLENGE_JOB_SECONDS=0).
-    if (serverProfile != ServerProfile.CONTROL) {
+    // CAND-03: solo donde se montan las rutas del Bot (bot, combined); nunca en consumer ni control.
+    if (serverProfile.runsBotJobs) {
         TransportEconomyUpstream.fromEnvironment()?.let { upstream ->
             val images = ForoImageService.fromEnvironment()
             val job = DailyChallengeJob.start(this, upstream, DailyChallengeJob.intervalFrom(), { message -> log.warn(message) }) { var rounds = 0; do { val purged = images?.sweep(50) ?: 0; rounds++ } while (purged >= 50 && rounds < 4) }
