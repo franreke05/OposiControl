@@ -121,7 +121,13 @@ services:
       # del contenedor (mem_limit): el 40 % restante cubre metaspace, pilas de hilos, buffers Netty y TLS. Sin ffmpeg en la
       # ruta bot (no recibe multipart). ExitOnOutOfMemoryError: un OOM reinicia el contenedor limpio en vez de dejar una
       # JVM zombi (el Dockerfile lo difirio a proposito; aqui `restart: unless-stopped` lo hace seguro).
-      JAVA_TOOL_OPTIONS: ${BOT_JAVA_TOOL_OPTIONS:--Djava.awt.headless=true -XX:MaxRAMPercentage=60 -XX:InitialRAMPercentage=30 -XX:+ExitOnOutOfMemoryError}
+      # GC EXPLICITO (CERT-LOAD-1000 2026-10-21): con 1 cpu la ergonomia de la JVM elige SerialGC (medido: "Using Serial"), que
+      # recoge la generacion vieja entera de una vez en el unico hilo, el mismo que CFS estrangula (nr_throttled alto en la
+      # prueba). G1 recoge por regiones con objetivo de pausa (MaxGCPauseMillis=200) y marca la vieja de forma concurrente;
+      # cuesta unos MB de estructuras sobre un heap de ~450 MB (hay margen: pico medido 213 MB). Parallel con 1 cpu es Serial.
+      # -Xlog:gc,gc+cpu a stdout (Docker lo rota: x-logging 5 x 20 MB): una linea por recoleccion con pausa y
+      # user/sys/real; real >> user+sys delata estrangulamiento de CPU y no del GC. Mismas opciones en control.
+      JAVA_TOOL_OPTIONS: ${BOT_JAVA_TOOL_OPTIONS:--Djava.awt.headless=true -XX:MaxRAMPercentage=60 -XX:InitialRAMPercentage=30 -XX:+ExitOnOutOfMemoryError -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -Xlog:gc,gc+cpu:stdout:time,uptime,level,tags}
     cpus: ${BOT_CPUS:-1.0}
     mem_limit: ${BOT_MEM_LIMIT:-768m}
 
@@ -131,7 +137,7 @@ services:
     env_file: *env-bot
     environment:
       SERVER_PROFILE: bot
-      JAVA_TOOL_OPTIONS: ${BOT_JAVA_TOOL_OPTIONS:--Djava.awt.headless=true -XX:MaxRAMPercentage=60 -XX:InitialRAMPercentage=30 -XX:+ExitOnOutOfMemoryError}
+      JAVA_TOOL_OPTIONS: ${BOT_JAVA_TOOL_OPTIONS:--Djava.awt.headless=true -XX:MaxRAMPercentage=60 -XX:InitialRAMPercentage=30 -XX:+ExitOnOutOfMemoryError -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -Xlog:gc,gc+cpu:stdout:time,uptime,level,tags}
     cpus: ${BOT_CPUS:-1.0}
     mem_limit: ${BOT_MEM_LIMIT:-768m}
 
@@ -144,7 +150,7 @@ services:
       # ffmpeg es un SUBPROCESO de este contenedor (compresion de video/audio de recursos de pregunta, hasta 120 s) y su
       # memoria vive FUERA del heap; una imagen de 50 MP se decodifica en heap (~200 MB). Por eso el heap es solo el 45 %
       # del limite: 0.45 * 2g = ~920 MB de heap y ~1.1 GB para ffmpeg, metaspace e hilos.
-      JAVA_TOOL_OPTIONS: ${CONTROL_JAVA_TOOL_OPTIONS:--Djava.awt.headless=true -XX:MaxRAMPercentage=45 -XX:InitialRAMPercentage=25 -XX:+ExitOnOutOfMemoryError}
+      JAVA_TOOL_OPTIONS: ${CONTROL_JAVA_TOOL_OPTIONS:--Djava.awt.headless=true -XX:MaxRAMPercentage=45 -XX:InitialRAMPercentage=25 -XX:+ExitOnOutOfMemoryError -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -Xlog:gc,gc+cpu:stdout:time,uptime,level,tags}
       # El estado del sistema (estado-sistema) consulta Prometheus; el defecto del codigo es otro nombre de contenedor.
       PROMETHEUS_URL: http://prometheus:9090
     cpus: ${CONTROL_CPUS:-1.5}

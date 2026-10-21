@@ -171,6 +171,7 @@ internal class SupabaseCanonicalProfileService(
             args,
             documentNotActiveAs = CanonicalErrorCode.LEGAL_VERSION_NOT_ACTIVE,
         )
+        CanonicalProfileCacheInvalidation.invalidate(identity.userId) // CERT-LOAD-1000: escritura de perfil
         return buildMe(snapshot, userOrNull(accessToken, context))
     }
 
@@ -211,6 +212,7 @@ internal class SupabaseCanonicalProfileService(
             put("p_if_match", ifMatch)
         }
         val snapshot = callProfileRpc("app_actualizar_perfil", args)
+        CanonicalProfileCacheInvalidation.invalidate(identity.userId) // CERT-LOAD-1000: escritura de perfil
         return buildMe(snapshot, userOrNull(accessToken, context))
     }
 

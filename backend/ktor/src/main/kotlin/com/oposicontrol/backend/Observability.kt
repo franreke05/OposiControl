@@ -559,6 +559,12 @@ class UpstreamIoScope internal constructor(
     /** Lanza [block] en el pool IO. Mismas reglas que [withUpstreamIo]: bloque NO suspendido. */
     fun <T> asyncUpstreamIo(block: () -> T): Deferred<T> =
         scope.async(Dispatchers.IO) { runWithMdcContext(correlation, block) }
+
+    /**
+     * Combina resultados de otras ramas SIN bloquear ningun hilo (solo `await` + calculo puro): corre en el dispatcher de
+     * quien llamo, no en el pool IO. Para trabajo bloqueante, [asyncUpstreamIo].
+     */
+    fun <T> combine(block: suspend () -> T): Deferred<T> = scope.async { block() }
 }
 
 // ---------------------------------------------------------------------

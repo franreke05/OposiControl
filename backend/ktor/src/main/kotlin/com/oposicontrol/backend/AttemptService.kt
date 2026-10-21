@@ -366,12 +366,23 @@ internal class AttemptService(
     private val metrics: io.micrometer.core.instrument.MeterRegistry = BackendPrometheusMetrics.registry,
 ) {
     // ----- D2-03 -----
-    suspend fun start(userId: CanonicalUserId, examId: String, request: AttemptStartRequest): StartedAttempt = withUpstreamIo {
+    suspend fun start(userId: CanonicalUserId, examId: String, request: AttemptStartRequest): StartedAttempt {
         if (request.modo != null && request.modo !in START_MODES) throw validationError(ErrorIssue("modo", CanonicalIssue.INVALID_FORMAT))
-        val now = clock()
+        val now = withUpstreamIo { clock() }
         val uid = userId.value
         // D7-25: la UNICA politica de acceso. Borrador, archivado e inexistente son el mismo 404.
+        // CERT-LOAD-1000 P1: los hechos de acceso del usuario se leen en paralelo (startAccess); la escritura va despues, igual.
         val access = catalog.startAccess(uid, examId, now) ?: throw CanonicalErrorCode.EXAM_NOT_FOUND.exception()
+        return startAllowed(uid, examId, request, access, now)
+    }
+
+    private suspend fun startAllowed(
+        uid: String,
+        examId: String,
+        request: AttemptStartRequest,
+        access: ExamStartAccess,
+        now: Instant,
+    ): StartedAttempt = withUpstreamIo {
         val wantsDemo = request.modo == "DEMO" && access.verdict.state == AccessState.DEMO
         if (!access.verdict.allowed && !wantsDemo) {
             throw when (access.verdict.denyReason) {

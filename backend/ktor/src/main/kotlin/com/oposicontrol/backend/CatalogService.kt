@@ -295,15 +295,44 @@ internal class CatalogService(
     }
 
     // ----- D2-01 -----
-    suspend fun listExams(userId: CanonicalUserId, query: ExamListQuery): AppExamPage = withUpstreamIo {
-        val now = clock()
-        val after = KeysetPosition.fromCursorKeys(query.page.after)
-        val filter = specialtyScoped(userId.value, query.filter) ?: return@withUpstreamIo AppExamPage(items = emptyList(), nextCursor = null, facets = null)
-        val rows = gateway.listPublished(filter, after, query.page.fetchLimit, now)
-        val page = query.page.page(rows) { KeysetPosition(it.publicadoEnOrFail(), it.id).toKeys() }
-        val verdicts = accessFor(userId.value, page.items, now)
-        val covers = signedCovers(page.items)
-        val names = communityNames()
+    suspend fun listExams(userId: CanonicalUserId, query: ExamListQuery): AppExamPage {
+        // CERT-LOAD-1000 P1: mismas lecturas y mismo orden de decision; las independientes (hechos del usuario, portadas,
+        // nombres, facetas) van en paralelo y la especialidad del usuario se lee UNA vez (antes dos).
+        val listed = withUpstreamIo {
+            val now = clock()
+            val after = KeysetPosition.fromCursorKeys(query.page.after)
+            val own = gateway.userSpecialty(userId.value)
+            val filter = specialtyScoped(own, query.filter) ?: return@withUpstreamIo null
+            val rows = gateway.listPublished(filter, after, query.page.fetchLimit, now)
+            ListedPage(now, own, filter, query.page.page(rows) { KeysetPosition(it.publicadoEnOrFail(), it.id).toKeys() })
+        } ?: return AppExamPage(items = emptyList(), nextCursor = null, facets = null)
+        val page = listed.page
+        val now = listed.now
+        return withUpstreamIoParallel {
+            val verdictsAsync = accessInfoAsync(userId.value, page.items, now, KnownSpecialty(listed.ownSpecialty))
+            val coversAsync = asyncUpstreamIo { signedCovers(page.items) }
+            val namesAsync = asyncUpstreamIo { communityNames() }
+            val facetsAsync = if (query.includeFacets) asyncUpstreamIo { facets(listed.filter, now) } else null
+            val verdicts = verdictsAsync.await().mapValues { it.value.verdict }
+            val covers = coversAsync.await()
+            val names = namesAsync.await()
+            val facets = facetsAsync?.await()
+            listPage(page, verdicts, covers, names, facets)
+        }
+    }
+
+    private class ListedPage(val now: Instant, val ownSpecialty: String?, val filter: CatalogFilter, val page: CursorPage<CatalogExamRow>)
+
+    /** El hecho "especialidad del usuario" ya leido en esta peticion (null = no tiene). */
+    internal class KnownSpecialty(val value: String?)
+
+    private fun listPage(
+        page: CursorPage<CatalogExamRow>,
+        verdicts: Map<String, AccessVerdict>,
+        covers: Map<String, String?>,
+        names: Map<String, String>,
+        facets: AppExamFacets?,
+    ): AppExamPage {
         val items = page.items.map { row ->
             AppExamSummary(
                 id = row.id,
@@ -320,7 +349,7 @@ internal class CatalogService(
                 accessState = verdicts.getValue(row.id).state,
             )
         }
-        AppExamPage(items = items, nextCursor = page.nextCursor, facets = if (query.includeFacets) facets(filter, now) else null)
+        return AppExamPage(items = items, nextCursor = page.nextCursor, facets = facets)
     }
 
     /** Facetas sobre el catalogo publicado (acotadas por `especialidadId` si viene). Desbordadas = `null` (nunca truncadas en silencio). */
@@ -341,24 +370,31 @@ internal class CatalogService(
      * V1 (owner 2026-10-16): la especialidad es una PUERTA. Con especialidad elegida, las listas se acotan a ella (aunque el cliente pida otra o ninguna);
      * pedir OTRA especialidad devuelve `null` = lista vacia. Sin especialidad elegida: lista vacia. Un derecho comprado de otra especialidad sigue guardado, pero no sale.
      */
-    private fun specialtyScoped(userId: String, filter: CatalogFilter): CatalogFilter? {
-        val own = gateway.userSpecialty(userId) ?: return null // sin especialidad: lista vacia (E2-V1-E06)
+    private fun specialtyScoped(own: String?, filter: CatalogFilter): CatalogFilter? {
+        own ?: return null // sin especialidad: lista vacia (E2-V1-E06)
         if (filter.specialtyId != null && filter.specialtyId != own) return null
         return filter.copy(specialtyId = own)
     }
 
     // ----- D2-02 -----
-    suspend fun getExam(userId: CanonicalUserId, examId: String): AppExamResponse = withUpstreamIo {
-        val now = clock()
-        // Borrador, archivado e inexistente son indistinguibles: 404 sin filtrar la existencia.
-        val row = gateway.getPublished(examId, now) ?: throw CanonicalErrorCode.EXAM_NOT_FOUND.exception()
-        val info = accessInfoFor(userId.value, listOf(row), now).getValue(row.id)
+    suspend fun getExam(userId: CanonicalUserId, examId: String): AppExamResponse {
+        val (now, row) = withUpstreamIo {
+            val now = clock()
+            // Borrador, archivado e inexistente son indistinguibles: 404 sin filtrar la existencia.
+            now to (gateway.getPublished(examId, now) ?: throw CanonicalErrorCode.EXAM_NOT_FOUND.exception())
+        }
+        // CERT-LOAD-1000 P1: el veredicto va primero (una especialidad ajena es 404 SIN leer nada mas, como antes); sus
+        // cuatro lecturas van en paralelo, y despues portadas, nombres e intentos, tambien en paralelo.
+        val info = withUpstreamIoParallel { accessInfoAsync(userId.value, listOf(row), now).await() }.getValue(row.id)
         val verdict = info.verdict
         if (verdict.denyReason == AccessDenyReason.SPECIALTY_MISMATCH) throw CanonicalErrorCode.EXAM_NOT_FOUND.exception()
-        val covers = signedCovers(listOf(row))
-        val names = communityNames()
-        val attempts = gateway.attemptRefs(userId.value, row.id)
-        AppExamResponse(
+        val (covers, names, attempts) = withUpstreamIoParallel {
+            val covers = asyncUpstreamIo { signedCovers(listOf(row)) }
+            val names = asyncUpstreamIo { communityNames() }
+            val attempts = asyncUpstreamIo { gateway.attemptRefs(userId.value, row.id) }
+            Triple(covers.await(), names.await(), attempts.await())
+        }
+        return AppExamResponse(
             AppExamDetail(
                 id = row.id,
                 codigoExamen = row.codigoExamen.orEmpty(),
@@ -388,7 +424,7 @@ internal class CatalogService(
         val now = clock()
         val after = KeysetPosition.fromCursorKeys(query.page.after)
         val uid = userId.value
-        val filter = specialtyScoped(uid, query.filter) ?: return@withUpstreamIo MyExamsPage(items = emptyList())
+        val filter = specialtyScoped(gateway.userSpecialty(uid), query.filter) ?: return@withUpstreamIo MyExamsPage(items = emptyList())
         when (query.view) {
             MyExamsView.EN_CURSO -> {
                 val rows = gateway.myOpenAttempts(uid, filter, after, query.page.fetchLimit, now)
@@ -469,40 +505,78 @@ internal class CatalogService(
     /**
      * El examen PUBLICADO y el veredicto de [EntitlementPolicy] para ese usuario, o `null` si el examen no existe, es un
      * borrador o esta archivado (indistinguibles). Es la MISMA politica y los mismos hechos que D2-01/D2-02: el arranque
-     * de intento no tiene reglas de acceso propias. Bloqueante: el llamante ya esta en el pool de IO.
+     * de intento no tiene reglas de acceso propias. CERT-LOAD-1000 P1: los hechos del usuario se leen en paralelo.
      */
-    internal fun startAccess(userId: String, examId: String, now: Instant): ExamStartAccess? {
-        val row = gateway.getPublished(examId, now) ?: return null
-        return ExamStartAccess(row.id, row.kind(), accessFor(userId, listOf(row), now).getValue(row.id))
+    internal suspend fun startAccess(userId: String, examId: String, now: Instant): ExamStartAccess? {
+        val row = withUpstreamIo { gateway.getPublished(examId, now) } ?: return null
+        val verdict = withUpstreamIoParallel { accessInfoAsync(userId, listOf(row), now).await() }.getValue(row.id).verdict
+        return ExamStartAccess(row.id, row.kind(), verdict)
     }
 
     // ----- D7-25 por lotes: los hechos del usuario se leen UNA vez por peticion -----
-    private fun accessFor(userId: String, exams: List<CatalogExamRow>, now: Instant): Map<String, AccessVerdict> =
-        accessInfoFor(userId, exams, now).mapValues { it.value.verdict }
 
-    /** El veredicto de [EntitlementPolicy] y, si es GRANTED con caducidad, el fin del derecho (el servidor decide cuando acaba). */
+    /** Los hechos del usuario que necesita [EntitlementPolicy] para un lote de examenes. */
+    private class UserAccessInputs(
+        val premium: PremiumFact?,
+        val grants: Map<String, List<ExamGrantFact>>,
+        val capabilities: Map<String, SpecialtyAccessCapabilities>,
+        val userSpecialty: String?,
+    )
+
+    /** Access v2: el nivel del plan solo se lee cuando la suscripcion da acceso ahora (una peticion mas, no por examen). */
+    private fun premiumFact(userId: String, now: Instant): PremiumFact? {
+        val premiumRow = gateway.premiumRow(userId)
+        return premiumRow?.toFact()?.let { fact ->
+            if (fact.activeAt(now)) fact.copy(planLevel = premiumRow.productoCodigo?.takeIf(String::isNotBlank)?.let { gateway.planOf(it)?.nivel }) else fact
+        }
+    }
+
+    /** Lectura SECUENCIAL de los hechos (D2-13, dentro de un bloque bloqueante). Mismas lecturas que [accessInfoAsync]. */
     private fun accessInfoFor(userId: String, exams: List<CatalogExamRow>, now: Instant): Map<String, AccessInfo> {
         if (exams.isEmpty()) return emptyMap()
         val examIds = exams.map { it.id }.distinct()
-        val premiumRow = gateway.premiumRow(userId)
-        val premium = premiumRow?.toFact()?.let { fact ->
-            // Access v2: el nivel del plan solo se lee cuando la suscripcion da acceso ahora (una peticion mas, no por examen)
-            if (fact.activeAt(now)) fact.copy(planLevel = premiumRow.productoCodigo?.takeIf(String::isNotBlank)?.let { gateway.planOf(it)?.nivel }) else fact
+        val inputs = UserAccessInputs(
+            premium = premiumFact(userId, now),
+            grants = gateway.grantsFor(userId, examIds),
+            capabilities = gateway.capabilitiesFor(exams.map { it.especialidadId }.distinct()),
+            userSpecialty = gateway.userSpecialty(userId),
+        )
+        return decide(exams, inputs, now)
+    }
+
+    /**
+     * CERT-LOAD-1000 P1: las cuatro lecturas INDEPENDIENTES (suscripcion+plan, concesiones, capacidades, especialidad) a la vez
+     * en el pool IO; la decision es la misma funcion pura [decide]. [known] reutiliza la especialidad ya leida en la peticion.
+     * Si fallan varias, se publica la primera que falle (antes: la primera en orden); el resultado correcto no cambia.
+     */
+    internal fun UpstreamIoScope.accessInfoAsync(
+        userId: String,
+        exams: List<CatalogExamRow>,
+        now: Instant,
+        known: KnownSpecialty? = null,
+    ): kotlinx.coroutines.Deferred<Map<String, AccessInfo>> {
+        if (exams.isEmpty()) return kotlinx.coroutines.CompletableDeferred(emptyMap())
+        val examIds = exams.map { it.id }.distinct()
+        val premium = asyncUpstreamIo { premiumFact(userId, now) }
+        val grants = asyncUpstreamIo { gateway.grantsFor(userId, examIds) }
+        val capabilities = asyncUpstreamIo { gateway.capabilitiesFor(exams.map { it.especialidadId }.distinct()) }
+        val specialty = if (known != null) null else asyncUpstreamIo { gateway.userSpecialty(userId) }
+        return combine {
+            decide(exams, UserAccessInputs(premium.await(), grants.await(), capabilities.await(), specialty?.await() ?: known?.value), now)
         }
-        val grants = gateway.grantsFor(userId, examIds)
-        val capabilities = gateway.capabilitiesFor(exams.map { it.especialidadId }.distinct())
-        val userSpecialty = gateway.userSpecialty(userId)
-        return exams.associate { exam ->
-            val examGrants = grants[exam.id].orEmpty()
+    }
+
+    private fun decide(exams: List<CatalogExamRow>, inputs: UserAccessInputs, now: Instant): Map<String, AccessInfo> =
+        exams.associate { exam ->
+            val examGrants = inputs.grants[exam.id].orEmpty()
             val verdict = EntitlementPolicy.check(
                 exam = ExamAccessSubject(exam.id, exam.kind(), free = exam.accessType() == "gratuito", demoAvailable = exam.demoDisponible, specialtyId = exam.especialidadId),
-                capabilities = capabilities[exam.especialidadId] ?: SpecialtyAccessCapabilities.OPEN,
-                user = UserAccessFacts(premium = premium, grants = examGrants, specialtyId = userSpecialty),
+                capabilities = inputs.capabilities[exam.especialidadId] ?: SpecialtyAccessCapabilities.OPEN,
+                user = UserAccessFacts(premium = inputs.premium, grants = examGrants, specialtyId = inputs.userSpecialty),
                 now = now,
             )
             exam.id to AccessInfo(verdict, if (verdict.state == AccessState.GRANTED) grantedUntil(examGrants, now) else null)
         }
-    }
 
     /** Fin del derecho vigente: el MAYOR `valido_hasta` entre las concesiones vigentes; `null` si alguna no caduca (o ninguna). */
     private fun grantedUntil(grants: List<ExamGrantFact>, now: Instant): Instant? {

@@ -255,3 +255,115 @@ fun CanonicalUserIdentity.requireActive(): CanonicalUserIdentity = when (account
     AccountStatus.ELIMINACION_PENDIENTE -> throw CanonicalErrorCode.ACCOUNT_DELETION_PENDING.exception()
     AccountStatus.UNRECOGNIZED -> throw CanonicalErrorCode.FORBIDDEN.exception()
 }
+
+// =====================================================================
+// CACHE CORTA DEL ESTADO DE CUENTA (CERT-LOAD-1000 P1)
+//
+// Cada peticion de `/api/v1/app` leia `perfiles_usuario` (estado + onboarding) antes de hacer nada. Esta cache guarda esa
+// lectura por usuario durante [ttlMillis] (defecto 30 s, tope 120 s, 0 = apagada; PROFILE_IDENTITY_CACHE_TTL_MS).
+//
+// Seguridad:
+//  - La clave es el `sub` YA VERIFICADO (CanonicalUserId): solo se consulta despues de verificar la firma del JWT, y una
+//    entrada cuyo usuarioId no coincide con la clave no se guarda (nunca se sirve el perfil de un usuario a otro).
+//  - Solo se guarda el estado "cuenta ACTIVA y onboarding completo". Cualquier otro estado (bloqueada, pendiente de borrado,
+//    desconocido, sin onboarding, sin fila) se relee SIEMPRE: desbloquear o completar el onboarding se ve al instante.
+//  - REVOCACION ACOTADA: si una cuenta activa pasa a bloqueada / pendiente de borrado, esta replica puede seguir viendola
+//    activa como mucho [ttlMillis]. En esta replica, las escrituras de perfil y la solicitud de borrado la invalidan al
+//    momento ([invalidate]); el bloqueo admin (otro proceso, `control`) y la otra replica dependen del TTL.
+//  - Una invalidacion durante una lectura en curso impide guardar esa lectura (epoca global), asi que nunca queda una entrada
+//    anterior a la escritura.
+// =====================================================================
+
+internal class CachingCanonicalProfileDirectory(
+    private val delegate: CanonicalProfileDirectory,
+    private val ttlMillis: Long = DEFAULT_TTL_MILLIS,
+    private val maxEntries: Int = DEFAULT_MAX_ENTRIES,
+    private val nanoTime: () -> Long = System::nanoTime,
+    private val onResult: (String) -> Unit = ProfileIdentityCacheMetrics::record,
+) : CanonicalProfileDirectory {
+    private class Entry(val identity: CanonicalUserIdentity, val expiresAtNanos: Long)
+
+    private val entries = java.util.concurrent.ConcurrentHashMap<String, Entry>()
+    private val epoch = java.util.concurrent.atomic.AtomicLong(0)
+
+    init {
+        require(ttlMillis in 0..MAX_TTL_MILLIS) { "PROFILE_IDENTITY_CACHE_TTL_MS en 0..$MAX_TTL_MILLIS" }
+        CanonicalProfileCacheInvalidation.register(this)
+    }
+
+    override suspend fun find(userId: CanonicalUserId): CanonicalUserIdentity? {
+        if (ttlMillis == 0L) return delegate.find(userId)
+        val now = nanoTime()
+        entries[userId.value]?.let { entry ->
+            if (entry.expiresAtNanos - now > 0) {
+                onResult("hit")
+                return entry.identity
+            }
+            entries.remove(userId.value, entry)
+        }
+        val epochBefore = epoch.get()
+        val identity = delegate.find(userId)
+        if (identity != null && identity.isCacheable(userId) && epoch.get() == epochBefore) {
+            if (entries.size >= maxEntries) evictExpired(nanoTime())
+            if (entries.size < maxEntries) {
+                entries[userId.value] = Entry(identity, nanoTime() + ttlMillis * 1_000_000)
+                // Una invalidacion que llego entre la comprobacion de la epoca y el put deja su huella: se deshace.
+                if (epoch.get() != epochBefore) entries.remove(userId.value)
+            }
+            onResult("miss")
+        } else {
+            onResult("bypass")
+        }
+        return identity
+    }
+
+    fun invalidate(userId: CanonicalUserId) {
+        epoch.incrementAndGet()
+        entries.remove(userId.value)
+    }
+
+    internal fun size(): Int = entries.size
+
+    private fun evictExpired(now: Long) {
+        entries.entries.removeIf { it.value.expiresAtNanos - now <= 0 }
+    }
+
+    private fun CanonicalUserIdentity.isCacheable(key: CanonicalUserId): Boolean =
+        userId == key && accountStatus == AccountStatus.ACTIVA && onboardingCompleted
+
+    companion object {
+        const val DEFAULT_TTL_MILLIS = 30_000L
+        const val MAX_TTL_MILLIS = 120_000L
+        const val DEFAULT_MAX_ENTRIES = 20_000
+
+        /** PROFILE_IDENTITY_CACHE_TTL_MS: vacio = 30 s; 0 = sin cache; >120 s o ilegible = no arranca (la revocacion tiene que estar acotada). */
+        fun ttlFromEnvironment(environment: (String) -> String? = System::getenv): Long {
+            val raw = environment("PROFILE_IDENTITY_CACHE_TTL_MS")?.trim().orEmpty()
+            if (raw.isEmpty()) return DEFAULT_TTL_MILLIS
+            return raw.toLongOrNull()?.takeIf { it in 0..MAX_TTL_MILLIS }
+                ?: error("PROFILE_IDENTITY_CACHE_TTL_MS='$raw' no es valido (0..$MAX_TTL_MILLIS ms).")
+        }
+    }
+}
+
+/** Punto unico de invalidacion: las escrituras de perfil y el borrado de cuenta de ESTE proceso avisan a todas las caches. */
+internal object CanonicalProfileCacheInvalidation {
+    private val caches = java.util.concurrent.CopyOnWriteArrayList<java.lang.ref.WeakReference<CachingCanonicalProfileDirectory>>()
+
+    fun register(cache: CachingCanonicalProfileDirectory) {
+        caches.removeIf { it.get() == null }
+        caches += java.lang.ref.WeakReference(cache)
+    }
+
+    fun invalidate(userId: CanonicalUserId) {
+        caches.forEach { it.get()?.invalidate(userId) }
+    }
+}
+
+/** profile_identity_cache_requests_total{result=hit|miss|bypass}. */
+internal object ProfileIdentityCacheMetrics {
+    fun record(result: String) {
+        io.micrometer.core.instrument.Counter.builder("profile.identity.cache.requests").tag("result", result)
+            .register(BackendPrometheusMetrics.registry).increment()
+    }
+}

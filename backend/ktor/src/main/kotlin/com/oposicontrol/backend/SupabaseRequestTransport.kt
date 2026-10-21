@@ -305,6 +305,8 @@ class SupabaseRequestTransport internal constructor(
                 "Supabase storage POST -> ${response.statusCode()}: ${response.body().take(200)}",
             )
         }
+        // CERT-LOAD-1000: un objeto ya subido es una escritura: la peticion se termina aunque venza su plazo.
+        UpstreamDeadlineGuard.afterSuccess("PUT", url)
         return response.body()
     }
 
@@ -336,6 +338,7 @@ class SupabaseRequestTransport internal constructor(
                 "Supabase storage DELETE -> ${response.statusCode()}: ${response.body().take(200)}",
             )
         }
+        UpstreamDeadlineGuard.afterSuccess("DELETE", url)
         return true
     }
 
@@ -446,16 +449,33 @@ class SupabaseRequestTransport internal constructor(
         operation: String,
         path: String,
         request: () -> HttpRequest,
-    ): HttpResponse<String> = try {
-        // EX12/EX13: viaje de ida y vuelta al upstream contado para la peticion en curso (solo si alguien la mide).
-        UpstreamCallLedger.record(org.slf4j.MDC.get(MDC_REQUEST_ID))
-        client.send(request(), HttpResponse.BodyHandlers.ofString())
-    } catch (error: Exception) {
-        throw IllegalStateException(
-            "Supabase network error on $operation ${path.substringBefore('?')}: " +
-                "${error::class.simpleName}: ${error.message}",
-            error,
-        )
+    ): HttpResponse<String> {
+        // CERT-LOAD-1000 (AdmissionControl.kt): con el plazo de la peticion vencido y nada escrito, no se empieza otra llamada
+        // (503 SERVER_BUSY); una LECTURA espera como mucho lo que queda del plazo. Las escrituras nunca se acortan ni se cortan.
+        val timeoutMs = UpstreamDeadlineGuard.beforeCall(operation, path, UPSTREAM_REQUEST_TIMEOUT.toMillis())
+        val response = try {
+            // EX12/EX13: viaje de ida y vuelta al upstream contado para la peticion en curso (solo si alguien la mide).
+            UpstreamCallLedger.record(org.slf4j.MDC.get(MDC_REQUEST_ID))
+            val built = request()
+            val effective = if (timeoutMs < UPSTREAM_REQUEST_TIMEOUT.toMillis()) {
+                HttpRequest.newBuilder(built) { _, _ -> true }.timeout(java.time.Duration.ofMillis(timeoutMs.coerceAtLeast(1))).build()
+            } else {
+                built
+            }
+            client.send(effective, HttpResponse.BodyHandlers.ofString())
+        } catch (error: Exception) {
+            if (error is java.net.http.HttpTimeoutException && UpstreamDeadlineGuard.timedOutByDeadline(operation)) {
+                throw UpstreamDeadlineGuard.deadlineExceeded("upstream_read")
+            }
+            throw IllegalStateException(
+                "Supabase network error on $operation ${path.substringBefore('?')}: " +
+                    "${error::class.simpleName}: ${error.message}",
+                error,
+            )
+        }
+        // Solo una respuesta 2xx de una escritura de negocio fija el punto sin retorno.
+        if (response.statusCode() in 200..299) UpstreamDeadlineGuard.afterSuccess(operation, path)
+        return response
     }
 
     /**
