@@ -177,6 +177,7 @@ race_held() { # la conexion $1 hizo su trabajo y retiene la transaccion
 }
 race_blocked() { # la conexion $1 espera un cerrojo; con $2 = settle basta con que termine (no se exige bloqueo)
   local rc; race_until "$1" "exists (select 1 from pg_stat_activity where application_name = 'gate-race-$rid-$1' and wait_event_type = 'Lock')"; rc=$?
+  [ -z "${RACE_TRACE:-}" ] || echo "  trace $rid: $1 $( [ "$rc" = 0 ] && echo bloqueada en un cerrojo || echo termino sin bloquearse)"
   [ "$rc" = 0 ] || { [ "$rc" = 1 ] && [ "${2:-}" = settle ]; } \
     || { echo "  race $rid: la conexion $1 no se bloqueo en un cerrojo (termino antes o tope de ${RACE_TIMEOUT}s)"; bad=1; return 1; }
 }
