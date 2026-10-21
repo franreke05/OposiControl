@@ -41,6 +41,8 @@ is_v1() { case "$1" in 20261022*) return 0 ;; esac; printf '%s\n' "$v1list" | gr
 security="$( (cd supabase/migrations && ls | grep -E '^202610.*_security_.*\.sql$' | sed 's/\.sql$//' | sort) )"
 for v in $security; do
   is_v1 "$v" || continue
+  # once MAIN_MIGRATION_HISTORY.txt is recaptured after the V1 deploy, an applied V1 _security_ migration is no longer pending
+  echo "$applied" | grep -qx "${v%%_*}" && continue
   printf '%s\n' "$pending" | grep -qx "$v" || fail "$v: una migracion V1 (20261022* o V1_MIGRATIONS.txt) con _security_ es pendiente y no figura en $pend (quedaria fuera del gate)"
 done
 actual="$( (cd supabase/migrations && ls | grep -E '^[0-9]{14}_.*\.sql$' | sed 's/\.sql$//' | sort) | while read -r m; do
