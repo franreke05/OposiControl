@@ -147,14 +147,57 @@ fingerprint "$tmp/f2"; same "$tmp/f0" "$tmp/f2" "tras los ROLLBACK el catalogo n
 apply_all
 fingerprint "$tmp/f3"; same "$tmp/f1" "$tmp/f3" "re-aplicar tras el rollback no reproduce el mismo catalogo (< primera, > re-aplicada)"
 echo "ok:   rollback inverso == bootstrap; re-aplicacion == primera aplicacion (VERIFY = 0)"
+# Secuenciacion DETERMINISTA de las carreras (pasos 6 y 7), sin sleeps de reloj: cada conexion de una carrera lleva application_name
+# gate-race-<id>-<rol>. La que retiene hace su trabajo y espera DENTRO de su transaccion la senal gate-race-<id>-go (una sesion con ese
+# application_name); la segunda solo arranca cuando la primera esta retenida (su DO /* gate-race-hold */ activo en pg_stat_activity), y la
+# senal solo se da cuando la segunda esta BLOQUEADA en un cerrojo (pg_stat_activity.wait_event_type = 'Lock'). Toda espera tiene tope
+# (RACE_TIMEOUT s): si vence, o si la segunda termina sin bloquearse, la carrera FALLA con su id; nada se cuelga.
+RACE_TIMEOUT="${RACE_TIMEOUT:-90}"
+rq() { psqlc -At -c "$1" 2>&1; }                                         # una lectura de comprobacion
+psqla() { docker exec -i -e PGAPPNAME="$1" "$ctr" psql -U postgres -h localhost -d postgres -X -q -v ON_ERROR_STOP=1 -At "${@:2}"; }
+bg() { psqla "gate-race-$rid-$1" >"$tmp/race.$1.out" 2>"$tmp/race.$1.err" <<<"$2" & eval "race_job_$1=\$!"; }  # conexion en segundo plano
+held() { # $1 = trabajo; despues espera la senal gate-race-<id>-go con la transaccion abierta
+  echo "begin; $1 do \$\$ declare t0 timestamptz := clock_timestamp(); begin /* gate-race-hold */ loop perform pg_stat_clear_snapshot();" \
+    "exit when exists (select 1 from pg_stat_activity where application_name = 'gate-race-$rid-go'); if clock_timestamp() - t0 > interval '$RACE_TIMEOUT seconds'" \
+    "then raise exception 'gate-race-hold $rid: sin senal de liberacion'; end if; perform pg_sleep(0.01); end loop; end \$\$; commit;"
+}
+race_until() { # $1 = rol que debe seguir vivo, $2 = condicion SQL sobre pg_stat_activity -> 0 cumplida, 1 el rol termino antes, 2 tope o error
+  local job="race_job_$1" end=$((SECONDS + RACE_TIMEOUT)) out
+  while [ "$SECONDS" -lt "$end" ]; do
+    out="$(rq "do \$\$ declare t0 timestamptz := clock_timestamp(); begin loop perform pg_stat_clear_snapshot(); exit when $2; if clock_timestamp() - t0 > interval '2 seconds' then raise exception 'gate-race-pending'; end if; perform pg_sleep(0.01); end loop; end \$\$")"
+    [ -z "$out" ] && return 0
+    case "$out" in *gate-race-pending*) ;; *) echo "  race $rid: espera: $(echo "$out" | head -1)"; return 2 ;; esac
+    kill -0 "${!job}" 2>/dev/null || return 1
+  done
+  return 2
+}
+race_held() { # la conexion $1 hizo su trabajo y retiene la transaccion
+  race_until "$1" "exists (select 1 from pg_stat_activity where application_name = 'gate-race-$rid-$1' and state = 'active' and query like '%gate-race-hold%')" \
+    || { echo "  race $rid: la conexion $1 no llego a retener su transaccion"; bad=1; return 1; }
+}
+race_blocked() { # la conexion $1 espera un cerrojo; con $2 = settle basta con que termine (no se exige bloqueo)
+  local rc; race_until "$1" "exists (select 1 from pg_stat_activity where application_name = 'gate-race-$rid-$1' and wait_event_type = 'Lock')"; rc=$?
+  [ "$rc" = 0 ] || { [ "$rc" = 1 ] && [ "${2:-}" = settle ]; } \
+    || { echo "  race $rid: la conexion $1 no se bloqueo en un cerrojo (termino antes o tope de ${RACE_TIMEOUT}s)"; bad=1; return 1; }
+}
+race_release() { # senal gate-race-<id>-go mientras la conexion $1 siga retenida
+  psqla "gate-race-$rid-go" -c "do \$\$ declare t0 timestamptz := clock_timestamp(); begin loop perform pg_stat_clear_snapshot(); exit when not exists (select 1 from pg_stat_activity where application_name = 'gate-race-$rid-$1' and state = 'active' and query like '%gate-race-hold%'); if clock_timestamp() - t0 > interval '$RACE_TIMEOUT seconds' then raise exception 'gate-race-go: tope'; end if; perform pg_sleep(0.01); end loop; end \$\$" >/dev/null 2>&1 \
+    || { echo "  race $rid: la senal de liberacion vencio"; bad=1; }
+}
+race2() { # $1 = id, $2 = trabajo de a (retenido), $3 = trabajo de b: b arranca con a retenido y a se libera con b bloqueado
+  rid="$1"; rm -f "$tmp"/race.*
+  bg a "$(held "$2")"; race_held a && { bg b "$3"; race_blocked b; }; race_release a; wait; noerr a b
+}
+race3() { # $1 = id, $2 = cerrojo de c (retenido), $3 = trabajo de a (debe bloquearse tras c), $4 = trabajo de b (con a bloqueado: se bloquea
+          # o termina, segun el codigo); c se libera cuando b ya se resolvio
+  rid="$1"; rm -f "$tmp"/race.*
+  bg c "$(held "$2")"; race_held c && { bg a "$3"; race_blocked a && { bg b "$4"; race_blocked b settle; }; }; race_release c; wait; noerr a b c
+}
 # 6. N3-3 / N3-1 (re-auditoria Control ronda 3) + tarea 4: carreras REALES con dos/tres conexiones psql sobre la base ya migrada. La primera
-#    transaccion hace su trabajo y se queda ABIERTA (pg_sleep); la segunda empieza mientras tanto. Sin el cerrojo por clave de tienda la segunda no
+#    transaccion hace su trabajo y se queda ABIERTA; la segunda empieza entonces y se bloquea. Sin el cerrojo por clave de tienda la segunda no
 #    ve el pedido (o el huerfano) sin confirmar y los dos hechos nunca se ligan: el paso FALLA. Lo prueba db-pg17-gate.test.sh moviendo el cerrojo.
 store_race() {
-  local u k i bad=0 out
-  rq() { psqlc -At -c "$1" 2>&1; }                                       # una lectura de comprobacion
-  bg() { psqlc -At >"$tmp/race.$1.out" 2>"$tmp/race.$1.err" <<<"$2" & }   # una conexion en segundo plano
-  held() { echo "begin; $1 do \$\$ begin perform pg_sleep(1.5); end \$\$; commit;"; }
+  local u k i bad=0 out rid
   expect() { [ "$2" = "$3" ] || { echo "  race $1: '$2' (esperado '$3')"; bad=1; }; }
   noerr() { local f; for f in "$@"; do [ ! -s "$tmp/race.$f.err" ] || { echo "  race $f: $(head -1 "$tmp/race.$f.err")"; bad=1; }; done; }
   u() { printf 'a0000000-0000-0000-0000-%012d' $((950 + $1)); }
@@ -176,43 +219,41 @@ SQL
   for i in 1 2; do
     # R1 credito (abierto) || REFUND_REVERSED de la misma clave -> la reversion se registra en el pedido, nunca huerfana
     k="r1-$i"; inbox "r1-rev-$i" REEMBOLSO_REVERTIDO "$k"
-    bg a "$(held "$(credit 1 "$k")")"; sleep 0.4; bg b "$(reversal "r1-rev-$i" "$k")"; wait; noerr a b
+    race2 "R1.$i" "$(credit 1 "$k")" "$(reversal "r1-rev-$i" "$k")"
     expect "R1.$i" "$(cat "$tmp/race.b.out")" REVERSAL_RECORDED
     # R2 credito (abierto) || reembolso de la misma clave -> el reembolso se aplica al pedido
     k="r2-$i"; inbox "r2-ref-$i" REEMBOLSO "$k"
-    bg a "$(held "$(credit 2 "$k")")"; sleep 0.4; bg b "$(refund "r2-ref-$i" "$k")"; wait; noerr a b
+    race2 "R2.$i" "$(credit 2 "$k")" "$(refund "r2-ref-$i" "$k")"
     expect "R2.$i" "$(cat "$tmp/race.b.out")|$(st "$k")" "REFUNDED|reembolsada|1|1"
     # R3 reversion huerfana (abierta) || credito -> el credito la ve y la liga
     k="r3-$i"; inbox "r3-rev-$i" REEMBOLSO_REVERTIDO "$k"
-    bg a "$(held "$(reversal "r3-rev-$i" "$k")")"; sleep 0.4; bg b "$(credit 3 "$k")"; wait; noerr a b
+    race2 "R3.$i" "$(reversal "r3-rev-$i" "$k")" "$(credit 3 "$k")"
     expect "R3.$i" "$(rq "select resultado from public.tienda_bandeja where evento_id = 'r3-rev-$i'")" REVERSAL_HELD
     # R4 reembolso huerfano (abierto) || credito -> pedido a revision, nada acreditado
     k="r4-$i"; inbox "r4-ref-$i" REEMBOLSO "$k"
-    bg a "$(held "$(refund "r4-ref-$i" "$k")")"; sleep 0.4; bg b "$(credit 4 "$k")"; wait; noerr a b
+    race2 "R4.$i" "$(refund "r4-ref-$i" "$k")" "$(credit 4 "$k")"
     expect "R4.$i" "$(st "$k")" "en_revision|0|0"
     # S1 la MISMA compra verificada a la vez por dos conexiones -> un credito y un REPLAY
     k="s1-$i"
-    bg a "$(held "$(credit 5 "$k")")"; sleep 0.4; bg b "$(credit 5 "$k")"; wait; noerr a b
+    race2 "S1.$i" "$(credit 5 "$k")" "$(credit 5 "$k")"
     expect "S1.$i" "$(sort "$tmp/race.a.out" "$tmp/race.b.out" | tr '\n' ' ')|$(st "$k")" "CREDITED REPLAY |pagada|1|0"
     # S2 el MISMO aviso de reembolso entregado dos veces a la vez -> un debito y un REPLAY
     k="s2-$i"; rq "$(credit 6 "$k")" >/dev/null; inbox "s2-ref-$i" REEMBOLSO "$k"
-    bg a "$(held "$(refund "s2-ref-$i" "$k")")"; sleep 0.4; bg b "$(refund "s2-ref-$i" "$k")"; wait; noerr a b
+    race2 "S2.$i" "$(refund "s2-ref-$i" "$k")" "$(refund "s2-ref-$i" "$k")"
     expect "S2.$i" "$(sort "$tmp/race.a.out" "$tmp/race.b.out" | tr '\n' ' ')|$(st "$k")" "REFUNDED REPLAY |reembolsada|1|1"
     # S3 la primera entrega de una suscripcion dos veces a la vez -> una fila, sin violar el indice unico
     k="s3-$i"
-    bg a "$(held "$(sub 7 "$k")")"; sleep 0.4; bg b "$(sub 7 "$k")"; wait; noerr a b
+    race2 "S3.$i" "$(sub 7 "$k")" "$(sub 7 "$k")"
     expect "S3.$i" "$(sort "$tmp/race.a.out" "$tmp/race.b.out" | tr '\n' ' ')|$(rq "select count(*) from public.suscripciones where identificador_externo = '$k'")" "CREATED REPLAY |1"
     # D1 (N3-1) reconcile || reintento de credito con contencion en la cartera -> sin 40P01: el reconcile salta la clave ocupada
     k="d1-$i"; rq "$(credit 8 "$k")" >/dev/null; inbox "d1-rev-$i" REEMBOLSO_REVERTIDO "$k"
     rq "update public.tienda_bandeja set resultado = 'REVERSAL_ORPHAN_HELD', estado = 'procesado' where evento_id = 'd1-rev-$i'" >/dev/null
-    bg c "begin; select null from pg_advisory_xact_lock(hashtextextended('wallet:$(u 8)', 0)); do \$\$ begin perform pg_sleep(2); end \$\$; commit;"
-    sleep 0.4; bg a "$(credit 8 "$k")"; sleep 0.4; bg b "select public.app_store_reconcile_orphans(50, false);"; wait; noerr a b c
+    race3 "D1.$i" "select null from pg_advisory_xact_lock(hashtextextended('wallet:$(u 8)', 0));" "$(credit 8 "$k")" "select public.app_store_reconcile_orphans(50, false);"
     expect "D1.$i" "$(rq "select resultado from public.tienda_bandeja where evento_id = 'd1-rev-$i'")" REVERSAL_HELD
     # D2 (N4-6) lo mismo con el paso de una fila por transaccion que usa el trabajo: sin 40P01, la clave ocupada se salta (BUSY) y el credito liga
     k="d2-$i"; rq "$(credit 9 "$k")" >/dev/null; inbox "d2-rev-$i" REEMBOLSO_REVERTIDO "$k"
     rq "update public.tienda_bandeja set resultado = 'REVERSAL_ORPHAN_HELD', estado = 'procesado' where evento_id = 'd2-rev-$i'" >/dev/null
-    bg c "begin; select null from pg_advisory_xact_lock(hashtextextended('wallet:$(u 9)', 0)); do \$\$ begin perform pg_sleep(2); end \$\$; commit;"
-    sleep 0.4; bg a "$(credit 9 "$k")"; sleep 0.4; bg b "select resultado from public.app_store_reconcile_orphan_step(false, null, null, null) where evento_id = 'd2-rev-$i';"; wait; noerr a b c
+    race3 "D2.$i" "select null from pg_advisory_xact_lock(hashtextextended('wallet:$(u 9)', 0));" "$(credit 9 "$k")" "select resultado from public.app_store_reconcile_orphan_step(false, null, null, null) where evento_id = 'd2-rev-$i';"
     expect "D2.$i" "$(rq "select resultado from public.tienda_bandeja where evento_id = 'd2-rev-$i'")" REVERSAL_HELD
   done
   # N4-6: el paso del trabajo retiene UNA clave y UNA cartera por transaccion (el lote de 20261022103000 retenia 2 por fila hasta el final) y sigue
@@ -221,10 +262,9 @@ SQL
     k="n46-$i"; rq "$(credit "$i" "$k")" >/dev/null; inbox "n46-rev-$i" REEMBOLSO_REVERTIDO "$k"
     rq "update public.tienda_bandeja set resultado = 'REVERSAL_ORPHAN_HELD', estado = 'procesado', recibido_en = now() - interval '1 hour' + interval '1 second' * $i where evento_id = 'n46-rev-$i'" >/dev/null
   done
-  bg a "begin; select resultado from public.app_store_reconcile_orphan_step(false, null, null, null); do \$\$ begin perform pg_sleep(1.5); end \$\$; commit;"
-  sleep 0.6
+  rid=N4-6; rm -f "$tmp"/race.*; bg a "$(held "select resultado from public.app_store_reconcile_orphan_step(false, null, null, null);")"; race_held a
   expect "N4-6 cerrojos de un paso" "$(rq "select count(*) from pg_locks where locktype = 'advisory' and granted")" 2
-  wait; noerr a
+  race_release a; wait; noerr a
   out="$(rq "select evento_id || '|' || resultado from public.app_store_reconcile_orphan_step(false, (select recibido_en from public.tienda_bandeja where evento_id = 'n46-rev-10'), 'app_store', 'n46-rev-10')")"
   expect "N4-6 cursor" "$out" "n46-rev-11|REVERSAL_RECORDED"
   out="$(rq "select evento_id || '|' || resultado from public.app_store_reconcile_orphan_step(false, (select recibido_en from public.tienda_bandeja where evento_id = 'n46-rev-11'), 'app_store', 'n46-rev-11')")"
@@ -277,10 +317,7 @@ echo "ok:   carreras de tienda con dos conexiones reales (R1..R4, S1..S3, D1 x2)
 #    otro ve `already`; F2 cierre (abierto) || respuesta -> la respuesta espera, se rechaza y no escribe; F3 respuesta (abierta) || cierre ->
 #    el cierre espera y la cuenta; F4 cierre (abierto) || abandono -> el abandono se rechaza; F5 tras el cierre nada mueve la fila.
 exam_race() {
-  local i a bad=0 snap ex='e4040000-0000-0000-0000-000000000002'
-  rq() { psqlc -At -c "$1" 2>&1; }
-  bg() { psqlc -At >"$tmp/race.$1.out" 2>"$tmp/race.$1.err" <<<"$2" & }
-  held() { echo "begin; $1 do \$\$ begin perform pg_sleep(1.5); end \$\$; commit;"; }
+  local i a bad=0 snap rid ex='e4040000-0000-0000-0000-000000000002'
   expect() { [ "$2" = "$3" ] || { echo "  race $1: '$2' (esperado '$3')"; bad=1; }; }
   noerr() { local f; for f in "$@"; do [ ! -s "$tmp/race.$f.err" ] || { echo "  race $f: $(head -1 "$tmp/race.$f.err")"; bad=1; }; done; }
   u() { printf 'a0000000-0000-0000-0000-0000000004a%d' "$1"; }
@@ -315,16 +352,16 @@ commit;
 SQL
   for i in 1 2; do
     a="$(start 1)"; rq "$(ans 1 "$a" 1)" >/dev/null
-    bg a "$(held "$(fin 1 "$a")")"; sleep 0.4; bg b "$(fin 1 "$a")"; wait; noerr a b
+    race2 "F1.$i" "$(fin 1 "$a")" "$(fin 1 "$a")"
     expect "F1.$i" "$(cat "$tmp/race.a.out")|$(cat "$tmp/race.b.out")|$(row "$a")" "false|true|finalizado|USER|1|1|1"
     a="$(start 2)"; rq "$(ans 2 "$a" 1)" >/dev/null
-    bg a "$(held "$(fin 2 "$a")")"; sleep 0.4; bg b "$(ans 2 "$a" 2)"; wait; noerr a b
+    race2 "F2.$i" "$(fin 2 "$a")" "$(ans 2 "$a" 2)"
     expect "F2.$i" "$(cat "$tmp/race.b.out")|$(row "$a")" "ATTEMPT_NOT_IN_PROGRESS|finalizado|USER|1|1|1"
     a="$(start 3)"
-    bg a "$(held "$(ans 3 "$a" 1)")"; sleep 0.4; bg b "$(fin 3 "$a")"; wait; noerr a b
+    race2 "F3.$i" "$(ans 3 "$a" 1)" "$(fin 3 "$a")"
     expect "F3.$i" "$(cat "$tmp/race.a.out")|$(cat "$tmp/race.b.out")|$(row "$a")" "OK|false|finalizado|USER|1|1|1"
     a="$(start 4)"
-    bg a "$(held "$(fin 4 "$a")")"; sleep 0.4; bg b "select public.app_abandon_exam_attempt('$(u 4)', '$a', 1, 'salida_usuario') ->> 'outcome';"; wait; noerr a b
+    race2 "F4.$i" "$(fin 4 "$a")" "select public.app_abandon_exam_attempt('$(u 4)', '$a', 1, 'salida_usuario') ->> 'outcome';"
     expect "F4.$i" "$(cat "$tmp/race.b.out")|$(row "$a")" "ATTEMPT_ALREADY_FINISHED|finalizado|USER|0|0|0"
     snap="$(fp "$a")"
     expect "F5.$i" "$(rq "$(fin 4 "$a")")|$(rq "$(ans 4 "$a" 1)")|$(fp "$a")" "true|ATTEMPT_NOT_IN_PROGRESS|$snap"
