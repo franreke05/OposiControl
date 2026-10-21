@@ -445,7 +445,10 @@ class ControlPanelUiE2ETest {
         onNodeWithText("Subir y analizar").performClick()
         waitUntil(timeoutMillis = 30_000) { sql("select count(*) from public.lotes_importacion_preguntas where examen_id = '$examId'").toInt() == 1 }
         val lote = sql("select id from public.lotes_importacion_preguntas where examen_id = '$examId'")
-        assertEquals("1", sql("select count(*) from public.auditoria_log where accion = 'lote_creado' and registro_id::text = '$lote' and usuario_id = '$adminId'"))
+        // Igual que `lote_importado`: la auditoría se escribe justo después de crear el lote, así que se espera a ella.
+        waitUntil(timeoutMillis = 20_000) {
+            sql("select count(*) from public.auditoria_log where accion = 'lote_creado' and registro_id::text = '$lote' and usuario_id = '$adminId'") == "1"
+        }
         waitText("Publicar lote")
         shot("ui-import-review")
         // El PDF de ejemplo ya está en el banco tras la primera pasada: sus filas salen DUPLICADAS y el panel no deja
