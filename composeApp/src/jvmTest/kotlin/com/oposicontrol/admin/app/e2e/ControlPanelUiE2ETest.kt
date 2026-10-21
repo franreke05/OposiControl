@@ -554,7 +554,10 @@ class ControlPanelUiE2ETest {
     // ---------- 11. moderador: oculta una publicación desde su cola ----------
 
     @Test
-    fun uiModeratorRejectsAPendingPost() = flow("ui-moderator") {
+    fun uiModeratorRejectsAPendingPost() {
+        if (local == null) return flow("ui-moderator") {}
+        // La publicación se prepara ANTES de montar la interfaz: su reintento (límite por usuario de la app) puede esperar
+        // hasta un minuto, y dentro de la prueba de Compose esa espera bloquearía su reloj.
         val channel = sql("select id from public.categorias_oposired where activa order by creado_en desc limit 1")
         check(channel.isNotBlank()) { "sin canal activo (lo crea el E2E de datos J11)" }
         // Límite anti-spam de publicaciones por hora (lado Bot): las pasadas repetidas lo agotan para Q1. Se sube y, como la
@@ -580,17 +583,19 @@ class ControlPanelUiE2ETest {
             }
             val postId = sql("select id from public.publicaciones_oposired where titulo = '$marker'")
             check(postId.isNotBlank()) { "la publicación no se creó: $created" }
-            login("mod@control.local")
-            waitText(marker)
-            shot("ui-moderator-queue")
-            // En «Pendientes» las acciones son Aprobar, Rechazar y Silenciar al autor; rechazar deja la publicación oculta.
-            onNodeWithText("Rechazar").performScrollTo().performClick()
-            waitText("Motivo")
-            val fields = onAllNodes(hasSetTextAction())
-            fields[fields.fetchSemanticsNodes().size - 1].performTextInput("Fuera de tema (UI E2E)")
-            clickLast("Rechazar")
-            waitUntil(timeoutMillis = 20_000) { sql("select estado from public.publicaciones_oposired where id = '$postId'") == "oculta" }
-            assertEquals("5c000000-0000-4000-8000-00000000005c", sql("select usuario_id from public.auditoria_log where registro_id::text = '$postId' order by creado_en desc limit 1"), "auditado con el MODERADOR como actor")
+            flow("ui-moderator") {
+                login("mod@control.local")
+                waitText(marker)
+                shot("ui-moderator-queue")
+                // En «Pendientes» las acciones son Aprobar, Rechazar y Silenciar al autor; rechazar deja la publicación oculta.
+                onNodeWithText("Rechazar").performScrollTo().performClick()
+                waitText("Motivo")
+                val fields = onAllNodes(hasSetTextAction())
+                fields[fields.fetchSemanticsNodes().size - 1].performTextInput("Fuera de tema (UI E2E)")
+                clickLast("Rechazar")
+                waitUntil(timeoutMillis = 20_000) { sql("select estado from public.publicaciones_oposired where id = '$postId'") == "oculta" }
+                assertEquals("5c000000-0000-4000-8000-00000000005c", sql("select usuario_id from public.auditoria_log where registro_id::text = '$postId' order by creado_en desc limit 1"), "auditado con el MODERADOR como actor")
+            }
         } finally {
             sql("update public.configuracion_v1 set valor_integer = ${premod.ifEmpty { "0" }} where clave = 'foro_premoderacion_posts'")
             if (postsHora.isNotEmpty()) sql("update public.configuracion_v1 set valor_integer = $postsHora where clave = 'foro_posts_hora'")
