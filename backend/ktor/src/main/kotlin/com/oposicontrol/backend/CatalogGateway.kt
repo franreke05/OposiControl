@@ -73,6 +73,12 @@ internal class TransportCatalogUpstream(
 internal data class CommunityRef(val codigo: String? = null)
 
 @Serializable
+internal data class UserSpecialtyRow(@SerialName("especialidad_principal_id") val especialidadPrincipalId: String? = null)
+
+@Serializable
+internal data class CommunityNameRow(val codigo: String, val nombre: String)
+
+@Serializable
 internal data class CatalogExamRow(
     val id: String,
     @SerialName("codigo_examen") val codigoExamen: String? = null,
@@ -88,6 +94,14 @@ internal data class CatalogExamRow(
     @SerialName("publicado_en") val publicadoEn: String? = null,
     @SerialName("demo_disponible") val demoDisponible: Boolean = false,
     @SerialName("comunidades_autonomas") val comunidad: CommunityRef? = null,
+    /** V1: el precio en OposiTickets SALE de la base (nunca se inventa). Sin valor fijado, el examen no es comprable. */
+    @SerialName("comprable_con_tickets") val comprableConTickets: Boolean = false,
+    @SerialName("precio_tickets") val precioTickets: Int? = null,
+    @SerialName("dias_acceso_compra") val diasAccesoCompra: Int? = null,
+    /** FA36: la regla de penalizacion del examen (la que se congelara en cada intento). */
+    @SerialName("penalizacion_num") val penalizacionNum: Int = 0,
+    @SerialName("penalizacion_den") val penalizacionDen: Int = 1,
+    @SerialName("penalizacion_racional") val penalizacionRacional: Boolean = false,
 )
 
 @Serializable
@@ -141,7 +155,13 @@ internal data class CollectionGroupRow(@SerialName("comunidad_codigo") val comun
 internal data class MyCollectionPage(val items: List<MyCollectionRow>, val grupos: List<CollectionGroupRow>? = null)
 
 @Serializable
-private data class OpenAttemptRow(val id: String)
+private data class ExamAttemptRow(val id: String, val estado: String)
+
+/** D2-02: el intento abierto (como mucho uno: ux_intentos_examen_abierto) y el ULTIMO finalizado del usuario en un examen. */
+internal data class ExamAttemptRefs(val openId: String?, val lastFinishedId: String?)
+
+@Serializable
+internal data class SpecialtyRow(val id: String, val codigo: String, val nombre: String, val slug: String)
 
 @Serializable
 private data class GrantFactRow(
@@ -225,6 +245,13 @@ internal data class KeysetPosition(val timestamp: String, val id: String) {
 
 internal fun encodeQuery(value: String): String = URLEncoder.encode(value, StandardCharsets.UTF_8)
 
+/**
+ * E2-P03: predicado de examen PUBLICADO YA (`publicado_en` no nulo y no futuro) para las rutas /v1 heredadas, el mismo que
+ * aplica el catalogo canonico ([CatalogGateway] publishedPredicate). Un examen programado no se sirve antes de su hora.
+ */
+internal fun publishedByNow(now: java.time.Instant = java.time.Instant.now()): String =
+    "&publicado_en=not.is.null&publicado_en=lte.${encodeQuery(now.toString())}"
+
 private fun parseInstantOrNull(value: String?): Instant? = value?.let { runCatching { OffsetDateTime.parse(it).toInstant() }.getOrNull() }
 
 internal class CatalogGateway(
@@ -262,11 +289,22 @@ internal class CatalogGateway(
         return decodeList(upstream.get(query.toString()))
     }
 
-    /** El intento abierto mas reciente del usuario en el examen (MAIN no tiene indice unico de intento abierto). */
-    fun openAttemptId(userId: String, examId: String): String? {
-        val query = "/rest/v1/intentos_examen?select=id&usuario_id=eq.$userId&examen_id=eq.$examId&estado=eq.en_progreso" +
-            "&order=iniciado_en.desc,id.desc&limit=1"
-        return decodeList<OpenAttemptRow>(upstream.get(query)).firstOrNull()?.id
+    /**
+     * D2-02 (PERF01, FA19): en UNA lectura acotada (limit 2) el intento abierto y el ultimo FINALIZADO del usuario en ESTE
+     * examen. `estado` ordena en_progreso antes que finalizado y, dentro de los finalizados, el mas reciente primero: la
+     * fila 1 es el abierto si existe (como mucho uno) y la siguiente finalizada es la ultima. Solo intentos del comando
+     * canonico (los demas no existen para D2-07 / D2-12). Indice (usuario_id, examen_id): no crece con el historial del
+     * usuario en otros examenes.
+     */
+    fun attemptRefs(userId: String, examId: String): ExamAttemptRefs {
+        val query = "/rest/v1/intentos_examen?select=id,estado&usuario_id=eq.$userId&examen_id=eq.$examId" +
+            "&origen_intento=eq.examen&creado_por_comando=not.is.null&es_demo=eq.false&estado=in.(en_progreso,finalizado)" +
+            "&order=estado.asc,finalizado_en.desc.nullslast,id.desc&limit=2"
+        val rows = decodeList<ExamAttemptRow>(upstream.get(query))
+        return ExamAttemptRefs(
+            openId = rows.firstOrNull { it.estado == "en_progreso" }?.id,
+            lastFinishedId = rows.firstOrNull { it.estado == "finalizado" }?.id,
+        )
     }
 
     // ---------- "mis examenes" (D2-13) ----------
@@ -274,7 +312,7 @@ internal class CatalogGateway(
     /** EN_CURSO: intentos abiertos del usuario sobre examenes publicados, `actualizado_en DESC, id DESC`. */
     fun myOpenAttempts(userId: String, filter: CatalogFilter, after: KeysetPosition?, fetchLimit: Int, now: Instant): List<MyAttemptRow> {
         val query = StringBuilder("/rest/v1/intentos_examen?select=id,estado,total_respondidas,total_preguntas,actualizado_en,examenes!inner($EXAM_COLUMNS)")
-        query.append("&usuario_id=eq.$userId&estado=eq.en_progreso&origen_intento=eq.examen")
+        query.append("&usuario_id=eq.$userId&estado=eq.en_progreso&origen_intento=eq.examen&es_demo=eq.false")
         query.append(publishedPredicate("examenes.", now))
         query.append(filterPredicate("examenes.", filter))
         if (after != null) query.append("&or=(").append(keysetOr("actualizado_en", after)).append(")")
@@ -317,6 +355,7 @@ internal class CatalogGateway(
             put("p_despues_id", after?.id?.let(::JsonPrimitive) ?: JsonNull)
             put("p_limite", fetchLimit)
             put("p_con_grupos", withGroups)
+            put("p_especialidad_id", filter.specialtyId?.let(::JsonPrimitive) ?: JsonNull) // E2-V1-E05: la union de la coleccion tambien se acota a la especialidad
         }
         val raw = try {
             upstream.rpc(MY_COLLECTION_RPC, body.toString())
@@ -346,7 +385,7 @@ internal class CatalogGateway(
     fun latestAttempts(userId: String, examIds: Collection<String>): Map<String, AttemptBriefRow> {
         if (examIds.isEmpty()) return emptyMap()
         val query = "/rest/v1/intentos_examen?select=id,examen_id,estado,total_respondidas,total_preguntas" +
-            "&usuario_id=eq.$userId&examen_id=in.(${examIds.joinToString(",")})&origen_intento=eq.examen" +
+            "&usuario_id=eq.$userId&examen_id=in.(${examIds.joinToString(",")})&origen_intento=eq.examen&es_demo=eq.false" +
             "&order=actualizado_en.desc,id.desc&limit=$LATEST_ATTEMPTS_FETCH_LIMIT"
         val latest = LinkedHashMap<String, AttemptBriefRow>()
         decodeList<AttemptBriefRow>(upstream.get(query)).forEach { latest.putIfAbsent(it.examenId, it) }
@@ -368,7 +407,22 @@ internal class CatalogGateway(
         }.groupBy({ it.first }, { it.second })
     }
 
+    /** V1: la especialidad del usuario (`perfiles_usuario.especialidad_principal_id`), o `null` si aun no la ha elegido. */
+    fun userSpecialty(userId: String): String? {
+        require(userId.isUuid()) { "userId" }
+        return decodeList<UserSpecialtyRow>(upstream.get("/rest/v1/perfiles_usuario?select=especialidad_principal_id&usuario_id=eq.$userId&limit=1")).firstOrNull()?.especialidadPrincipalId
+    }
+
+    /** V1: nombre legible de cada comunidad por codigo (tabla pequena y acotada). Nunca se muestra el codigo crudo (ES-MD). */
+    fun communityNames(): Map<String, String> =
+        decodeList<CommunityNameRow>(upstream.get("/rest/v1/comunidades_autonomas?select=codigo,nombre&order=codigo.asc&limit=200"))
+            .associate { it.codigo to it.nombre }
+
     /** `capacidades_especialidad` por especialidad; sin fila = abierto (default de la tabla). */
+    /** D2-17: especialidades ACTIVAS (catalogo acotado). Pide [max] + 1 para que el llamante falle cerrado si hay mas. */
+    fun activeSpecialties(max: Int): List<SpecialtyRow> =
+        decodeList(upstream.get("/rest/v1/especialidades?select=id,codigo,nombre,slug&activa=eq.true&order=posicion.asc,nombre.asc,id.asc&limit=${max + 1}"))
+
     fun capabilitiesFor(specialtyIds: Collection<String>): Map<String, SpecialtyAccessCapabilities> {
         if (specialtyIds.isEmpty()) return emptyMap()
         val query = "/rest/v1/capacidades_especialidad?select=especialidad_id,permite_rafagas,permite_razonados,permite_inmersivos,permite_demos" +
@@ -428,7 +482,7 @@ internal class CatalogGateway(
         /** Solo metadatos de examen. NUNCA preguntas, opciones ni soluciones (SEC-004). */
         internal const val EXAM_COLUMNS =
             "id,codigo_examen,titulo,descripcion,tipo_examen,tipo_acceso,especialidad_id,total_preguntas,duracion_minutos,anio," +
-                "portada_storage_path,publicado_en,demo_disponible,comunidades_autonomas(codigo)"
+                "portada_storage_path,publicado_en,demo_disponible,comprable_con_tickets,precio_tickets,dias_acceso_compra,penalizacion_num,penalizacion_den,penalizacion_racional,comunidades_autonomas(codigo)"
         internal const val LATEST_ATTEMPTS_FETCH_LIMIT = 500
 
         /** `supabase/migrations/20261008100300_slice2_my_exams_read_rpc.sql` (STABLE, EXECUTE solo `service_role`). */

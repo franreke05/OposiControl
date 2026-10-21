@@ -123,3 +123,67 @@ groups:
         annotations:
           summary: "Ninguna replica consigue hablar con Supabase desde hace 3 minutos"
           description: "La API responde /health/live pero toda ruta con datos falla. Mirar el panel de Supabase (cuota, estado del proyecto)."
+
+  # Pagos de tienda (re-auditoria OposiControl 2026-10-19, NEW-5): bandeja de avisos de Google Play / App Store. Gauges de StorePaymentRoutes.kt
+  # (StoreInboxMetrics), publicados por el trabajo de reconciliacion de las replicas bot. max() porque las dos replicas leen la misma base.
+  - name: store-payments
+    rules:
+      - alert: StoreInboxPendingStuck
+        expr: max(store_inbox_oldest_seconds{estado="pendiente"}) > 3600
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Avisos de tienda pendientes de procesar desde hace mas de una hora"
+          description: "La bandeja reintenta con espera creciente; mirar ultimo_error en tienda_bandeja (API de Google caida, credenciales, base)."
+
+      # N4-2 (re-auditoria Control ronda 4): los avisos retenidos por G1 / D8 apagados se publican como estado="retenido_decision" (estado
+      # esperado mientras el propietario no encienda el credito real o las suscripciones): no cuentan aqui ni en StoreInboxPendingStuck.
+      - alert: StoreInboxRefundsRetained
+        expr: max(store_inbox_backlog{estado="retenido"}) > 0
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Reembolsos de tienda guardados con PAYMENTS_REFUNDS_ENABLED apagado"
+          description: "No se pierden: se aplican al activar los reembolsos. Decidir con el propietario (D2) o activarlos."
+
+      - alert: StoreInboxDeadLetter
+        expr: max(store_inbox_backlog{estado="muerto"}) > 0
+        for: 5m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Avisos de tienda en dead letter"
+          description: "Superaron PAYMENTS_STORE_DEAD_LETTER_ATTEMPTS. Revisar y reencolar (RPC requeue de la bandeja de tienda)."
+
+      - alert: StoreInboxOrphansOld
+        expr: max(store_inbox_oldest_seconds{estado=~"huerfano_reembolso|huerfano_reversion"}) > 86400
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Reembolsos o reversiones de tienda sin compra desde hace mas de un dia"
+          description: "La compra no ha llegado (o no se verifico). El trabajo los re-enlaza en cuanto exista; si no llega, revision manual."
+
+      # N3-6 (re-auditoria Control ronda 3): pagos de tienda encendidos (store_payments_enabled = 1, lo publica el arranque) pero el trabajo no
+      # publica la bandeja (PAYMENTS_STORE_JOB_SECONDS=0, trabajo caido): sin esta regla las demas alertas de la bandeja nunca saltarian.
+      - alert: StoreInboxMetricsAbsent
+        expr: absent(store_inbox_backlog) and on() (max(store_payments_enabled) == 1)
+        for: 30m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Pagos de tienda activos sin metricas de la bandeja"
+          description: "El trabajo de reconciliacion no publica store_inbox_backlog. Revisar PAYMENTS_STORE_JOB_SECONDS y los logs del trabajo. Dead letter: decision N3-6 (docs/payments/DECISIONS_PENDING.md)."
+
+      # N5-1 (re-auditoria Control ronda 5): Get Notification History lleva mas de 100 paginas desde el cursor; el token de la pagina siguiente esta
+      # guardado y cada vuelta del trabajo lee 100 mas. Si sigue a medias 6 horas, algo no avanza (token rechazado en bucle, API caida).
+      - alert: StoreAppleHistoryIncomplete
+        expr: max(store_inbox_history_incomplete) == 1
+        for: 6h
+        labels:
+          severity: warning
+        annotations:
+          summary: "Recuperacion de avisos de App Store (Notification History) a medias desde hace 6 horas"
+          description: "tienda_sondeo guarda un paginationToken que no se termina de leer. Revisar los logs 'store apple history' del trabajo y la App Store Server API."

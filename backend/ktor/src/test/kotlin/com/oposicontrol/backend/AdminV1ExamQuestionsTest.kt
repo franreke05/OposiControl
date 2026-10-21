@@ -254,18 +254,19 @@ class AdminV1ExamQuestionsTest {
     // -----------------------------------------------------------------
 
     @Test
-    fun updatingAnExamToNationalSendsExplicitNullCommunity() {
-        val body = patchBodyFor(
-            buildJsonObject {
-                put("especialidadId", especialidadId)
-                put("titulo", "Examen")
-                put("comunidadId", JsonNull)
-            },
-        )
-
-        // ESTA ES LA PRUEBA DE MUTACIÓN de P0-IB-1: volver un examen a Nacional
-        // tiene que llegar a la base como NULL explícito.
-        assertTrue(body.contains("\"comunidad_id\":null"), body)
+    fun updatingAnExamCannotClearTheCommunityAnymore() {
+        // V1 (propietario, 2026-10-15): toda examen lleva comunidad. La prueba de P0-IB-1 (volver a "Nacional" llegaba como NULL
+        // explicito) queda SUSTITUIDA: ahora el NULL se rechaza ANTES de salir ninguna peticion.
+        val error = kotlin.test.assertFailsWith<BackendDomainException> {
+            patchBodyFor(
+                buildJsonObject {
+                    put("especialidadId", especialidadId)
+                    put("titulo", "Examen")
+                    put("comunidadId", JsonNull)
+                },
+            )
+        }
+        assertEquals(EXAM_COMMUNITY_REQUIRED_CODE, error.errorCode)
     }
 
     @Test

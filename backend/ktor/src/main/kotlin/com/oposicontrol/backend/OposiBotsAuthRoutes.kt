@@ -66,6 +66,7 @@ internal fun Route.oposiBotsAuthRoutes(runtime: OposiBotsAuthRuntime) {
             call.authEndpoint(runtime, OposiBotsAuthOperation.EMAIL_EXCHANGE) {
                 val request = receiveAuthJson<OposiBotsEmailExchangeRequest>(runtime.json)
                 request.code.requireCredential()
+                validateCodeVerifier(request.codeVerifier, request.email, runtime.configuration)
                 requireSubjectLimit(runtime, request.code)
                 respond(runtime.gateway.exchangeEmail(request, authContext(runtime.configuration)))
             }
@@ -142,7 +143,7 @@ internal fun Route.oposiBotsAuthRoutes(runtime: OposiBotsAuthRuntime) {
         post("/reset-password") {
             call.authEndpoint(runtime, OposiBotsAuthOperation.RESET) {
                 val request = receiveAuthJson<OposiBotsResetPasswordRequest>(runtime.json)
-                request.validate()
+                request.validate(runtime.configuration)
                 requireSubjectLimit(runtime, request.resetToken)
                 runtime.gateway.reset(request, authContext(runtime.configuration))
                 respond(HttpStatusCode.NoContent)
@@ -364,11 +365,13 @@ internal fun resolveTrustedClientIp(
 private fun OposiBotsRegisterRequest.validate(configuration: OposiBotsAuthConfiguration) {
     validateIdentifierAndPassword(resolvedIdentifier(), password, newPassword = true)
     validateCaptcha(captchaToken, configuration)
+    validateCodeChallenge(codeChallenge, configuration)
 }
 
 private fun OposiBotsEmailResendRequest.validate(configuration: OposiBotsAuthConfiguration) {
     requireCanonicalAuthEmail(email)
     validateCaptcha(captchaToken, configuration)
+    validateCodeChallenge(codeChallenge, configuration)
 }
 
 private fun OposiBotsLoginRequest.validate() {
@@ -378,18 +381,46 @@ private fun OposiBotsLoginRequest.validate() {
 private fun OposiBotsRecoverRequest.validate(configuration: OposiBotsAuthConfiguration) {
     requireCanonicalAuthEmail(resolvedIdentifier())
     validateCaptcha(captchaToken, configuration)
+    validateCodeChallenge(codeChallenge, configuration)
 }
 
-private fun OposiBotsResetPasswordRequest.validate() {
+private fun OposiBotsResetPasswordRequest.validate(configuration: OposiBotsAuthConfiguration) {
     resetToken.requireCredential()
     validatePassword(newPassword)
+    validateCodeVerifier(codeVerifier, email, configuration)
+}
+
+/** FA39: shape of the S256 challenge sent with the email request; required only in `required` mode, ignored in `off`. */
+private fun validateCodeChallenge(challenge: String?, configuration: OposiBotsAuthConfiguration) {
+    if (configuration.pkceMode == PkceMode.OFF) return
+    if (challenge == null) {
+        if (configuration.pkceMode == PkceMode.REQUIRED) throw OposiBotsAuthProblem.validation(OposiBotsValidationIssue.INVALID_CODE_CHALLENGE)
+        return
+    }
+    if (!Pkce.CHALLENGE.matches(challenge)) throw OposiBotsAuthProblem.validation(OposiBotsValidationIssue.INVALID_CODE_CHALLENGE)
+}
+
+/** FA39: shape of the verifier (and of the optional email hint) sent with the code. Shape errors never depend on the code. */
+private fun validateCodeVerifier(verifier: String?, email: String?, configuration: OposiBotsAuthConfiguration) {
+    if (configuration.pkceMode == PkceMode.OFF) return
+    if (verifier == null) {
+        if (configuration.pkceMode == PkceMode.REQUIRED) throw OposiBotsAuthProblem.validation(OposiBotsValidationIssue.INVALID_CODE_VERIFIER)
+    } else if (!Pkce.VERIFIER.matches(verifier)) {
+        throw OposiBotsAuthProblem.validation(OposiBotsValidationIssue.INVALID_CODE_VERIFIER)
+    }
+    if (email != null && authEmailIssue(email) != null) throw OposiBotsAuthProblem.validation(OposiBotsValidationIssue.INVALID_IDENTIFIER)
 }
 
 private fun OposiBotsProfileRequest.validate() {
     val issues = buildSet {
         if (firstName.isBlank() || firstName.length > 100) add(OposiBotsValidationIssue.BLANK_FIRST_NAME)
         if (lastName.isBlank() || lastName.length > 100) add(OposiBotsValidationIssue.BLANK_LAST_NAME)
-        if (specialty.isBlank() || specialty.length > 100) add(OposiBotsValidationIssue.SPECIALTY_NOT_SELECTED)
+        // V1: con `especialidadId` el nombre no hace falta (y si llegan los dos, gana el id). Un id mal formado es 400.
+        if (especialidadId != null) {
+            if (!especialidadId.isUuid()) add(OposiBotsValidationIssue.SPECIALTY_NOT_SELECTED)
+        } else if (specialty.isBlank() || specialty.length > 100) {
+            add(OposiBotsValidationIssue.SPECIALTY_NOT_SELECTED)
+        }
         if (username != null && (username.length !in 3..30 || !username.matches(Regex("[A-Za-z0-9._-]+")))) {
             add(OposiBotsValidationIssue.INVALID_USERNAME)
         }

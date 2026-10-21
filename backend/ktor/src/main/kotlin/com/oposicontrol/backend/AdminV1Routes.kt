@@ -422,10 +422,13 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway, idempotency: IdempotencyStore? 
                 // F-07: los dos ids del CUERPO acaban en columnas uuid del INSERT.
                 // Sin validar, un valor que no es UUID llegaba a Postgres, volvía
                 // como 22P02 y salía como 500. Ahora es un 400 que nombra el campo
-                // y no sale ninguna petición a Supabase. (`comunidadId` ausente o
-                // `null` es "Nacional" y no se valida.)
+                // y no sale ninguna petición a Supabase.
+                // V1 (2026-10-15): la comunidad es OBLIGATORIA. Ausente, nula o en blanco es un 422
+                // EXAM_COMMUNITY_REQUIRED, y debe existir y estar activa en el catalogo (422 UNKNOWN_COMMUNITY).
                 if (body.especialidadId.isNotBlank()) body.especialidadId.validatedUuid("especialidadId")
-                body.comunidadId?.validatedUuid("comunidadId")
+                val community = body.comunidadId?.takeIf { it.isNotBlank() } ?: throw examCommunityRequiredException()
+                community.validatedUuid("comunidadId")
+                withUpstreamIo { gateway.requireActiveCommunity(community) }
                 val saved = withUpstreamIo { gateway.createExamen(body) }
                 call.respond(HttpStatusCode.Created, AdminExamenResponse(saved))
             }
@@ -461,6 +464,9 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway, idempotency: IdempotencyStore? 
                 val raw = call.receive<JsonObject>()
                 // Cuarta ruta de la misma familia: un id que no existe es un 404
                 // con el MISMO `ErrorDto` que `GET /examenes/{id}`, no un 500.
+                (raw["comunidadId"] as? JsonPrimitive)?.takeIf { it.isString }?.let { community ->
+                    withUpstreamIo { gateway.requireActiveCommunity(community.content.validatedUuid("comunidadId")) }
+                }
                 val saved = withUpstreamIo { gateway.updateExamen(id, raw) }
                     ?: return@patch call.respond(
                         HttpStatusCode.NotFound,
@@ -956,6 +962,14 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway, idempotency: IdempotencyStore? 
                 )
             }
         }
+        // V1 wave 3 (C-S4): recalculo de estadisticas solo para administradores. Auditado y con enfriamiento en la base (429 STATS_RECOMPUTE_COOLDOWN); nunca desde un endpoint de usuario.
+        route("/estadisticas") {
+            post("/recalcular") {
+                val req = call.receive<AdminRecomputeStatsRequest>()
+                val actorId = actorIdFromPrincipalName(call.principal<UserIdPrincipal>()?.name)
+                call.respond(withUpstreamIo { gateway.recalcularEstadisticas(req.alcance, actorId) })
+            }
+        }
         route("/importaciones") {
             route("/preguntas") {
                 get {
@@ -1407,7 +1421,14 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway, idempotency: IdempotencyStore? 
             get { call.respond(withUpstreamIo { gateway.listExamAccesses() }) }
             post {
                 val body = call.receive<AdminExamAccessDto>()
-                call.respond(HttpStatusCode.Created, withUpstreamIo { gateway.upsertExamAccess(body) })
+                val (access, outcome) = withUpstreamIo { gateway.upsertExamAccessResult(body) }
+                // 201 solo si se creo una concesion; una repeticion o un acceso ilimitado heredado ya existente es 200 con la cabecera de repeticion (el panel acepta cualquier 2xx).
+                if (outcome == "CREATED") {
+                    call.respond(HttpStatusCode.Created, access)
+                } else {
+                    call.response.header(IdempotencyHeaders.REPLAYED, "true")
+                    call.respond(HttpStatusCode.OK, access)
+                }
             }
             // D2-63: retirar un acceso. Idempotente: retirar uno ya retirado responde 200 con el mismo acceso.
             post("/{id}/revocar") {
@@ -1957,7 +1978,7 @@ private val PATCHABLE_EXAMEN_COLUMNS: Map<String, String> = linkedMapOf(
  * clave admitida un `null` es un 400: no hay columna NOT NULL que se pueda vaciar
  * por accidente.
  */
-private val CLEARABLE_EXAMEN_KEYS: Set<String> = setOf("comunidadId", "anio", "duracionMinutos")
+private val CLEARABLE_EXAMEN_KEYS: Set<String> = setOf("anio", "duracionMinutos")
 
 /** Mismo 400 y mismo mensaje que daba `call.receive<AdminExamenDto>()`, sin nombres de campo. */
 private fun badExamBody(): Nothing = throw BadRequestException("El cuerpo de la petición no es válido.")
@@ -1975,6 +1996,8 @@ internal fun examenPatchFrom(raw: JsonObject): JsonObject = buildJsonObject {
     PATCHABLE_EXAMEN_COLUMNS.forEach { (key, column) ->
         val value = raw[key] ?: return@forEach
         if (value is JsonNull) {
+            // V1: la comunidad ya no se puede borrar (volver a "Nacional" ya no existe).
+            if (key == "comunidadId") throw examCommunityRequiredException()
             if (key in CLEARABLE_EXAMEN_KEYS) put(column, JsonNull) else badExamBody()
             return@forEach
         }
@@ -2509,6 +2532,8 @@ private data class AdminSolucionRow(
     @SerialName("pregunta_id") val preguntaId: String,
     @SerialName("opcion_correcta_id") val opcionCorrectaId: String,
     val razonamiento: String,
+    /** FA38: el texto fuente con marcas (solo si la explicacion tiene estilo). */
+    @SerialName("razonamiento_markup") val razonamientoMarkup: String? = null,
 )
 
 /**
@@ -2756,6 +2781,13 @@ data class AdminStagingItemDto(
      * En el PATCH un `null` (o ausente) BORRA el motivo guardado.
      */
     val motivoAnulacion: String? = null,
+    /**
+     * FA37: `PRINCIPAL` | `RESERVA`. Lectura: siempre presente. Escritura (alta de lote / PATCH): `null` = no se toca
+     * (un cliente antiguo que reemplaza la fila entera no mueve una reserva al bloque principal); cualquier otro valor es un 400.
+     */
+    val bloque: String? = null,
+    /** FA38 (solo lectura): estructura del razonamiento con estilo (`null` = texto sin marcas). `razonamiento` es el texto FUENTE con marcas. */
+    val razonamientoRico: JsonObject? = null,
 )
 
 /**
@@ -2797,6 +2829,12 @@ data class AdminLoteDto(
      * calcular: nunca un 0/0 inventado. Ver [AdminLoteResumenDto].
      */
     val resumen: AdminLoteResumenDto? = null,
+    /** FA37: la cabecera `CODIGO_EXAMEN` del fichero (null = el lote se creo sin cabecera). */
+    val codigoExamen: String? = null,
+    /** FA37: huella del contenido (en `GET /importaciones/preguntas/{loteId}`; null en el listado). */
+    val huella: String? = null,
+    /** FA37: id del lote YA IMPORTADO en el mismo examen con el mismo contenido (null = ninguno): avisar y no publicar. */
+    val duplicadoDe: String? = null,
 )
 
 /**
@@ -2838,6 +2876,14 @@ data class AdminImportResultadoDto(
     val totalImportadas: Int,
     /** Cuantas de las preguntas publicadas quedaron ANULADAS en el examen (M10). */
     @EncodeDefault val anuladas: Int = 0,
+    /** FA37: cuantas de las publicadas quedaron como RESERVA del examen. */
+    @EncodeDefault val reservas: Int = 0,
+    /** FA37: huella sha256 del contenido publicado. */
+    val huella: String? = null,
+    /** FA37: primer problema de reglas oficiales que sigue abierto tras la publicacion (null = ninguno); un borrador sin reservas puede completarse con otro lote. */
+    val problema: String? = null,
+    /** FA37: avisos que no bloquean (`MORE_RESERVES_THAN_MAX`, `ANNULLED_RESERVE_SKIPPED`). */
+    @EncodeDefault val avisos: List<String> = emptyList(),
 )
 
 /** `data` conserva la forma de [AdminLoteResponse]: un cliente que sólo lea `data` no se rompe. */
@@ -2849,6 +2895,8 @@ data class CrearLoteRequest(
     val examenId: String,
     val nombreArchivo: String = "",
     val tipoExamen: String = "rafaga",
+    /** FA37: cabecera `CODIGO_EXAMEN` del fichero; si viene, tiene que ser el codigo del examen del lote (422 IMPORT_EXAM_CODE_MISMATCH). */
+    val codigoExamen: String? = null,
     // El parseo PDF->preguntas es responsabilidad externa; aqui se reciben ya parseadas.
     val preguntas: List<AdminStagingItemDto> = emptyList(),
 )
@@ -2981,6 +3029,9 @@ private data class LoteRow(
     /** Quién subió el PDF (D-11). Nunca se escribía, así que ningún lote tenía autor. */
     @SerialName("subido_por") val subidoPor: String? = null,
     val metadatos: JsonObject = JsonObject(emptyMap()),
+    /** FA37: cabecera del fichero. Nulo = no se manda (el INSERT funciona tambien sin la migracion de reservas). */
+    @SerialName("codigo_examen") val codigoExamen: String? = null,
+    val huella: String? = null,
 )
 
 @Serializable
@@ -3006,6 +3057,11 @@ private data class StagingRow(
     val anulada: Boolean = false,
     @SerialName("motivo_anulacion") val motivoAnulacion: String? = null,
     val metadatos: JsonObject = JsonObject(emptyMap()),
+    /** FA37 (necesita la migracion de reservas aplicada antes que este Ktor). */
+    val bloque: String = "PRINCIPAL",
+    /** FA38: el texto tal como lo escribio el autor (con marcas) y su estructura; `razonamiento` es el texto plano que publica la RPC. */
+    @SerialName("razonamiento_markup") val razonamientoMarkup: String? = null,
+    @SerialName("razonamiento_rico") val razonamientoRico: JsonObject? = null,
 )
 
 /**
@@ -3038,6 +3094,11 @@ private data class StagingPatch(
     val anulada: Boolean? = null,
     /** `JsonNull` = borra el motivo; `null` = no se toca. */
     val motivoAnulacion: JsonElement? = null,
+    /** FA37: `null` = no se toca. */
+    val bloque: String? = null,
+    /** FA38: `JsonNull` = borra; `null` = no se toca. */
+    val razonamientoMarkup: JsonElement? = null,
+    val razonamientoRico: JsonElement? = null,
 ) {
     fun toJson(): JsonObject = buildJsonObject {
         titulo?.let { put("titulo", JsonPrimitive(it)) }
@@ -3054,6 +3115,9 @@ private data class StagingPatch(
         vincularPreguntaId?.let { put("vincular_pregunta_id", it) }
         anulada?.let { put("anulada", JsonPrimitive(it)) }
         motivoAnulacion?.let { put("motivo_anulacion", it) }
+        bloque?.let { put("bloque", JsonPrimitive(it)) }
+        razonamientoMarkup?.let { put("razonamiento_markup", it) }
+        razonamientoRico?.let { put("razonamiento_rico", it) }
     }
 }
 
@@ -3071,6 +3135,25 @@ private fun normalizedAnnulmentReason(anulada: Boolean, motivo: String?): String
     return limpio
 }
 
+/** FA38: lo que una fila de staging guarda de un razonamiento escrito por el autor (texto plano, fuente con marcas y estructura) o por que no es valido. */
+private class StagedRazonamiento(val plain: String, val markup: String?, val rico: JsonObject?, val problema: String?)
+
+private fun stageRazonamiento(source: String): StagedRazonamiento {
+    val (stored, issues) = RichMarkup.storeFor(source)
+    if (stored == null) {
+        val detalle = issues.take(5).joinToString(", ") { "${it.code}@${it.at}" }
+        return StagedRazonamiento(source, null, null, "El marcado del razonamiento no es valido ($detalle): corrigelo antes de aprobar.")
+    }
+    return StagedRazonamiento(stored.plain, source.takeIf { stored.rico != null }, stored.rico, null)
+}
+
+/** FA37: `PRINCIPAL` | `RESERVA` (nulo = PRINCIPAL en un alta); cualquier otra cosa es un 400. */
+private fun requireKnownBloque(value: String?): String {
+    val v = value?.trim()?.takeIf { it.isNotEmpty() } ?: BLOQUE_PRINCIPAL
+    require(v == BLOQUE_PRINCIPAL || v == BLOQUE_RESERVA) { "El bloque tiene que ser PRINCIPAL o RESERVA." }
+    return v
+}
+
 private fun StagingRow.toDto() = AdminStagingItemDto(
     id = id.orEmpty(),
     posicion = posicion,
@@ -3080,7 +3163,7 @@ private fun StagingRow.toDto() = AdminStagingItemDto(
     opcionC = opcionC.orEmpty(),
     opcionD = opcionD.orEmpty(),
     respuestaCorrecta = respuestaCorrecta.orEmpty(),
-    razonamiento = razonamiento.orEmpty(),
+    razonamiento = razonamientoMarkup ?: razonamiento.orEmpty(),
     fuenteTexto = fuenteTexto.orEmpty(),
     etiquetaTexto = etiquetaTexto.orEmpty(),
     bloqueOriginal = bloqueOriginal,
@@ -3090,6 +3173,8 @@ private fun StagingRow.toDto() = AdminStagingItemDto(
     vincularPreguntaId = vincularPreguntaId,
     anulada = anulada,
     motivoAnulacion = motivoAnulacion,
+    bloque = bloque,
+    razonamientoRico = razonamientoRico,
 )
 
 // ----- Feedback de preguntas + Auditoria -----
@@ -3647,6 +3732,39 @@ private data class EstadoPremiumRow(
 
 
 @Serializable
+private data class AdminGrantExamRpc(
+    @SerialName("p_usuario") val usuario: String,
+    @SerialName("p_examen") val examen: String,
+    @SerialName("p_motivo") val motivo: String,
+    @SerialName("p_actor") val actor: String? = null,
+)
+
+@Serializable
+private data class AdminRevokeExamRpc(
+    @SerialName("p_grant") val grant: String,
+    @SerialName("p_actor") val actor: String? = null,
+)
+
+@Serializable
+private data class AdminRevokeExamResult(
+    val outcome: String,
+    @SerialName("grant_id") val grantId: String,
+    @SerialName("usuario_id") val usuarioId: String,
+    @SerialName("examen_id") val examenId: String,
+    val motivo: String? = null,
+    @SerialName("valido_hasta") val validoHasta: String? = null,
+    val concesiones: Int = 0,
+)
+
+@Serializable
+private data class AdminGrantExamResult(
+    val outcome: String,
+    @SerialName("grant_id") val grantId: String,
+    @SerialName("valido_desde") val validoDesde: String? = null,
+    @SerialName("valido_hasta") val validoHasta: String? = null,
+)
+
+@Serializable
 private data class AdminGrantTicketsRpc(
     @SerialName("p_usuario_id") val usuarioId: String,
     @SerialName("p_cantidad") val cantidad: Int,
@@ -3724,6 +3842,12 @@ private data class AdminCreateQuestionResult(
 // que es lo único que la pantalla pinta. Un DTO que nadie lee sólo sería otra forma más
 // de que el contrato y el código se separen sin que ningún test lo note.
 
+@Serializable
+internal data class AdminRecomputeStatsRequest(val alcance: String = "dificultad")
+
+@Serializable
+private data class AdminRecomputeStatsRpc(@SerialName("p_actor") val actor: String? = null, @SerialName("p_alcance") val alcance: String)
+
 /** Argumentos de `admin_import_lote_preguntas` (IM3, KI3-1). */
 @Serializable
 private data class AdminImportLoteRpc(
@@ -3752,7 +3876,16 @@ private data class AdminImportLoteResultRow(
     val omitidas: Int = 0,
     /** M10: filas publicadas con la relacion anulada. Ausente en una RPC anterior a M10. */
     val anuladas: Int = 0,
+    val reservas: Int = 0,
+    val huella: String? = null,
+    val problema: String? = null,
+    val avisos: List<String> = emptyList(),
 )
+
+@Serializable
+private data class AdminLoteHuellaRow(val huella: String? = null, @SerialName("duplicado_de") val duplicadoDe: String? = null)
+
+private class AdminLoteHuellaDto(val huella: String? = null, val duplicadoDe: String? = null)
 
 /** Una fila de `admin_import_lote_duplicados` (IM3, KI3-2). */
 @Serializable
@@ -4276,6 +4409,14 @@ class AdminV1Gateway private constructor(
         ).decodeList<AdminExamenRow>().firstOrNull()?.toDto().withSignedCover()
     }
 
+    /** V1: la comunidad debe existir y estar activa; 422 UNKNOWN_COMMUNITY si no. */
+    fun requireActiveCommunity(communityId: String) {
+        val found = request("GET", "/rest/v1/comunidades_autonomas?select=id&id=eq.$communityId&activa=eq.true&limit=1", null)
+            .decodeList<JsonObject>()
+            .isNotEmpty()
+        if (!found) throw examCommunityUnknownException()
+    }
+
     /**
      * Publica. `null` = el examen no existe, y eso lo traduce la ruta a 404.
      *
@@ -4298,15 +4439,16 @@ class AdminV1Gateway private constructor(
         requireExamImmersivesHaveAudio(id)
         val saved = request(
             "PATCH",
-            "/rest/v1/examenes?id=eq.$id&total_preguntas=gt.0",
+            "/rest/v1/examenes?id=eq.$id&total_preguntas=gt.0&comunidad_id=not.is.null",
             """{"publicado_en":"${Instant.now()}","activo":true}""",
             prefer = "return=representation",
         ).decodeList<AdminExamenRow>().firstOrNull()?.toDto()
         if (saved == null) {
-            val existe = request("GET", "/rest/v1/examenes?select=id&id=eq.$id&limit=1", null)
+            val row = request("GET", "/rest/v1/examenes?select=id,comunidad_id&id=eq.$id&limit=1", null)
                 .decodeList<JsonObject>()
-                .isNotEmpty()
-            if (!existe) return null
+                .firstOrNull() ?: return null
+            // La comunidad se comprueba primero: sin ella no hay publicacion posible aunque tenga preguntas.
+            if (row["comunidad_id"] == null || row["comunidad_id"] is JsonNull) throw examPublishRequiresCommunityException()
             throw examPublishRequiresQuestionsException()
         }
         registrarAuditoria(
@@ -4588,7 +4730,7 @@ class AdminV1Gateway private constructor(
     ): AdminPreguntaDto {
         val correctaId = solucion?.opcionCorrectaId
         return toDtoSinDetalle().copy(
-            razonamiento = solucion?.razonamiento.orEmpty(),
+            razonamiento = solucion?.razonamientoMarkup ?: solucion?.razonamiento.orEmpty(),
             opciones = opciones.map {
                 AdminOpcionDto(
                     id = it.id.orEmpty(),
@@ -4628,6 +4770,9 @@ class AdminV1Gateway private constructor(
         loteImportacionId: String? = null,
     ): AdminPreguntaCreada {
         val preguntaId = input.id.takeIf { it.isNotBlank() }?.validatedUuid("id") ?: UUID.randomUUID().toString()
+        // FA38: la misma gramatica estricta para todo razonamiento; la columna publica sigue siendo texto plano.
+        val staged = input.razonamiento.takeIf { it.isNotEmpty() }?.let(::stageRazonamiento)
+        require(staged?.problema == null) { staged?.problema.orEmpty() }
         val body = request(
             "POST", "/rest/v1/rpc/admin_create_question",
             sbJson.encodeToString(
@@ -4636,7 +4781,7 @@ class AdminV1Gateway private constructor(
                     tipoPregunta = input.tipoPregunta,
                     titulo = input.titulo,
                     opciones = input.opciones.map { AdminRpcOpcionInput(it.letra, it.texto, it.esCorrecta) },
-                    razonamiento = input.razonamiento.takeIf { it.isNotEmpty() },
+                    razonamiento = staged?.plain,
                     fuenteTexto = input.fuenteTexto?.takeIf { it.isNotBlank() },
                     dificultad = input.dificultad.takeIf { it.isNotBlank() },
                     activa = input.activa,
@@ -4649,6 +4794,7 @@ class AdminV1Gateway private constructor(
         )
         val resultado = json.decodeFromString<AdminCreateQuestionResult>(body)
         // Un reintento que no escribió nada no es otra alta: sin auditoría.
+        if (staged?.rico != null) persistRazonamientoRico(resultado.preguntaId, staged)
         if (resultado.creada) registrarAuditoria("pregunta_creada", "preguntas", resultado.preguntaId)
         val leida = getPregunta(resultado.preguntaId) ?: error("No se pudo leer la pregunta creada.")
         return AdminPreguntaCreada(leida, resultado.creada)
@@ -4668,8 +4814,34 @@ class AdminV1Gateway private constructor(
      *   Exámenes vincula al CREAR (misma transacción que el alta).
      * - Tocar `recursos[]` (KQ0-8), el código (Q1) o la especialidad.
      */
+    /**
+     * FA38: guarda (o borra, con `rico == null`) la estructura del razonamiento y su texto fuente en la solucion de la pregunta.
+     * Se hace DESPUES de la RPC, que ya dejo el texto plano; la base valida la estructura y que coincida con ese texto (MARKUP_*).
+     * Con `rico == null` solo toca filas que tenian estructura (un editor que quita el estilo sin cambiar el texto plano).
+     */
+    private fun persistRazonamientoRico(preguntaId: String, staged: StagedRazonamiento) {
+        val filtro = if (staged.rico == null) "&razonamiento_rico=not.is.null" else ""
+        request(
+            "PATCH",
+            "/rest/v1/soluciones_pregunta?pregunta_id=eq.${preguntaId.validatedUuid("id")}$filtro",
+            buildJsonObject {
+                put("razonamiento_markup", staged.markup?.let { JsonPrimitive(it) } ?: JsonNull)
+                put("razonamiento_rico", staged.rico ?: JsonNull)
+            }.toString(),
+            prefer = "return=minimal",
+        )
+    }
+
     fun updatePregunta(id: String, raw: JsonObject): AdminPreguntaDto {
-        val cambios = preguntaCambiosFrom(raw)
+        val cambiosCrudos = preguntaCambiosFrom(raw)
+        // FA38: el razonamiento se interpreta con la gramatica estricta; el RPC recibe el texto plano y la estructura se guarda aparte.
+        var staged: StagedRazonamiento? = null
+        val cambios = (cambiosCrudos["razonamiento"] as? JsonPrimitive)?.takeIf { it.isString }?.let { prim ->
+            val st = stageRazonamiento(prim.content)
+            require(st.problema == null) { st.problema.orEmpty() }
+            staged = st
+            JsonObject(cambiosCrudos + ("razonamiento" to JsonPrimitive(st.plain)))
+        } ?: cambiosCrudos
         request(
             "POST",
             "/rest/v1/rpc/admin_update_question",
@@ -4680,6 +4852,7 @@ class AdminV1Gateway private constructor(
                 put("p_cambios", cambios)
             }.toString(),
         )
+        staged?.let { persistRazonamientoRico(id, it) }
         registrarAuditoria("pregunta_actualizada", "preguntas", id)
         return getPregunta(id) ?: throw domainError("QUESTION_NOT_FOUND")
     }
@@ -4982,6 +5155,9 @@ class AdminV1Gateway private constructor(
                         buildJsonObject {
                             put("mime", JsonPrimitive(mime))
                             put("bytes", JsonPrimitive(bytes.size))
+                            // EX14 (dueno 2026-10-14, contrato FA18): solo AUDIO, calculado UNA vez aqui. Si no se
+                            // puede decodificar, el recurso se guarda igual, sin `durationMs` ni `envelope`.
+                            if (tipo == "audio") AudioEnvelope.ingestMetadata(bytes, mime)?.forEach { (key, value) -> put(key, value) }
                         },
                     )
                 }.toString(),
@@ -5249,12 +5425,13 @@ class AdminV1Gateway private constructor(
             .decodeList<StagingRow>()
         val duplicados: Map<String, AdminImportDuplicadoDto>? =
             if (lote.estado == "importado") emptyMap() else duplicadosDeLote(loteId)
+        val huella = if (lote.estado == "importado") null else huellaDeLote(loteId)
         return lote.toDto(
             staging = staging.map { row -> row.toDto().copy(duplicado = duplicados?.get(row.id.orEmpty())) },
             duplicadosComprobados = lote.estado == "importado" || duplicados != null,
             // Derivado de las filas leidas; si faltan filas (max-rows), no se afirma nada.
             resumen = resumenDeEstados(staging.map { it.estadoParseo }).takeIf { staging.size >= lote.totalDetectadas },
-        )
+        ).let { dto -> if (huella == null) dto else dto.copy(huella = huella.huella, duplicadoDe = huella.duplicadoDe) }
     }
 
     /**
@@ -5325,6 +5502,8 @@ class AdminV1Gateway private constructor(
         val examenId = req.examenId.validatedUuid("examenId")
         val examen = getExamen(examenId) ?: throw domainError("IMPORT_EXAM_NOT_FOUND")
         val tipo = canonicalExamType(examen.tipoExamen)
+        val cabecera = req.codigoExamen?.trim()?.takeIf { it.isNotEmpty() }
+        if (cabecera != null && cabecera != examen.codigoExamen) throw domainError("IMPORT_EXAM_CODE_MISMATCH")
         if (req.tipoExamen.isNotBlank() && canonicalExamType(req.tipoExamen) != tipo) {
             throw domainError("IMPORT_TYPE_MISMATCH")
         }
@@ -5332,6 +5511,8 @@ class AdminV1Gateway private constructor(
         // Se construyen y VALIDAN todas las filas de staging ANTES de escribir nada: una fila que
         // lanza (motivo sin anulada, estado desconocido...) no puede dejar un lote huérfano ya insertado.
         val rows = req.preguntas.mapIndexed { i, p ->
+            // FA38: Razonadas/Inmersivas publican la explicacion; Rafaga no (se descarta), asi que no se interpreta.
+            val staged = if (tipo == "rafaga") StagedRazonamiento(p.razonamiento, null, null, null) else stageRazonamiento(p.razonamiento)
             StagingRow(
                 id = UUID.randomUUID().toString(),
                 loteId = loteId,
@@ -5346,15 +5527,18 @@ class AdminV1Gateway private constructor(
                 // A–D o NULL, y la fila que trae una respuesta ilegible es justo la
                 // que tiene que llegar a revisión.
                 respuestaCorrecta = p.respuestaCorrecta.trim().uppercase().takeIf { it in RAFAGA_OPTION_LETTERS },
-                razonamiento = p.razonamiento,
+                razonamiento = staged.plain,
+                razonamientoMarkup = staged.markup,
+                razonamientoRico = staged.rico,
                 fuenteTexto = p.fuenteTexto,
                 etiquetaTexto = p.etiquetaTexto,
                 // Ya no es siempre `"ok"`: `crearLoteDesdePdf` manda ahora
                 // filas en `"error"` o `"advertencia"` para que exista la etapa
                 // de revisión. Un estado en blanco sigue significando `"ok"`.
-                estadoParseo = requireKnownStagingState(p.estadoParseo.ifBlank { "ok" }),
-                errorParseo = p.errorParseo?.takeIf { it.isNotBlank() },
+                estadoParseo = if (staged.problema != null && p.estadoParseo.ifBlank { "ok" } in setOf("ok", "advertencia")) "error" else requireKnownStagingState(p.estadoParseo.ifBlank { "ok" }),
+                errorParseo = listOfNotNull(p.errorParseo?.takeIf { it.isNotBlank() }, staged.problema).joinToString(" ").takeIf { it.isNotBlank() },
                 anulada = p.anulada,
+                bloque = requireKnownBloque(p.bloque),
                 // Una fila `error` puede traer un motivo ilegible (sin ESTADO: ANULADA, o de mas de 500):
                 // viaja al staging SIN el, que sigue en `bloque_original` y en `error_parseo`. Romper aqui el
                 // INSERT tiraria el lote entero por la errata de una sola fila. Las demas filas son estrictas.
@@ -5377,6 +5561,7 @@ class AdminV1Gateway private constructor(
                         estado = "parseado",
                         totalDetectadas = req.preguntas.size,
                         subidoPor = actorId,
+                        codigoExamen = req.codigoExamen?.trim()?.takeIf { it.isNotEmpty() },
                     ),
                 ),
             ),
@@ -5445,6 +5630,11 @@ class AdminV1Gateway private constructor(
         // `estado_parseo` es desconocido (0 filas en MAIN) y un valor inventado
         // rompería la inserción del lote entero, que es peor que el defecto.
         val parsed = parseQuestionBlocks(rawText, canonicalQuestionType(examen.tipoExamen))
+        // FA37: la cabecera CODIGO_EXAMEN (una sola, y la del examen elegido) evita importar el PDF de un examen en otro.
+        if (parsed.codigosExamen.distinct().size > 1) {
+            throw PdfImportRejectedException("El PDF declara mas de un CODIGO_EXAMEN: deja una sola cabecera.")
+        }
+        val cabeceraPdf = parsed.codigosExamen.firstOrNull()
         if (parsed.preguntas.isEmpty() && parsed.bloquesConError.isEmpty()) {
             // Lo único que sigue siendo un rechazo total: no se reconoció NI UN
             // bloque. Un lote de cero filas no es revisable, es un PDF que no
@@ -5477,6 +5667,7 @@ class AdminV1Gateway private constructor(
                     // La anulacion es ortogonal al estado de parseo: una anulada valida es `ok`.
                     anulada = p.anulada,
                     motivoAnulacion = p.motivoAnulacion,
+                    bloque = p.bloque,
                 )
             } + parsed.bloquesConError.map { b ->
                 AdminStagingItemDto(
@@ -5495,6 +5686,7 @@ class AdminV1Gateway private constructor(
                     errorParseo = b.detalle,
                     anulada = b.anulada,
                     motivoAnulacion = b.motivoAnulacion,
+                    bloque = b.bloque,
                 )
             }
             ).sortedBy { it.posicion }
@@ -5505,6 +5697,7 @@ class AdminV1Gateway private constructor(
                 // El tipo lo decide `crearLote` leyendo el examen; aquí se manda el que
                 // llegó para que, si no coincide, salga el 422 y no un lote mal tipado.
                 tipoExamen = tipoExamen,
+                codigoExamen = cabeceraPdf,
                 preguntas = filas,
             ),
             actorId = actorId,
@@ -5554,6 +5747,9 @@ class AdminV1Gateway private constructor(
         require(vincular == null || estado == "aprobada") {
             "Para vincular con una pregunta existente, la fila tiene que quedar aprobada."
         }
+        // FA38: el razonamiento se interpreta SIEMPRE con la misma gramatica; aprobar con marcado invalido es un 400.
+        val staged = stageRazonamiento(item.razonamiento)
+        require(staged.problema == null || estado != "aprobada") { staged.problema.orEmpty() }
         val patch = StagingPatch(
             titulo = item.titulo,
             opcionA = item.opcionA,
@@ -5562,11 +5758,17 @@ class AdminV1Gateway private constructor(
             opcionD = item.opcionD,
             // Vacía = NULL, no `""`: el CHECK vivo exige A–D o NULL.
             respuestaCorrecta = respuesta.takeIf { it.isNotEmpty() }?.let { JsonPrimitive(it) } ?: JsonNull,
-            razonamiento = item.razonamiento,
+            razonamiento = staged.plain,
+            razonamientoMarkup = staged.markup?.let { JsonPrimitive(it) } ?: JsonNull,
+            razonamientoRico = staged.rico ?: JsonNull,
             fuenteTexto = item.fuenteTexto,
             etiquetaTexto = item.etiquetaTexto,
-            estadoParseo = estado,
-            errorParseo = if (decidida) JsonNull else null,
+            estadoParseo = if (staged.problema != null && estado != "omitida") "error" else estado,
+            errorParseo = when {
+                staged.problema != null && estado != "omitida" -> JsonPrimitive(staged.problema)
+                decidida -> JsonNull
+                else -> null
+            },
             // Ausente = no se toca; `null` explícito = deshacer el vínculo elegido. Aprobar sin
             // vínculo y OMITIR son decisiones finales: ambas borran el puntero (una fila omitida
             // con el vínculo de cuando estaba aprobada sería la contradicción que el KDoc prohíbe).
@@ -5578,6 +5780,8 @@ class AdminV1Gateway private constructor(
             // La fila se reemplaza entera: anulada siempre viaja, y el motivo con ella (`null` lo borra).
             anulada = item.anulada,
             motivoAnulacion = motivoAnulacion?.let { JsonPrimitive(it) } ?: JsonNull,
+            // FA37: null = no se toca (un cliente antiguo no mueve una reserva al bloque principal).
+            bloque = item.bloque?.let { requireKnownBloque(it) },
         )
         return request(
             "PATCH", "/rest/v1/preguntas_parseadas_staging?id=eq.$id",
@@ -5621,6 +5825,16 @@ class AdminV1Gateway private constructor(
      * `IMPORT_EXAM_PUBLISHED_CONFIRMATION_REQUIRED` (las preguntas se verían al
      * instante), y viaja sólo porque él lo confirmó en un diálogo.
      */
+    /** V1 wave 3: `admin_recompute_stats` (auditado, con enfriamiento y cerrojo en la base). */
+    fun recalcularEstadisticas(alcance: String, actorId: String?): kotlinx.serialization.json.JsonElement {
+        val body = rpcOrUnavailable(
+            "admin_recompute_stats",
+            sbJson.encodeToString(AdminRecomputeStatsRpc(actorId, alcance)),
+            "STATS_RPC_NOT_PROVISIONED",
+        )
+        return json.parseToJsonElement(body)
+    }
+
     fun importarLote(
         loteId: String,
         confirmarExamenPublicado: Boolean = false,
@@ -5643,8 +5857,21 @@ class AdminV1Gateway private constructor(
                 omitidas = resultado.omitidas,
                 totalImportadas = resultado.totalImportadas,
                 anuladas = resultado.anuladas,
+                reservas = resultado.reservas,
+                huella = resultado.huella,
+                problema = resultado.problema,
+                avisos = resultado.avisos,
             ),
         )
+    }
+
+    /** FA37: huella del lote y lote ya importado con el mismo contenido; `null` si la RPC no existe todavia (sin la migracion). */
+    private fun huellaDeLote(loteId: String): AdminLoteHuellaDto? = try {
+        val body = request("POST", "/rest/v1/rpc/admin_import_lote_huella", buildJsonObject { put("p_lote_id", JsonPrimitive(loteId)) }.toString())
+        json.decodeFromString<AdminLoteHuellaRow>(body).let { AdminLoteHuellaDto(it.huella, it.duplicadoDe) }
+    } catch (error: Exception) {
+        // informative enrichment of the review screen: never fails the lot read (missing RPC, odd body, upstream hiccup)
+        null
     }
 
     private fun canonicalExamType(value: String): String = when (value.lowercase()) {
@@ -5674,6 +5901,8 @@ class AdminV1Gateway private constructor(
         staging = staging,
         duplicadosComprobados = duplicadosComprobados,
         resumen = resumen,
+        codigoExamen = codigoExamen,
+        huella = huella,
     )
 
     // FEEDBACK + AUDITORIA
@@ -7171,7 +7400,10 @@ class AdminV1Gateway private constructor(
      * filtros `eq` (sin la ventana de los 1000 perfiles mas nuevos): mas de una coincidencia = 409 y no se escribe nada
      * (nunca la primera), ninguna = 404. Un `userName`/`examTitle` con forma de uuid se trata como id (compatible).
      */
-    fun upsertExamAccess(input: AdminExamAccessDto): AdminExamAccessDto {
+    fun upsertExamAccess(input: AdminExamAccessDto): AdminExamAccessDto = upsertExamAccessResult(input).first
+
+    /** El acceso y el resultado de la base (CREATED, REPLAY, UNLIMITED_EXISTS): la ruta responde 201 solo si se creo. */
+    fun upsertExamAccessResult(input: AdminExamAccessDto): Pair<AdminExamAccessDto, String> {
         val motivo = canonicalUnlockReasonOrReject(input.accessType)
         // D2-62: una compra solo nace de una compra. Etiquetar a mano una concesion como «compra» falsearia su origen.
         if (motivo == PURCHASE_UNLOCK_REASON) {
@@ -7192,60 +7424,26 @@ class AdminV1Gateway private constructor(
         }
         val user = findPerfil(input.userId, input.userName)
         val exam = findExamen(input.examId, input.examTitle)
-        // Un acceso vigente del mismo usuario sobre el mismo examen ya es el resultado pedido: se devuelve tal cual, sin
-        // escribir una segunda fila (la tabla no tiene unicidad y dos filas vigentes hacian imposible retirar el acceso).
-        grantsOf(user.usuarioId, exam.id).firstOrNull { it.vigente(Instant.now()) }?.let { existing ->
-            return AdminExamAccessDto(
-                id = existing.id,
-                userName = user.displayName(user.usuarioId),
-                examTitle = exam.titulo,
-                accessType = existing.motivo.orEmpty().ifBlank { "manual" },
-                isActive = true,
-                userId = user.usuarioId,
-                examId = exam.id,
-                grantedAt = existing.creadoEn,
-                validUntil = existing.validoHasta,
-            )
-        }
-        // Siempre una fila NUEVA: el `id` que mande el cliente se ignora. Antes se reutilizaba con `on_conflict=id`, y
-        // guardar la fila de una persona con el nombre de otra le traspasaba el acceso sin dejar rastro.
-        val row = ContenidoDesbloqueadoInsertRow(
-            id = UUID.randomUUID().toString(),
-            usuarioId = user.usuarioId,
-            examenId = exam.id,
-            motivo = motivo,
-            validoHasta = null,
-        )
-        return request(
+        // V1 (propietario 2026-10-16): un regalo da UN MES (el plazo de la politica, como una compra), fijado por el SERVIDOR, nunca libre ni ilimitado. Todo en
+        // una RPC atomica (misma cerradura de cartera que el canje): examen publicado, usuario existente, las puertas de especialidad y capacidad como en
+        // cualquier acceso, apilado max(ahora_db, fin vigente) + plazo sin acortar nunca, y ninguna fila con valido_hasta nulo. No toca la cartera.
+        val grant = request(
             "POST",
-            "/rest/v1/contenido_desbloqueado_usuario",
-            sbJson.encodeToString(listOf(row)),
-            prefer = "return=representation",
-        ).decodeList<ContenidoDesbloqueadoRow>().first().let {
-            // Conceder acceso a un examen de pago es una accion economica: queda en auditoria con quien la hizo.
-            registrarAuditoriaResultado(
-                "acceso_examen_concedido",
-                "contenido_desbloqueado_usuario",
-                it.id,
-                antes = null,
-                despues = buildJsonObject {
-                    put("usuario_id", JsonPrimitive(user.usuarioId))
-                    put("examen_id", JsonPrimitive(exam.id))
-                    put("motivo", JsonPrimitive(motivo))
-                },
-            )
-            AdminExamAccessDto(
-                id = it.id,
-                userName = user.displayName(user.usuarioId),
-                examTitle = exam.titulo,
-                accessType = it.motivo.orEmpty().ifBlank { "manual" },
-                isActive = true,
-                userId = user.usuarioId,
-                examId = exam.id,
-                grantedAt = it.creadoEn,
-                validUntil = it.validoHasta,
-            )
-        }
+            "/rest/v1/rpc/admin_grant_exam_access",
+            sbJson.encodeToString(AdminGrantExamRpc(user.usuarioId, exam.id, motivo, AdminAuditActor.current())),
+        ).decodeList<AdminGrantExamResult>().firstOrNull() ?: error("La concesion de acceso no devolvio resultado.")
+        // La auditoria (append-only, con el actor) se escribe DENTRO de la RPC, en la misma transaccion: no hay concesion sin su fila de auditoria.
+        return AdminExamAccessDto(
+            id = grant.grantId,
+            userName = user.displayName(user.usuarioId),
+            examTitle = exam.titulo,
+            accessType = motivo,
+            isActive = true,
+            userId = user.usuarioId,
+            examId = exam.id,
+            grantedAt = grant.validoDesde,
+            validUntil = grant.validoHasta,
+        ) to grant.outcome
     }
 
     /**
@@ -7260,57 +7458,28 @@ class AdminV1Gateway private constructor(
      */
     fun revokeExamAccess(grantId: String): AdminExamAccessDto {
         val id = grantId.validatedUuid("id")
-        val target = request("GET", "/rest/v1/contenido_desbloqueado_usuario?select=*&id=eq.$id&limit=1", null)
-            .decodeList<ContenidoDesbloqueadoRow>()
-            .firstOrNull()
-            ?: throw BackendDomainException("GRANT_NOT_FOUND", HttpStatusCode.NotFound, "No existe el acceso indicado.")
-        val examenId = target.examenId
-            ?: throw BackendDomainException("GRANT_NOT_FOUND", HttpStatusCode.NotFound, "No existe el acceso indicado.")
-        if (target.motivo == PURCHASE_UNLOCK_REASON) {
-            throw BackendDomainException(
-                "GRANT_IS_PURCHASE",
-                HttpStatusCode.UnprocessableEntity,
-                "Un acceso comprado no se retira desde aquí.",
-            )
-        }
-        val now = Instant.now()
-        val vigentes = grantsOf(target.usuarioId, examenId).filter { it.vigente(now) && it.motivo != PURCHASE_UNLOCK_REASON }
-        val closedAt = now.toString()
-        if (vigentes.isNotEmpty()) {
-            request(
-                "PATCH",
-                "/rest/v1/contenido_desbloqueado_usuario?id=in.(${vigentes.joinToString(",") { it.id }})",
-                sbJson.encodeToString(ContenidoDesbloqueadoCierre(closedAt)),
-                prefer = "return=minimal",
-            )
-            registrarAuditoriaResultado(
-                "acceso_examen_retirado",
-                "contenido_desbloqueado_usuario",
-                target.id,
-                antes = buildJsonObject {
-                    put("usuario_id", JsonPrimitive(target.usuarioId))
-                    put("examen_id", JsonPrimitive(examenId))
-                    put("motivos", JsonPrimitive(vigentes.mapNotNull { it.motivo }.distinct().joinToString(",")))
-                    put("concesiones", JsonPrimitive(vigentes.size))
-                },
-                despues = buildJsonObject { put("valido_hasta", JsonPrimitive(closedAt)) },
-            )
-        }
-        val user = perfilesByIds(listOf(target.usuarioId))[target.usuarioId]
-        val examTitle = request("GET", "/rest/v1/examenes?select=id,titulo&id=eq.$examenId&limit=1", null)
+        // UNA RPC atomica bajo la misma cerradura de cartera que el regalo y el canje, con el reloj de la base: un regalo confirmado entre una lectura
+        // y el cierre no puede quedar vigente mientras esto responde 200. Auditoria dentro de la misma transaccion.
+        val r = request(
+            "POST",
+            "/rest/v1/rpc/admin_revoke_exam_access",
+            sbJson.encodeToString(AdminRevokeExamRpc(id, AdminAuditActor.current())),
+        ).decodeList<AdminRevokeExamResult>().firstOrNull() ?: error("La retirada de acceso no devolvio resultado.")
+        val user = perfilesByIds(listOf(r.usuarioId))[r.usuarioId]
+        val examTitle = request("GET", "/rest/v1/examenes?select=id,titulo&id=eq.${r.examenId}&limit=1", null)
             .decodeList<ExamenTituloRow>()
             .firstOrNull()
             ?.titulo
         return AdminExamAccessDto(
-            id = target.id,
-            userName = user.displayName(target.usuarioId),
-            examTitle = examTitle.orEmpty().ifBlank { "Examen $examenId" },
-            accessType = target.motivo.orEmpty().ifBlank { "manual" },
+            id = r.grantId,
+            userName = user.displayName(r.usuarioId),
+            examTitle = examTitle.orEmpty().ifBlank { "Examen ${r.examenId}" },
+            accessType = r.motivo.orEmpty().ifBlank { "manual" },
             isActive = false,
-            userId = target.usuarioId,
-            examId = examenId,
-            grantedAt = target.creadoEn,
-            validUntil = if (target.vigente(now)) closedAt else target.validoHasta,
+            userId = r.usuarioId,
+            examId = r.examenId,
+            grantedAt = null,
+            validUntil = r.validoHasta,
         )
     }
 

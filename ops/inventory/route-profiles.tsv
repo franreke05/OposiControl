@@ -23,6 +23,7 @@ DELETE	/api/v1/admin/preguntas/{}	CONTROL	admin	Admin v1: preguntas/{}	OposiCont
 DELETE	/api/v1/admin/preguntas/{}/examenes/{}	CONTROL	admin	Admin v1: preguntas/{}/examenes/{}	OposiControl
 DELETE	/api/v1/admin/preguntas/{}/recursos/{}	CONTROL	admin	Admin v1: preguntas/{}/recursos/{}	OposiControl
 DELETE	/api/v1/app/me	AUTH	user-jwt	Canonical profile/account: DELETE me	OposiBot
+DELETE	/api/v1/app/opositeca/guardados/{}/{}	BOT	user-jwt	Consumer OposiTeca: unsave a question (D4-21)	OposiBot
 DELETE	/content/comunidades/{}	CONTROL	admin	Legacy content: comunidades/{}	OposiControl
 DELETE	/content/especialidades/{}	CONTROL	admin	Legacy content: especialidades/{}	OposiControl
 DELETE	/content/etiquetas/{}	CONTROL	admin	Legacy content: etiquetas/{}	OposiControl
@@ -129,6 +130,7 @@ GET	/api/v1/app/examenes/{}	BOT	user-jwt	Consumer app API: examenes/{}	OposiBot
 GET	/api/v1/app/home	BOT	user-jwt	Consumer app API: home	OposiBot
 GET	/api/v1/app/intentos/{}	BOT	user-jwt	Consumer app API: intentos/{} (D2-07)	OposiBot
 GET	/api/v1/app/intentos/{}/preguntas	BOT	user-jwt	Consumer app API: intentos/{}/preguntas (D2-08)	OposiBot
+GET	/api/v1/app/intentos/{}/recursos/{}	BOT	user-jwt	Consumer app API: intentos/{}/recursos/{} (D2-66)	OposiBot
 GET	/api/v1/app/intentos/{}/resultado	BOT	user-jwt	Consumer app API: intentos/{}/resultado (D2-12)	OposiBot
 GET	/api/v1/app/intentos/{}/revision	BOT	user-jwt	Consumer app API: intentos/{}/revision (D2-65)	OposiBot
 GET	/api/v1/app/legal/documents	BOT	none	Legal documents (public, IP rate limit; mounted with the consumer auth runtime)	OposiBot
@@ -137,10 +139,26 @@ GET	/api/v1/app/me/billing-history	BOT	user-jwt	Consumer app API: me/billing-his
 GET	/api/v1/app/me/entitlement	BOT	user-jwt	Consumer app API: me/entitlement (D7-02)	OposiBot
 GET	/api/v1/app/me/examenes	BOT	user-jwt	Consumer app API: me/examenes (D2-13)	OposiBot
 GET	/api/v1/app/oposired/categorias	BOT	user-jwt	Consumer app API: oposired/categorias (D5-01)	OposiBot
+GET	/api/v1/app/opositeca	BOT	user-jwt	Consumer OposiTeca: saved questions list (D4-24)	OposiBot
+GET	/api/v1/app/opositeca/guardados/{}	BOT	user-jwt	Consumer OposiTeca: which questions are saved (D4-26)	OposiBot
 GET	/api/v1/app/opositester/me	BOT	user-jwt	Consumer app API: opositester/me (D5-16)	OposiBot
+GET	/api/v1/app/payments/orders/{}	BOT	user-jwt	Consumer economy: payment order status (D6-13)	OposiBot
+GET	/api/v1/app/plan/catalogo	BOT	user-jwt	Consumer plan: catalog with coverage, daily limit and tariffs as data (D7-33)	OposiBot
+GET	/api/v1/app/plan/cupo	BOT	user-jwt	Consumer plan: immersive quota summary (D7-31)	OposiBot
+GET	/api/v1/app/racha	BOT	user-jwt	Consumer challenge: current and best streak (D3-04)	OposiBot
+GET	/api/v1/app/estadisticas/resumen	BOT	user-jwt	Consumer stats: nota media, evolution, streak, league, totals (D3-20)	OposiBot
+GET	/api/v1/app/estadisticas/debilidades	BOT	user-jwt	Consumer stats: weak tags, aggregated or per exam (D3-21)	OposiBot
+GET	/api/v1/app/estadisticas/dificultad/{}	BOT	user-jwt	Consumer stats: difficulty 1-5 of an answered question (D3-22)	OposiBot
+GET	/api/v1/app/ranking	BOT	user-jwt	Consumer ranking: league, own position, top 3 (opt-in handles), place probability (D3-24)	OposiBot
+PUT	/api/v1/app/ranking/visibilidad	BOT	user-jwt	Consumer ranking: opt-in/out of the public handle (D3-25)	OposiBot
+GET	/api/v1/app/me/invitacion	BOT	user-jwt	Consumer referral: own code, counters, OT per invitation (D9-01)	OposiBot
+GET	/api/v1/app/me/invitaciones	BOT	user-jwt	Consumer referral: rewarded invitations, public handle only (D9-02)	OposiBot
 GET	/api/v1/app/reto-diario	BOT	user-jwt	Consumer app API: reto-diario	OposiBot
+GET	/api/v1/app/retos/hoy	BOT	user-jwt	Consumer challenge: today (D3-16)	OposiBot
+GET	/api/v1/app/retos/{}/preguntas/{}/recursos/{}	BOT	user-jwt	Consumer challenge: signed media of a challenge question (D3-19)	OposiBot
 GET	/api/v1/app/wallet	BOT	user-jwt	Consumer wallet balance	OposiBot
 GET	/api/v1/app/wallet/movimientos	BOT	user-jwt	Consumer wallet movements	OposiBot
+GET	/api/v1/app/wallet/paquetes	BOT	user-jwt	Consumer economy: OposiTicket packs on sale (D6-11)	OposiBot
 GET	/content/comunidades	CONTROL	admin	Legacy content: comunidades	OposiControl
 GET	/content/especialidades	CONTROL	admin	Legacy content: especialidades	OposiControl
 GET	/content/etiquetas	CONTROL	admin	Legacy content: etiquetas	OposiControl
@@ -159,6 +177,7 @@ GET	/search	CONTROL	admin	Admin legacy (outside /admin prefix): /search	OposiCon
 GET	/tags	CONTROL	admin	Admin legacy (outside /admin prefix): /tags	OposiControl
 GET	/v1/auth/me	AUTH	user-jwt	Consumer auth: me	OposiBot
 GET	/v1/especialidades	SHARED	none	Public read: especialidades	OposiControl
+GET	/api/v1/public/especialidades	BOT	none	Consumer public read: especialidades (D2-17)	OposiBot
 GET	/v1/examenes	SHARED	none	Public read: examenes	OposiControl
 GET	/v1/examenes/{}	SHARED	none	Public read: examenes/{}	none
 GET	/v1/examenes/{}/preguntas	SHARED	none	Public read: examenes/{}/preguntas	none
@@ -235,6 +254,7 @@ POST	/api/v1/admin/solicitudes-acceso/{}/rechazar	CONTROL	admin	Admin access req
 POST	/api/v1/admin/usuarios/{}/estado-cuenta	CONTROL	admin	Admin v1: dar de baja o reactivar una cuenta (superadmin)	OposiControl
 POST	/api/v1/admin/usuarios/{}/roles	CONTROL	admin	Admin v1: usuarios/{}/roles	OposiControl
 POST	/api/v1/admin/usuarios/{}/tickets	CONTROL	admin	Admin v1: usuarios/{}/tickets	OposiControl
+POST	/api/v1/admin/estadisticas/recalcular	CONTROL	admin	Admin v1: audited stats recompute with cooldown (C-S4)	OposiControl
 POST	/api/v1/app/eventos	BOT	user-jwt	Consumer app API: eventos	OposiBot
 POST	/api/v1/app/examenes/{}/iniciar	BOT	user-jwt	Consumer app API: examenes/{}/iniciar	OposiBot
 POST	/api/v1/app/examenes/{}/intentos	BOT	user-jwt	Consumer app API: examenes/{}/intentos (D2-03)	OposiBot
@@ -244,6 +264,11 @@ POST	/api/v1/app/intentos/{}/finalizar	BOT	user-jwt	Consumer app API: intentos/{
 POST	/api/v1/app/intentos/{}/responder	BOT	user-jwt	Consumer app API: intentos/{}/responder	OposiBot
 POST	/api/v1/app/me/legal-acceptances	AUTH	user-jwt	Canonical profile/account: POST me/legal-acceptances	OposiBot
 POST	/api/v1/app/me/onboarding	AUTH	user-jwt	Canonical profile/account: POST me/onboarding	OposiBot
+POST	/api/v1/app/payments/orders	BOT	user-jwt	Consumer economy: create payment order (D6-12)	OposiBot
+POST	/api/v1/app/payments/orders/{}/verify	BOT	user-jwt	Consumer economy: confirm payment with receipt (D6-14)	OposiBot
+POST	/api/v1/app/wallet/canjes	BOT	user-jwt	Consumer economy: redeem exam with OposiTickets (D6-03)	OposiBot
+POST	/api/v1/app/retos/{}/reclamar	BOT	user-jwt	Consumer challenge: claim the frozen reward (D3-18)	OposiBot
+POST	/api/v1/webhooks/payments/{}	BOT	none	Payment provider notification (W-01); authenticated by provider signature, not JWT	none
 POST	/content/comunidades	CONTROL	admin	Legacy content: comunidades	OposiControl
 POST	/content/especialidades	CONTROL	admin	Legacy content: especialidades	OposiControl
 POST	/content/etiquetas	CONTROL	admin	Legacy content: etiquetas	OposiControl
@@ -282,6 +307,9 @@ PUT	/api/v1/admin/especialidades/{}/capacidades	CONTROL	admin	Admin v1: especial
 PUT	/api/v1/admin/planes/{}	CONTROL	admin	Admin v1: alta o cambio de un plan por codigo	OposiControl
 PUT	/api/v1/admin/tipos-noticia/{}	CONTROL	admin	Admin news: type upsert	OposiControl
 PUT	/api/v1/app/intentos/{}/respuestas/{}	BOT	user-jwt	Consumer app API: intentos/{}/respuestas/{} (D2-09)	OposiBot
+PUT	/api/v1/app/opositeca/guardados/{}/{}	BOT	user-jwt	Consumer OposiTeca: save a question (D4-20)	OposiBot
+PUT	/api/v1/app/plan/cupo/{}	BOT	user-jwt	Consumer plan: choose an immersive with the quota (D7-32)	OposiBot
+PUT	/api/v1/app/retos/{}/respuestas/{}	BOT	user-jwt	Consumer challenge: answer (final) a challenge question (D3-17)	OposiBot
 PUT	/content/comunidades	CONTROL	admin	Legacy content: comunidades	OposiControl
 PUT	/content/especialidades	CONTROL	admin	Legacy content: especialidades	OposiControl
 PUT	/content/etiquetas	CONTROL	admin	Legacy content: etiquetas	OposiControl
@@ -293,3 +321,26 @@ PUT	/content/rafaga/{}/preguntas/order	CONTROL	admin	Legacy content: rafaga/{}/p
 PUT	/content/solucionarios	CONTROL	admin	Legacy content: solucionarios	OposiControl
 PUT	/content/solucionarios/{}/preguntas	CONTROL	admin	Legacy content: solucionarios/{}/preguntas	OposiControl
 PUT	/content/solucionarios/{}/preguntas/order	CONTROL	admin	Legacy content: solucionarios/{}/preguntas/order	OposiControl
+GET	/api/v1/app/oposired/canales	BOT	user-jwt	Forum: channels open to the caller specialty (D5-02)	OposiBot
+GET	/api/v1/app/oposired/publicaciones	BOT	user-jwt	Forum: feed (D5-03)	OposiBot
+GET	/api/v1/app/oposired/publicaciones/{}	BOT	user-jwt	Forum: post detail (D5-04)	OposiBot
+GET	/api/v1/app/oposired/publicaciones/{}/comentarios	BOT	user-jwt	Forum: comments (D5-05)	OposiBot
+POST	/api/v1/app/oposired/publicaciones	BOT	user-jwt	Forum: create post (D5-06)	OposiBot
+POST	/api/v1/app/oposired/publicaciones/{}/comentarios	BOT	user-jwt	Forum: create comment (D5-07)	OposiBot
+DELETE	/api/v1/app/oposired/publicaciones/{}	BOT	user-jwt	Forum: delete own post (D5-08)	OposiBot
+DELETE	/api/v1/app/oposired/comentarios/{}	BOT	user-jwt	Forum: delete own comment (D5-09)	OposiBot
+PUT	/api/v1/app/oposired/publicaciones/{}/voto	BOT	user-jwt	Forum: vote post (D5-10)	OposiBot
+DELETE	/api/v1/app/oposired/publicaciones/{}/voto	BOT	user-jwt	Forum: remove vote on post (D5-11)	OposiBot
+PUT	/api/v1/app/oposired/comentarios/{}/voto	BOT	user-jwt	Forum: vote comment (D5-12)	OposiBot
+DELETE	/api/v1/app/oposired/comentarios/{}/voto	BOT	user-jwt	Forum: remove vote on comment (D5-13)	OposiBot
+POST	/api/v1/app/oposired/reportes	BOT	user-jwt	Forum: report content (D5-14)	OposiBot
+POST	/api/v1/app/oposired/imagenes	BOT	user-jwt	Forum: start an image upload (D5-30)	OposiBot
+PUT	/api/v1/app/oposired/imagenes/{}/contenido	BOT	user-jwt	Forum: upload the image bytes, verified and re-encoded (D5-31)	OposiBot
+GET	/api/v1/app/oposired/imagenes/{}	BOT	user-jwt	Forum: state of an own upload (D5-32)	OposiBot
+GET	/api/v1/app/oposired/publicaciones/{}/imagen	BOT	user-jwt	Forum: short-lived signed URL of a post image (D5-33)	OposiBot
+GET	/api/v1/app/store/account-token	BOT	user-jwt	Store payments: opaque account token for obfuscatedAccountId / appAccountToken (S-01)	OposiBot
+GET	/api/v1/app/store/entitlements	BOT	user-jwt	Store payments: balance and premium state (S-05)	OposiBot
+GET	/api/v1/app/store/products	BOT	user-jwt	Store payments: store product catalogue from config (S-02)	OposiBot
+POST	/api/v1/app/store/purchases/restore	BOT	user-jwt	Store payments: restore purchases (S-04)	OposiBot
+POST	/api/v1/app/store/purchases/verify	BOT	user-jwt	Store payments: verify a Google Play / App Store purchase (S-03)	OposiBot
+POST	/api/v1/webhooks/store/{}	BOT	none	Store notifications (W-02 Google RTDN OIDC, W-03 App Store ASSN V2 JWS); authenticated by the store, not JWT	none

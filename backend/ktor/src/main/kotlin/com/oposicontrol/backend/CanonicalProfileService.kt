@@ -146,6 +146,15 @@ internal class SupabaseCanonicalProfileService(
         }
         if (issues.isNotEmpty()) throw validationError(*issues.take(MAX_VALIDATION_ISSUES).toTypedArray())
 
+        // V1 (E2-V1-E06): la especialidad es OBLIGATORIA al terminar el alta; si el perfil aun no la tiene hay que enviarla ahora.
+        if (request.especialidadId == null) {
+            val current = canonicalUpstreamIo {
+                upstream.get("/rest/v1/perfiles_usuario?select=especialidad_principal_id&usuario_id=eq.${identity.userId.value}&limit=1")
+            }
+            val has = json.parseToJsonElement(current).let { (it as? kotlinx.serialization.json.JsonArray)?.firstOrNull() as? kotlinx.serialization.json.JsonObject }
+                ?.get("especialidad_principal_id")?.let { it !is kotlinx.serialization.json.JsonNull } == true
+            if (!has) throw validationError(ErrorIssue("especialidadId", CanonicalIssue.REQUIRED))
+        }
         val args = buildJsonObject {
             put("p_usuario_id", identity.userId.value)
             put("p_username", request.username)
@@ -421,6 +430,7 @@ internal object ProfileRpcErrors {
         val mapped: CanonicalErrorCode? = when (key) {
             "USERNAME_TAKEN" -> CanonicalErrorCode.USERNAME_TAKEN
             "UNKNOWN_SPECIALTY" -> CanonicalErrorCode.UNKNOWN_SPECIALTY
+            "SPECIALTY_ALREADY_SET" -> CanonicalErrorCode.SPECIALTY_ALREADY_SET
             "UNKNOWN_COMMUNITY" -> CanonicalErrorCode.UNKNOWN_COMMUNITY
             "DOCUMENT_NOT_ACTIVE" -> documentNotActiveAs
             "ALREADY_ONBOARDED_CONFLICT" -> CanonicalErrorCode.ALREADY_ONBOARDED_CONFLICT

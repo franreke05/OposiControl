@@ -1,22 +1,19 @@
 #!/usr/bin/env bash
 # Control negativo de db-pg17-gate.sh (DB-CI-PG17), con PostgreSQL 17 REAL (Docker): una copia sin tocar del arbol PASA y cada
-# mutacion sembrada FALLA por SU motivo (mensaje FAIL concreto), nunca por otro:
-#   manifiesto: una pendiente borrada de PENDING_MIGRATIONS.txt / un VERIFY ausente  (sin contenedor, inmediato)
-#   DEBT-156b (sin contenedor): una _security_ nueva sin ROLLBACK / sin VERIFY / sin clase de dbtest; una V1 (20261022*) con _security_
-#   (a) grant select de solicitudes_eliminacion_cuenta a authenticated en la ULTIMA migracion -> frontera de assertions.sql
-#   (a2) grant execute de idem_begin (sin VERIFY propio) a authenticated -> la matriz grants/RLS de assertions.sql
-#   (b) el mismo grant al final de 20260930100300 -> el VERIFY de esa migracion (contador != 0)
-#   (c) error de sintaxis en una pendiente -> ON_ERROR_STOP
-#   (d) ROLLBACK de 102000 sin su drop function -> la huella tras el rollback no es la del bootstrap
-#   (e) grant execute de una RPC de SLICE 3 a authenticated -> el VERIFY de 20261008100100
-#   (f) el helper de congelado de SLICE 3 deja de excluir las anuladas -> la asercion de comportamiento de assertions.sql
-#   (g) el endurecimiento de SLICE 3 (20261008100200) pierde la guarda marcador/origen de los comandos -> su VERIFY
-#   (h) el trigger de inmutabilidad del marcador deja de rechazar -> la asercion de comportamiento de assertions.sql
-#   (i) grant execute de la lectura de SLICE 2 (20261008100300, D2-13 COLECCION) a authenticated -> su VERIFY
-#   (j) esa lectura deja de exigir examen publicado (serviria borradores) -> su VERIFY
-#   (k) esa lectura acepta concesiones caducadas -> la asercion de comportamiento de assertions.sql
-#   (l) el indice keyset de SLICE 7 (20261008100500, D6-02) se crea sin el orden DESC -> su POSTCHECK (la migracion no aplica)
-#   (m) el ROLLBACK de SLICE 7 no borra el indice -> la huella tras el rollback no es la del bootstrap
+# mutacion sembrada FALLA por SU motivo (mensaje FAIL concreto), nunca por otro. Desde la captura de MAIN del 2026-10-14
+# (supabase/baseline/MAIN_MIGRATION_HISTORY.txt) las pendientes son 20261022100000 (revisiones de pregunta) y 20261022100100 (E2-P03);
+#   manifiesto: la pendiente borrada de PENDING_MIGRATIONS.txt / una ya aplicada en MAIN anadida / un VERIFY ausente
+#   (a) grant select de solicitudes_eliminacion_cuenta a authenticated en la pendiente -> frontera de assertions.sql
+#   (a2) grant execute de idem_begin (objeto de MAIN) a authenticated -> la matriz grants/RLS de assertions.sql
+#   (b) EXECUTE de cliente sobre app_record_attempt_answer en la pendiente -> su VERIFY
+#   (c) error de sintaxis en la pendiente -> ON_ERROR_STOP
+#   (d) ROLLBACK de la pendiente sin borrar revisiones_pregunta -> la huella tras el rollback no es la del bootstrap
+#   (e) SELECT de cliente sobre revisiones_pregunta -> su VERIFY
+#   (f) el congelado deja de ligar las preguntas a su revision -> la asercion de comportamiento de assertions.sql
+#   (g) N3-3 / tarea 4: el cerrojo por clave de tienda MOVIDO por debajo de la busqueda (el texto sigue, el VERIFY de 102900 pasa) en la reversion
+#       (mutA), el reembolso (mutA2) y el credito -> la carrera REAL de dos conexiones del paso 6 (R1 / R2 / R3-R4)
+#   (h) N3-1: reconcile vuelve a bloquear la fila antes que la clave (texto de 103000 intacto) -> 40P01 en la carrera D1 del paso 6
+#   DEBT-156b (sin contenedor): una _security_ no V1 sin ROLLBACK / sin VERIFY / sin clase de dbtest; una V1 (20261022*) con _security_ fuera de PENDING
 set -uo pipefail
 cd "$(dirname "$0")/.."
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
@@ -29,14 +26,12 @@ expect_fail() { # $1 = escenario, $2 = mensaje FAIL esperado
   echo "ok:   $1 -> $(grep '^FAIL:' "$tmp/out" | head -1)"
 }
 mutated() { cmp -s "$1" "${1#$w/}" && { echo "TEST FAIL: mutacion vacua en $1"; exit 1; }; return 0; }
-last=supabase/migrations/20260930102000_slice1_report_action_once.sql
-del=supabase/migrations/20260930100300_slice1_account_deletion_requests.sql
-leak='grant select on table public.solicitudes_eliminacion_cuenta to authenticated;'
-
-fresh; sed -i '/^20260930101600_/d' "$w/supabase/baseline/PENDING_MIGRATIONS.txt"; mutated "$w/supabase/baseline/PENDING_MIGRATIONS.txt"
-expect_fail "pendiente borrada del manifiesto" "PENDING_MIGRATIONS.txt y supabase/migrations difieren"
-fresh; sed -i '/^-- VERIFY-BEGIN/,/^-- VERIFY-END/d' "$w/$del"; mutated "$w/$del"
-expect_fail "bloque VERIFY ausente" "20260930100300_slice1_account_deletion_requests: bloque VERIFY ausente"
+rev=supabase/migrations/20261022100000_slice3_attempt_content_revisions.sql
+pend=supabase/baseline/PENDING_MIGRATIONS.txt
+fresh; sed -i 's/^20261022100000_slice3_attempt_content_revisions/20261015100000_security_audit_log_index/' "$w/$pend"; mutated "$w/$pend"
+expect_fail "pendiente sustituida por una ya aplicada en MAIN" "PENDING_MIGRATIONS.txt y (repo - historial de MAIN) difieren"
+fresh; sed -i '/^-- VERIFY-BEGIN/,/^-- VERIFY-END/d' "$w/$rev"; mutated "$w/$rev"
+expect_fail "bloque VERIFY ausente" "20261022100000_slice3_attempt_content_revisions: bloque VERIFY ausente"
 # DEBT-156b: las _security_ quedan fuera de PENDING pero no fuera de control (paso 1b).
 sec=supabase/migrations/20261023100300_security_moderator_requires_active_account.sql
 fresh; sed -i '/^-- ROLLBACK-BEGIN/,/^-- ROLLBACK-END/d' "$w/$sec"; mutated "$w/$sec"
@@ -49,58 +44,52 @@ fresh; cp "$w/$sec" "$w/supabase/migrations/20261022109900_v1_security_probe.sql
 expect_fail "una V1 (20261022*) con _security_" "20261022109900_v1_security_probe: una migracion V1"
 
 fresh; gate || { cat "$tmp/out"; echo "TEST FAIL: la copia sin mutar deberia pasar"; exit 1; }; echo "ok:   copia sin mutar pasa"
-fresh; echo "$leak" >> "$w/$last"; mutated "$w/$last"
-expect_fail "(a) grant de cliente en la ultima migracion" "assertions.sql"
+fresh; echo 'grant select on table public.solicitudes_eliminacion_cuenta to authenticated;' >> "$w/$rev"; mutated "$w/$rev"
+expect_fail "(a) grant de cliente en la pendiente" "assertions.sql"
 grep -q 'ASSERT FAILED: select \* from public.solicitudes_eliminacion_cuenta -> expected 42501' "$tmp/out" \
   || { echo "TEST FAIL: (a) sin la asercion de frontera anon/authenticated"; exit 1; }
-fresh; echo 'grant execute on function public.idem_begin(uuid, text, text, text, interval, interval) to authenticated;' >> "$w/$last"; mutated "$w/$last"
+fresh; echo 'grant execute on function public.idem_begin(uuid, text, text, text, interval, interval) to authenticated;' >> "$w/$rev"; mutated "$w/$rev"
 expect_fail "(a2) EXECUTE de cliente sobre una RPC SECURITY DEFINER" "assertions.sql"
 grep -q 'client EXECUTE on SECURITY DEFINER: idem_begin(uuid,text,text,text,interval,interval) authenticated' "$tmp/out" \
   || { echo "TEST FAIL: (a2) sin el mensaje de la matriz grants/RLS"; exit 1; }
-fresh; echo "$leak" >> "$w/$del"; mutated "$w/$del"
-expect_fail "(b) grant de cliente en 100300" "20260930100300_slice1_account_deletion_requests: VERIFY con contadores distintos de 0"
-fresh; echo 'selec 1;' >> "$w/supabase/migrations/20260930100500_slice1_audit_hardening.sql"; mutated "$w/supabase/migrations/20260930100500_slice1_audit_hardening.sql"
-expect_fail "(c) error de sintaxis" "20260930100500_slice1_audit_hardening no aplica"
-fresh; sed -i '/^-- drop function if exists public.admin_record_report_action/d' "$w/$last"; mutated "$w/$last"
-expect_fail "(d) rollback incompleto" "tras los ROLLBACK el catalogo no vuelve al bootstrap"
-# SLICE 3 (20261008100000 + 20261008100100): (e) EXECUTE de cliente sobre una RPC de comando -> su VERIFY; (f) el conjunto
-# congelado deja de excluir las anuladas -> la asercion de comportamiento de assertions.sql.
-s3=supabase/migrations/20261008100100_slice3_attempt_command_rpcs.sql
-fresh; echo 'grant execute on function public.app_finish_exam_attempt(uuid, uuid) to authenticated;' >> "$w/$s3"; mutated "$w/$s3"
-expect_fail "(e) EXECUTE de cliente sobre una RPC de Slice 3" "20261008100100_slice3_attempt_command_rpcs: VERIFY con contadores distintos de 0"
-# (f) RB-15: desde 20261010100000 (decision 2026-10-10) congelar las anuladas ES lo correcto, asi que la mutacion antigua
-# ya no es un fallo. Ahora: el congelado (vigente en 20261010100000) pierde el orden del examen; su VERIFY es estatico y no
-# lo ve, solo la asercion de comportamiento.
-fa=supabase/migrations/20261010100000_slice3_attempt_freeze_keeps_annulled.sql
-fresh; sed -i '/^--/!s/(row_number() over (order by q.posicion, q.pregunta_id))::integer/(row_number() over (order by q.posicion desc, q.pregunta_id))::integer/' "$w/$fa"; mutated "$w/$fa"
-expect_fail "(f) el intento congela en un orden distinto al del examen" "assertions.sql"
-grep -q 'frozen set = active (annulled included' "$tmp/out" || { echo "TEST FAIL: (f) sin la asercion del conjunto congelado"; exit 1; }
-# GATE SLICE 3 (20261008100200): (g) los comandos vuelven a servir un intento que el arranque canonico no creo -> su VERIFY;
-# (h) el marcador se puede fabricar con un UPDATE -> la asercion de comportamiento.
-s3h=supabase/migrations/20261008100200_slice3_attempt_hardening.sql
-fresh; sed -i "/^    and ie.origen_intento = 'examen' and ie.creado_por_comando is not null$/d" "$w/$s3h"; mutated "$w/$s3h"
-expect_fail "(g) los comandos de Slice 3 sin la guarda de marcador/origen" "20261008100200_slice3_attempt_hardening: VERIFY con contadores distintos de 0"
-grep -q 'VERIFY hardening_command_without_marker_or_origin_guard = 3' "$tmp/out" || { echo "TEST FAIL: (g) sin el contador de la guarda"; exit 1; }
-fresh; sed -i 's/^  if new.creado_por_comando is distinct from old.creado_por_comando then$/  if false then/' "$w/$s3h"; mutated "$w/$s3h"
-expect_fail "(h) el marcador de comando deja de ser inmutable" "assertions.sql"
-grep -q 'INTENTO_CREADO_POR_COMANDO_INMUTABLE' "$tmp/out" || { echo "TEST FAIL: (h) sin la asercion del marcador inmutable"; exit 1; }
-# SLICE 2 (20261008100300, lectura de "mis examenes" D2-13 COLECCION): (i) EXECUTE de cliente -> su VERIFY; (j) sin la guarda
-# de examen publicado -> su VERIFY; (k) una concesion caducada vuelve a contar (el VERIFY no lo ve) -> la asercion de comportamiento.
-s2=supabase/migrations/20261008100300_slice2_my_exams_read_rpc.sql
-fresh; echo 'grant execute on function public.app_my_exams_collection(uuid, text, uuid, integer, timestamp with time zone, uuid, integer, boolean) to authenticated;' >> "$w/$s2"; mutated "$w/$s2"
-expect_fail "(i) EXECUTE de cliente sobre la lectura de Slice 2" "20261008100300_slice2_my_exams_read_rpc: VERIFY con contadores distintos de 0"
-grep -q 'VERIFY my_exams_rpc_executable_by_clients = 1' "$tmp/out" || { echo "TEST FAIL: (i) sin el contador de EXECUTE de cliente"; exit 1; }
-fresh; sed -i 's/^    where e.activo and e.publicado_en is not null and e.publicado_en <= v_ahora$/    where true/' "$w/$s2"; mutated "$w/$s2"
-expect_fail "(j) la coleccion sin la guarda de examen publicado" "20261008100300_slice2_my_exams_read_rpc: VERIFY con contadores distintos de 0"
-grep -q 'VERIFY my_exams_rpc_without_published_guard = 1' "$tmp/out" || { echo "TEST FAIL: (j) sin el contador de la guarda de publicado"; exit 1; }
-fresh; sed -i '/^      and cd.valido_desde <= v_ahora and (cd.valido_hasta is null or cd.valido_hasta > v_ahora)$/d' "$w/$s2"; mutated "$w/$s2"
-expect_fail "(k) la coleccion acepta concesiones caducadas" "assertions.sql"
-grep -q 'my exams collection = valid grant or command attempt, published only' "$tmp/out" || { echo "TEST FAIL: (k) sin la asercion de la coleccion"; exit 1; }
-# SLICE 7 (20261008100500, indice keyset del libro de cartera, D6-02): (l) indice sin el orden DESC -> su POSTCHECK; (m) ROLLBACK que no lo borra.
-s7=supabase/migrations/20261008100500_slice7_wallet_ledger_keyset_index.sql
-fresh; sed -i 's/^  on public.transacciones_cartera (usuario_id, creado_en desc, id desc);$/  on public.transacciones_cartera (usuario_id, creado_en, id);/' "$w/$s7"; mutated "$w/$s7"
-expect_fail "(l) indice keyset de Slice 7 sin el orden DESC" "20261008100500_slice7_wallet_ledger_keyset_index no aplica"
-grep -q 'WALLET_LEDGER_KEYSET_INDEX_POSTCHECK' "$tmp/out" || { echo "TEST FAIL: (l) sin el POSTCHECK del indice"; exit 1; }
-fresh; sed -i 's/^-- drop index if exists public.idx_transacciones_cartera_usuario_creado_id;$/-- select 1;/' "$w/$s7"; mutated "$w/$s7"
-expect_fail "(m) ROLLBACK de Slice 7 sin borrar el indice" "tras los ROLLBACK el catalogo no vuelve al bootstrap"
+fresh; echo 'grant execute on function public.app_record_attempt_answer(uuid, uuid, uuid, uuid, integer, integer, integer) to authenticated;' >> "$w/$rev"; mutated "$w/$rev"
+expect_fail "(b) EXECUTE de cliente sobre el comando de respuesta" "20261022100000_slice3_attempt_content_revisions: VERIFY con contadores distintos de 0"
+grep -q 'VERIFY revision_commands_executable_by_clients = 1' "$tmp/out" || { echo "TEST FAIL: (b) sin el contador"; exit 1; }
+fresh; echo 'selec 1;' >> "$w/$rev"; mutated "$w/$rev"
+expect_fail "(c) error de sintaxis" "20261022100000_slice3_attempt_content_revisions no aplica"
+fresh; sed -i '/^-- drop table if exists public.revisiones_pregunta;$/d' "$w/$rev"; mutated "$w/$rev"
+expect_fail "(d) rollback incompleto" "el ROLLBACK falla\|tras los ROLLBACK el catalogo no vuelve al bootstrap"
+fresh; echo 'grant select on table public.revisiones_pregunta to authenticated;' >> "$w/$rev"; mutated "$w/$rev"
+expect_fail "(e) SELECT de cliente sobre las revisiones" "20261022100000_slice3_attempt_content_revisions: VERIFY con contadores distintos de 0"
+grep -q 'VERIFY revisions_client_privileges = 1' "$tmp/out" || { echo "TEST FAIL: (e) sin el contador"; exit 1; }
+fresh; sed -i 's/^      insert into public.preguntas_intento (intento_id, pregunta_id, posicion, revision_pregunta_id)$/      insert into public.preguntas_intento (intento_id, pregunta_id, posicion)/; s/^      select p_intento_id, u.pregunta_id, u.ord::integer, r.id$/      select p_intento_id, u.pregunta_id, u.ord::integer/' "$w/$rev"; mutated "$w/$rev"
+expect_fail "(f) el congelado no liga la revision" "assertions.sql"
+grep -q 'every frozen question bound to a revision' "$tmp/out" || { echo "TEST FAIL: (f) sin la asercion de la revision"; exit 1; }
+# (g) Mueve la linea del cerrojo `store-key:` de la funcion $2 justo antes de la primera linea de esa funcion que empieza por $3.
+store_mig=supabase/migrations/20261022102900_v1_store_payments_concurrency.sql
+move_lock() {
+  awk -v fn="function public.$2(" -v marker="$3" '
+    /^create (or replace )?function public\./ { cur = $0 }
+    index(cur, fn) && /^  perform pg_advisory_xact_lock\(hashtextextended\(.store-key:/ && held == "" { held = $0; next }
+    held != "" && !done && index(cur, fn) && index($0, marker) == 1 { print held; done = 1 }
+    { print }
+    END { if (held == "" || !done) exit 1 }' "$1" > "$1.mut" && mv "$1.mut" "$1"
+}
+fresh; move_lock "$w/$store_mig" app_store_refund_reversed "  perform pg_advisory_xact_lock(hashtextextended('wallet:'" || { echo "TEST FAIL: mutA no aplica"; exit 1; }; mutated "$w/$store_mig"
+expect_fail "(g) mutA: cerrojo de la reversion movido bajo la busqueda" "carreras de tienda con dos conexiones"
+grep -q "race R1\.1" "$tmp/out" || { echo "TEST FAIL: (g) mutA no la detecta R1"; exit 1; }
+fresh; move_lock "$w/$store_mig" app_store_refund_purchase "  return query select r.outcome" || { echo "TEST FAIL: mutA2 no aplica"; exit 1; }; mutated "$w/$store_mig"
+expect_fail "(g2) mutA2: cerrojo del reembolso movido bajo la busqueda" "carreras de tienda con dos conexiones"
+grep -q "race R2\.1" "$tmp/out" || { echo "TEST FAIL: (g2) mutA2 no la detecta R2"; exit 1; }
+fresh; move_lock "$w/$store_mig" app_store_credit_purchase "  return query select * from public.app_credit_payment_order(" || { echo "TEST FAIL: mutC no aplica"; exit 1; }; mutated "$w/$store_mig"
+expect_fail "(g3) cerrojo del credito movido tras los huerfanos" "carreras de tienda con dos conexiones"
+grep -q "race R[34]\.1" "$tmp/out" || { echo "TEST FAIL: (g3) no la detecta R3/R4"; exit 1; }
+r3=supabase/migrations/20261022103000_v1_store_payments_round3.sql
+fresh
+{ sed -n '1,/^-- 4\. N3-1:/p' "$w/$r3" | sed '$d'
+  sed -n '/^create function public.app_store_reconcile_orphans/,/^\$\$;/p' "$w/$store_mig" \
+    | sed 's/^create function/create or replace function/; s/^begin$/begin\n  -- mutante: pg_try_advisory_xact_lock solo en el texto; la fila se bloquea antes que la clave/'
+  sed -n '/^-- 5\. Subscriptions:/,$p' "$w/$r3"; } > "$w/$r3.mut" && mv "$w/$r3.mut" "$w/$r3"; mutated "$w/$r3"
+expect_fail "(h) N3-1: reconcile fila-antes-que-clave" "carreras de tienda con dos conexiones"
+grep -q "race D1\.[12]: .*40P01\|deadlock" "$tmp/out" || { grep "race" "$tmp/out"; echo "TEST FAIL: (h) sin el 40P01 de D1"; exit 1; }
 echo "db-pg17-gate.test OK ($n escenarios)"

@@ -5,7 +5,8 @@
 // (gate local, .oposibots-gate/baseline/). Esta herramienta NO lee MAIN ni ningun secreto: solo transforma ese fichero.
 // Salida: SOLO la forma de MAIN que tocan las migraciones pendientes (supabase/baseline/PENDING_MIGRATIONS.txt), por
 // cierre determinista:
-//   semillas = objetos `public.x` / `private.x` nombrados en el SQL (sin comentarios) de las migraciones pendientes que
+//   semillas = objetos `public.x` / `private.x` nombrados en el SQL (sin comentarios) de las migraciones pendientes y de
+//              supabase/baseline/assertions.sql que
 //              existen en la captura;
 //   cierre   = destinos de FK de cada tabla incluida + funciones de sus triggers + tablas y funciones nombradas en sus
 //              politicas RLS (punto fijo).
@@ -84,6 +85,10 @@ export function extract(baselineSrc, pendingSql) {
         add(incF, m[2]);
       } else if ((m = rx.policy.exec(s)) && incT.has(m[1])) {
         for (const w of s.match(/[a-z_][a-z_0-9]*/g) || []) { add(incT, tBare.get(w)); add(incF, fBare.get(w)); }
+      } else if ((m = rx.func.exec(s)) && incF.has(m[1])) {
+        // Cuerpo de una funcion incluida: las tablas y funciones que nombra CALIFICADAS (public.x / private.x) tambien
+        // (con la captura de MAIN ya aplicada, los ayudantes no los define ninguna migracion pendiente).
+        for (const q of s.match(/\b(?:public|private)\.[a-z_0-9]+/g) || []) { if (tables.has(q)) add(incT, q); if (funcs.has(q)) add(incF, q); }
       }
     }
   }
@@ -120,10 +125,18 @@ export function pendingSqlFrom(dir) {
   return list.map((v) => fs.readFileSync(path.join(dir, 'supabase/migrations', v + '.sql'), 'utf8').replace(/\r\n/g, '\n')).join('\n');
 }
 
+// Semillas del cierre: las migraciones pendientes Y las aserciones del gate (supabase/baseline/assertions.sql), que siguen
+// comprobando objetos de MAIN ya aplicados (Slice 1/2/3): sin ellas el subconjunto no los traeria.
+export function seedSqlFrom(dir) {
+  const assertions = path.join(dir, 'supabase/baseline/assertions.sql');
+  const extra = fs.existsSync(assertions) ? '\n' + fs.readFileSync(assertions, 'utf8').replace(/\r\n/g, '\n') : '';
+  return pendingSqlFrom(dir) + extra;
+}
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   const src = process.argv[2];
   if (!src) { console.error('uso: node scripts/db-pg17-bootstrap-extract.mjs <baseline_main.sql>'); process.exit(2); }
-  const { kept, tables, funcs, seqs } = extract(fs.readFileSync(src, 'utf8'), pendingSqlFrom(root));
+  const { kept, tables, funcs, seqs } = extract(fs.readFileSync(src, 'utf8'), seedSqlFrom(root));
   const head = [
     '-- GENERADO por scripts/db-pg17-bootstrap-extract.mjs (no editar a mano; ver supabase/baseline/README.md).',
     '-- Forma de MAIN (DDL de catalogo, SIN filas) de los objetos que tocan las migraciones pendientes, copiada verbatim de',

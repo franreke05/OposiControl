@@ -135,7 +135,8 @@ class AdminV1QuestionCapabilitiesTest {
         assertTrue(cuerpo.contains("\"p_pregunta_id\":\"$preguntaId\""), cuerpo)
         assertTrue(cuerpo.contains("\"razonamiento\":\"Articulo 82\""), cuerpo)
         assertTrue(
-            upstream.none { it.method() == "PATCH" },
+            // FA38: the only PATCH allowed is the filtered no-op that drops a stale rich version (rows WITH razonamiento_rico only)
+            upstream.none { it.method() == "PATCH" && !(it.uri().rawPath.endsWith("/soluciones_pregunta") && it.uri().rawQuery.orEmpty().contains("razonamiento_rico=not.is.null")) },
             "la edición ya no escribe tabla a tabla: " + upstream.describe(),
         )
     }
@@ -377,6 +378,46 @@ class AdminV1QuestionCapabilitiesTest {
     // -----------------------------------------------------------------
 
     /** El cuerpo CRUDO del PATCH, que es lo que la ruta recibe desde KQ2-2. */
+    // -----------------------------------------------------------------
+    // FA38 · el razonamiento con marcas: texto plano a la RPC, estructura aparte, marcado invalido = 400 sin tocar nada
+    // -----------------------------------------------------------------
+
+    @Test fun editarUnRazonamientoConEstiloMandaTextoPlanoALaRpcYGuardaLaEstructuraDespues() {
+        val upstream = mutableListOf<HttpRequest>()
+        val gateway = gatewayWith(upstream)
+
+        gateway.updatePregunta(preguntaId, cambios("""{"razonamiento":"Hola **mundo**"}"""))
+
+        val rpc = upstream.single { it.uri().rawPath.endsWith("/rpc/admin_update_question") }.bodyText()
+        assertTrue(rpc.contains("\"razonamiento\":\"Hola mundo\""), "la RPC recibe el texto PLANO, nunca las marcas: " + rpc)
+        val patch = upstream.single { it.method() == "PATCH" }
+        assertTrue(patch.uri().rawPath.endsWith("/soluciones_pregunta") && patch.uri().rawQuery.orEmpty().contains("pregunta_id=eq.$preguntaId"), patch.uri().toString())
+        val body = patch.bodyText()
+        assertTrue(body.contains("\"razonamiento_markup\":\"Hola **mundo**\"") && body.contains("\"bold\":true") && body.contains("\"v\":1"), body)
+    }
+
+    @Test fun unMarcadoInvalidoEsUn400YNoSaleNingunaPeticion() {
+        val upstream = mutableListOf<HttpRequest>()
+        val gateway = gatewayWith(upstream)
+
+        val error = assertFailsWith<IllegalArgumentException> { gateway.updatePregunta(preguntaId, cambios("""{"razonamiento":"Hola **mundo [color:rojo]x[/color]"}""")) }
+
+        assertTrue(error.message.orEmpty().contains("UNCLOSED_MARKER") || error.message.orEmpty().contains("BAD_COLOR"), error.message)
+        assertTrue(upstream.isEmpty(), "ninguna escritura con marcado invalido: " + upstream.describe())
+    }
+
+    @Test fun unTextoSinMarcasSeGuardaTalCualYLaEstructuraSoloSeLimpiaSiHabiaUna() {
+        val upstream = mutableListOf<HttpRequest>()
+        val gateway = gatewayWith(upstream)
+
+        gateway.updatePregunta(preguntaId, cambios("""{"razonamiento":"Linea uno\nLinea dos"}"""))
+
+        val rpc = upstream.single { it.uri().rawPath.endsWith("/rpc/admin_update_question") }.bodyText()
+        assertTrue(rpc.contains("Linea uno\\nLinea dos"), "los saltos del editor se conservan en un texto sin marcas: " + rpc)
+        val patch = upstream.single { it.method() == "PATCH" }
+        assertTrue(patch.uri().rawQuery.orEmpty().contains("razonamiento_rico=not.is.null"), "solo toca filas que tenian estructura: " + patch.uri())
+    }
+
     private fun cambios(raw: String): JsonObject = Json.parseToJsonElement(raw).jsonObject
 
     private fun preguntaDto(

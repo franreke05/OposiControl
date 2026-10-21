@@ -89,7 +89,6 @@ object LegacyEndpoints {
     val APP_COMMERCIAL_PURCHASES = LegacyEndpoint("APP-COMMERCIAL-PURCHASES", "GET", "/api/v1/app/commercial/purchases", null, SLICE_1_DEPRECATED_AT)
     val APP_COMMERCIAL_SUBSCRIPTIONS = LegacyEndpoint("APP-COMMERCIAL-SUBSCRIPTIONS", "GET", "/api/v1/app/commercial/subscriptions", null, SLICE_1_DEPRECATED_AT)
     val APP_EVENTOS = LegacyEndpoint("APP-EVENTOS", "POST", "/api/v1/app/eventos", null, SLICE_1_DEPRECATED_AT)
-    val APP_FEEDBACK_PREGUNTA = LegacyEndpoint("APP-FEEDBACK-PREGUNTA", "POST", "/api/v1/app/feedback/pregunta", null, SLICE_1_DEPRECATED_AT)
     // GATE SLICE 3 (F-01 / F-02): `iniciar` y `responder` estan RETIRADAS: responden 410 LEGACY_ATTEMPT_ROUTE_RETIRED antes
     // de autenticar, leer el cuerpo o tocar upstream ([rejectLegacyAttemptRoute]). `iniciar` abria intentos sin pasar por
     // EntitlementPolicy (D7-25) y `responder` devolvia la correccion al momento (D2-09 la oculta) contra el examen vivo. Sin
@@ -182,7 +181,7 @@ object LegacyEndpoints {
 
     val SLICE_1_APP: List<LegacyEndpoint> = listOf(
         APP_HOME, APP_ESTADISTICAS, APP_COMMERCIAL_CATALOG, APP_COMMERCIAL_PURCHASES, APP_COMMERCIAL_SUBSCRIPTIONS,
-        APP_EVENTOS, APP_FEEDBACK_PREGUNTA, APP_INICIAR, APP_RESPONDER,
+        APP_EVENTOS, APP_INICIAR, APP_RESPONDER,
     )
 }
 

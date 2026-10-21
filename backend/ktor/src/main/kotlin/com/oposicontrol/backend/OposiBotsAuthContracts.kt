@@ -21,6 +21,8 @@ data class OposiBotsRegisterRequest(
     val password: String,
     val captchaToken: String? = null,
     val email: String? = null,
+    /** FA39: `base64url(SHA-256(codeVerifier))`; the client keeps the verifier and sends it with the code of the email link. */
+    val codeChallenge: String? = null,
 ) {
     fun resolvedIdentifier(): String = email?.takeIf(String::isNotBlank) ?: identifier.orEmpty()
 }
@@ -33,10 +35,17 @@ data class OposiBotsRegisterResponse(@EncodeDefault val verificationRequired: Bo
 data class OposiBotsEmailResendRequest(
     val email: String,
     val captchaToken: String? = null,
+    val codeChallenge: String? = null,
 )
 
 @Serializable
-data class OposiBotsEmailExchangeRequest(val code: String)
+data class OposiBotsEmailExchangeRequest(
+    val code: String,
+    /** FA39: the secret whose SHA-256 was sent as `codeChallenge` when the email was requested. */
+    val codeVerifier: String? = null,
+    /** FA39: optional hint (the link may carry it): makes a wrong attempt unable to spend anybody else's binding. */
+    val email: String? = null,
+)
 
 @Serializable
 data class OposiBotsLoginRequest(
@@ -59,6 +68,7 @@ data class OposiBotsRecoverRequest(
     val identifier: String? = null,
     val captchaToken: String? = null,
     val email: String? = null,
+    val codeChallenge: String? = null,
 ) {
     fun resolvedIdentifier(): String = email?.takeIf(String::isNotBlank) ?: identifier.orEmpty()
 }
@@ -67,6 +77,8 @@ data class OposiBotsRecoverRequest(
 data class OposiBotsResetPasswordRequest(
     val resetToken: String,
     val newPassword: String,
+    val codeVerifier: String? = null,
+    val email: String? = null,
 )
 
 @Serializable
@@ -102,7 +114,12 @@ data class OposiBotsProfileRequest(
     val firstName: String,
     val lastName: String,
     val username: String? = null,
-    val specialty: String,
+    /** LEGACY: nombre exacto de la especialidad. Se mantiene por compatibilidad; si llega [especialidadId], GANA el id. */
+    val specialty: String = "",
+    /** V1: id canonico de la especialidad (D2-17). Opcional; se valida igual que PATCH /me/profile (422 UNKNOWN_SPECIALTY si no existe o esta inactiva). */
+    val especialidadId: String? = null,
+    /** V1 wave 5a (FA34): codigo de invitacion OPCIONAL. Neutral: un codigo inutilizable nunca falla ni bloquea el registro. */
+    val codigoInvitacion: String? = null,
 )
 
 @OptIn(ExperimentalSerializationApi::class)
@@ -149,6 +166,8 @@ enum class OposiBotsValidationIssue {
     SPECIALTY_NOT_SELECTED,
     INVALID_CREDENTIAL,
     INVALID_CAPTCHA,
+    INVALID_CODE_CHALLENGE,
+    INVALID_CODE_VERIFIER,
 }
 
 @Serializable
@@ -173,6 +192,8 @@ internal fun OposiBotsValidationIssue.field(): String = when (this) {
     OposiBotsValidationIssue.SPECIALTY_NOT_SELECTED -> "specialty"
     OposiBotsValidationIssue.INVALID_CREDENTIAL -> "credential"
     OposiBotsValidationIssue.INVALID_CAPTCHA -> "captchaToken"
+    OposiBotsValidationIssue.INVALID_CODE_CHALLENGE -> "codeChallenge"
+    OposiBotsValidationIssue.INVALID_CODE_VERIFIER -> "codeVerifier"
 }
 
 /** Nombre del enum legacy `error` que OB (`AuthErrorWire`) espera para un estado HTTP. */

@@ -17,7 +17,7 @@ components:
         x-pagination: NONE
         x-idempotency: REQUIRED
         x-error-codes: [VALIDATION, IDEMPOTENCY_KEY_REQUIRED, IDEMPOTENCY_KEY_INVALID, UNAUTHENTICATED, EXAM_LOCKED, SPECIALTY_TYPE_NOT_ALLOWED, EXAM_NOT_FOUND, EXAM_EMPTY, IDEMPOTENCY_KEY_IN_PROGRESS, IDEMPOTENCY_KEY_REUSED, RATE_LIMITED]
-        description: 'One transaction: lazy deadline check, CheckExamAccess, partial unique index (usuario_id, examen_id) WHERE estado=en_progreso plus INSERT ON CONFLICT, then preguntas_intento is frozen. Concurrent or new-key calls converge on the single open attempt (200, reanudado=true). A prior finalizado or abandonado attempt means a new attempt (retake). usuario_id is never accepted from the client. The attempt is tied to the exam and to that exam specialty (returned as intento.especialidadId), never to the user current specialty (DEC-002). DEMO semantics are an open exam_engine question.'
+        description: 'FA28 (V1 demo): modo DEMO is LIVE. With modo DEMO the server creates an attempt that contains ONLY the exam questions flagged as demo by Control (always the same set, frozen at start; esDemo true on the attempt): nothing beyond them is ever served, a demo never counts for Nota media, ranking, streak, quota, purchases or the first answer, and it needs the DEMO access state (exam with demo available, capability on, same specialty gate; otherwise the usual EXAM_LOCKED / EXAM_NOT_FOUND / SPECIALTY_TYPE_NOT_ALLOWED). A user who already has access and sends DEMO gets a normal attempt. Starts of demo attempts are limited per user and per IP (429 RATE_LIMITED). Original text follows. One transaction: lazy deadline check, CheckExamAccess, partial unique index (usuario_id, examen_id) WHERE estado=en_progreso plus INSERT ON CONFLICT, then preguntas_intento is frozen. Concurrent or new-key calls converge on the single open attempt (200, reanudado=true). A prior finalizado or abandonado attempt means a new attempt (retake). usuario_id is never accepted from the client. The attempt is tied to the exam and to that exam specialty (returned as intento.especialidadId), never to the user current specialty (DEC-002). DEMO semantics are an open exam_engine question.'
         security:
           - bearerAuth: []
         parameters:
@@ -88,7 +88,7 @@ components:
         x-pagination: NONE
         x-idempotency: NONE
         x-error-codes: [UNAUTHENTICATED, INTERNAL, UPSTREAM_ERROR]
-        description: 'The date is resolved server-side in the fixed product timezone (DEC-006 fixes the value only).'
+        description: 'FA29: SUPERSEDED for the V1 app by D3-16 (GET /api/v1/app/retos/hoy, openapi/engagement/engagement.yaml): the V1 challenge is not an exam attempt. This operation stays documented for the legacy route only. The date is resolved server-side in the fixed product timezone (DEC-006 fixes the value only).'
         security:
           - bearerAuth: []
         responses:
@@ -116,7 +116,7 @@ components:
         x-pagination: NONE
         x-idempotency: OPTIONAL
         x-error-codes: [IDEMPOTENCY_KEY_INVALID, UNAUTHENTICATED, CHALLENGE_NOT_FOUND, CHALLENGE_NOT_ACTIVE, CHALLENGE_ALREADY_COMPLETED, RATE_LIMITED]
-        description: 'Natural key: one participation per (usuario, reto); returns the existing attempt. The Idempotency-Key header is optional (a malformed key is 400 IDEMPOTENCY_KEY_INVALID).'
+        description: 'FA29: SUPERSEDED by D3-17/D3-18 (engagement.yaml); the V1 challenge is answered with PUT /api/v1/app/retos/{retoId}/respuestas/{preguntaId}, not through an attempt. Natural key: one participation per (usuario, reto); returns the existing attempt. The Idempotency-Key header is optional (a malformed key is 400 IDEMPOTENCY_KEY_INVALID).'
         security:
           - bearerAuth: []
         parameters:
@@ -165,8 +165,8 @@ components:
         x-roles: [USER]
         x-pagination: NONE
         x-idempotency: NONE
-        x-error-codes: [VALIDATION, UNAUTHENTICATED, ATTEMPT_NOT_FOUND]
-        description: 'Owner only; a foreign attempt is 404. May lazily finalize (TIMEOUT) first. Grid bounded by the attempt question count.'
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, ATTEMPT_NOT_FOUND, RATE_LIMITED]
+        description: 'Owner only; a foreign attempt is 404. May lazily finalize (TIMEOUT) first. Grid bounded by the attempt question count. Per-user read limit (E2-S01, amendment 2026-10-14).'
         security:
           - bearerAuth: []
         parameters:
@@ -188,6 +188,8 @@ components:
           '404':
             $ref: '../common/errors.yaml#/components/responses/NotFound'
             description: 'ATTEMPT_NOT_FOUND (also not owner).'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
     AttemptQuestions:
       get:
         operationId: listAttemptQuestions
@@ -199,8 +201,8 @@ components:
         x-roles: [USER]
         x-pagination: CURSOR
         x-idempotency: NONE
-        x-error-codes: [VALIDATION, INVALID_CURSOR, UNAUTHENTICATED, ATTEMPT_NOT_FOUND]
-        description: 'Owner only, no entitlement re-check (the frozen set is the scope). Keyset posicion. No solutions, explanations or resources: the only correction carried is the one of the user own answer (respuesta.esCorrecta, respuesta.opcionCorrectaId; DEC-015), for an open and for a finished attempt alike.'
+        x-error-codes: [VALIDATION, INVALID_CURSOR, UNAUTHENTICATED, ATTEMPT_NOT_FOUND, RATE_LIMITED, DAILY_LIMIT_REACHED]
+        description: 'FA28: on plans with a daily limit (benefit limite_preguntas_24h) a page that would reveal NEW questions beyond the rolling 24 h limit answers 429 DAILY_LIMIT_REACHED with Retry-After (questions already revealed in the window, demo attempts and exams held through purchase, gift or quota are exempt). Owner only, no entitlement re-check (the frozen set is the scope). Keyset posicion. Content comes from the immutable question revision bound at start (amendment 2026-10-14). No solutions or explanations; V1 resource METADATA only (recursos; bytes via D2-66): the only correction carried is the one of the user own answer (respuesta.esCorrecta, respuesta.opcionCorrectaId; DEC-015), for an open and for a finished attempt alike.'
         security:
           - bearerAuth: []
         parameters:
@@ -230,6 +232,8 @@ components:
           '404':
             $ref: '../common/errors.yaml#/components/responses/NotFound'
             description: 'ATTEMPT_NOT_FOUND.'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
     AttemptAnswer:
       put:
         operationId: recordAttemptAnswer
@@ -367,8 +371,8 @@ components:
         x-roles: [USER]
         x-pagination: NONE
         x-idempotency: NONE
-        x-error-codes: [UNAUTHENTICATED, ATTEMPT_NOT_FOUND, ATTEMPT_NOT_FINISHED]
-        description: 'Owner only, finalizado only. Immutable; private cache allowed. Bounded by the attempt question count.'
+        x-error-codes: [UNAUTHENTICATED, ATTEMPT_NOT_FOUND, ATTEMPT_NOT_FINISHED, RATE_LIMITED]
+        description: 'Owner only, finalizado only. Correct options come from the bound question revision (amendment 2026-10-14). Immutable; private cache allowed. Bounded by the attempt question count.'
         security:
           - bearerAuth: []
         parameters:
@@ -388,6 +392,8 @@ components:
           '409':
             $ref: '../common/errors.yaml#/components/responses/Conflict'
             description: 'ATTEMPT_NOT_FINISHED.'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
     AttemptReview:
       get:
         operationId: getAttemptReview
@@ -400,7 +406,7 @@ components:
         x-pagination: CURSOR
         x-idempotency: NONE
         x-error-codes: [VALIDATION, INVALID_CURSOR, UNAUTHENTICATED, ATTEMPT_NOT_FOUND, ATTEMPT_NOT_FINISHED, RATE_LIMITED]
-        description: 'Available only when estado=finalizado (motivoFin USER or TIMEOUT; the lazy TIMEOUT runs first). Owner by JWT sub only, no entitlement re-check. Items in attempt order (preguntas_intento.posicion), keyset posicion, bounded by attempt size (<= 200). Read-only (repeating is D2-03). Per-question status comes from the snapshot frozen at finish; statement, options, explanation and resource refs are read live. Policy-dependent content (explanation, resources) is nullable or empty (DEC-025, DEC-040). Totals, nota and band stay in D2-12.'
+        description: 'Available only when estado=finalizado (motivoFin USER or TIMEOUT; the lazy TIMEOUT runs first). Owner by JWT sub only, no entitlement re-check. Items in attempt order (preguntas_intento.posicion), keyset posicion, bounded by attempt size (<= 200). Read-only (repeating is D2-03). Per-question status comes from the snapshot frozen at finish; statement, options, correct option and resource refs come from the immutable question revision bound at start (amendment 2026-10-14; attempts frozen before it read live content). Explanation stays null (DEC-025, single policy); resources are the V1 media of the revision (owner decision 2026-10-14). Totals, nota and band stay in D2-12.'
         security:
           - bearerAuth: []
         parameters:
@@ -440,6 +446,50 @@ components:
             description: 'ATTEMPT_NOT_FINISHED (en_progreso or abandonado).'
           '429':
             $ref: '../common/errors.yaml#/components/responses/RateLimited'
+    AttemptResourceAccess:
+      get:
+        operationId: getAttemptResourceAccess
+        summary: 'Temporary access to the bytes of a resource of the attempt'
+        tags: [attempts]
+        x-contract-id: D2-66
+        x-implementation: TARGET
+        x-slice: 3
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, ATTEMPT_NOT_FOUND, RESOURCE_NOT_FOUND, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Amendment 2026-10-14 (owner decision: resources V1 image and audio, video extensible, PDF out). Owner by JWT sub only; the resource must belong to a question revision bound to THIS attempt (a bare resourceId opens nothing); no entitlement re-check (the attempt exists only if D2-03 passed the access policy). Ktor authorizes, Storage serves the bytes through a short-lived signed URL (never persisted, never the internal path). Any attempt state (open, finished, abandoned).'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/identifiers.yaml#/components/parameters/AttemptIdPath'
+          - name: recursoId
+            in: path
+            required: true
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        responses:
+          '200':
+            description: 'Signed URL and its expiry.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AttemptResourceAccess'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'ATTEMPT_NOT_FOUND (also not owner) or RESOURCE_NOT_FOUND (not in a revision bound to this attempt, or outside V1).'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+            description: 'UPSTREAM_UNAVAILABLE: Storage could not sign (object missing or Storage down). Retryable.'
   headers:
     NoStore:
       description: 'no-store'
@@ -469,6 +519,9 @@ components:
       description: 'D2-07 intento shape.'
       required: [id, origen, tipoExamen, estado, iniciadoEn, serverNow, totalPreguntas, respondidas, sinResponder]
       properties:
+        esDemo:
+          type: boolean
+          description: 'FA28: true for a demo attempt (only the demo-flagged questions). Absent = false.'
         id:
           $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
         origen:
@@ -527,8 +580,16 @@ components:
           minimum: 0
         estado:
           type: string
-          description: 'DEC-015 (decided 2026-10-13): an answered question is correcta or incorrecta as soon as it is answered, also before finish, for the three exam types. A skipped or untouched question is sin_responder; anulada wins over any answer. respondida only when the correction of an answered question is not available.'
-          enum: [sin_responder, respondida, correcta, incorrecta, anulada]
+          description: 'DEC-015 (decided 2026-10-13): an answered question is correcta or incorrecta as soon as it is answered, also before finish, for the three exam types. A skipped or untouched question is sin_responder; anulada wins over any answer. reserva_no_utilizada (FA31) exists ONLY in the grid of a FINISHED attempt: while the attempt is open an unused reserve is not in the grid, not in the pages, not answerable and its media is not served (404). respondida only when the correction of an answered question is not available.'
+          enum: [sin_responder, respondida, correcta, incorrecta, anulada, reserva_no_utilizada]
+        rol:
+          type: string
+          enum: [PRINCIPAL, RESERVA]
+          description: 'FA31: absent = PRINCIPAL.'
+        sustituyeA:
+          type: integer
+          minimum: 1
+          description: 'FA31: activated reserve only: posicion of the annulled question it replaces.'
     AttemptView:
       type: object
       required: [intento, grid]
@@ -619,6 +680,14 @@ components:
           type: string
         anulada:
           type: boolean
+        rol:
+          type: string
+          enum: [PRINCIPAL, RESERVA]
+          description: 'FA31: block of the question in an official exam. Absent = PRINCIPAL. A RESERVA appears in an open attempt only when it was ACTIVATED at start (REEMPLAZO_POR_RESERVA); unused reserves are never served while the attempt is open.'
+        sustituyeA:
+          type: integer
+          minimum: 1
+          description: 'FA31: only on an activated reserve: the posicion of the annulled main question it replaces.'
         opciones:
           type: array
           items:
@@ -642,6 +711,119 @@ components:
               type: [string, 'null']
               format: uuid
               description: 'DEC-015: the correct option, under the same condition as esCorrecta. May be null while esCorrecta is present.'
+        recursos:
+          type: array
+          description: 'Amendment 2026-10-14: V1 resources of the bound revision; absent when none.'
+          items:
+            $ref: '#/components/schemas/AttemptResource'
+    RichText:
+      type: object
+      description: 'FA38: styled text of an explanation (razonado), produced by the strict server-side grammar (E1-V1-MARKUP-CONTRACT.md). Render it as TEXT (never as HTML): paragraphs ("p") and bullet items ("li"), optional alignment per block, and spans with a closed set of styles. Sizes are TOKENS (map them to the design system text styles), colors are names or #RRGGBB. The plain text is always in the sibling "razonamiento" string.'
+      required: [v, blocks]
+      additionalProperties: false
+      properties:
+        v:
+          type: integer
+          enum: [1]
+        blocks:
+          type: array
+          maxItems: 200
+          items:
+            type: object
+            required: [k, spans]
+            additionalProperties: false
+            properties:
+              k:
+                type: string
+                enum: [p, li]
+              a:
+                type: string
+                enum: [left, center, right, justify]
+              spans:
+                type: array
+                minItems: 1
+                maxItems: 2000
+                items:
+                  type: object
+                  required: [text]
+                  additionalProperties: false
+                  properties:
+                    text:
+                      type: string
+                      minLength: 1
+                      maxLength: 20000
+                    bold:
+                      type: boolean
+                      enum: [true]
+                    italic:
+                      type: boolean
+                      enum: [true]
+                    underline:
+                      type: boolean
+                      enum: [true]
+                    strike:
+                      type: boolean
+                      enum: [true]
+                    color:
+                      type: string
+                      pattern: '^(black|gray|red|orange|yellow|green|blue|purple|#[0-9A-F]{6})$'
+                    size:
+                      type: string
+                      enum: [xs, sm, md, lg, xl]
+    AttemptResource:
+      type: object
+      description: 'Amendment 2026-10-14. A V1 media resource of the immutable question revision bound to the attempt. Metadata only: bytes via D2-66. Canonical mapping: resourceId = id, type = tipo, access = D2-66.'
+      required: [id, tipo, titulo, version]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        tipo:
+          type: string
+          enum: [imagen, audio, video]
+        titulo:
+          type: string
+        mimeType:
+          type: [string, 'null']
+        version:
+          type: string
+          description: 'Stable 16-hex token of the stored object (cache key). Bytes of a resourceId are never rewritten.'
+        sizeBytes:
+          type: [integer, 'null']
+          minimum: 0
+        durationMs:
+          type: [integer, 'null']
+          minimum: 0
+          description: 'Audio/video duration measured at ingest; null until ingest computes it.'
+        envelope:
+          oneOf:
+            - type: 'null'
+            - $ref: '#/components/schemas/AudioEnvelope'
+    AudioEnvelope:
+      type: object
+      description: 'Computed ONCE at ingest. One UInt8 sample (0..255) per stepMs: RMS of the window centred on k*stepMs, normalised to the resource maximum; base64.'
+      required: [stepMs, samples]
+      properties:
+        stepMs:
+          type: integer
+          minimum: 10
+          maximum: 1000
+        samples:
+          type: string
+          format: byte
+    AttemptResourceAccess:
+      type: object
+      required: [url, expiresAt, version]
+      properties:
+        url:
+          type: string
+          format: uri
+          description: 'Short-lived signed URL; no Authorization header needed. Ask again when it expires.'
+        expiresAt:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+        mimeType:
+          type: [string, 'null']
+        version:
+          type: string
     AnswerRequest:
       type: object
       x-entity: pregunta
@@ -714,9 +896,49 @@ components:
             modo:
               type: string
               description: 'Value set pending DEC-018.'
+            esDemo:
+              type: boolean
+              description: 'FA28: true when the result is of a DEMO attempt (only the demo-flagged questions). Absent = false. resumen.modo stays the exam type.'
             nota:
-              type: number
-              description: 'Formula pending DEC-013 (value, not shape).'
+              type: [number, 'null']
+              description: 'FA31: nota = max(0, correctas x den - num x falladas) x 10 / (den x evaluables), exact rational arithmetic, rounded HALF-UP to 2 decimals once, computed by the database (the only implementation). With penalizacion 0 it is the DEC-013 formula. null when evaluables = 0 (nothing was evaluable: no division by zero).'
+            evaluables:
+              type: integer
+              minimum: 0
+              description: 'FA31: questions counted in the grade (correctas + falladas + sinResponder).'
+            anuladas:
+              type: integer
+              minimum: 0
+              description: 'FA31: annulled main questions frozen at start.'
+            reservasUsadas:
+              type: integer
+              minimum: 0
+              description: 'FA31: reserves activated at start (REEMPLAZO_POR_RESERVA only).'
+            anuladasSinReserva:
+              type: integer
+              minimum: 0
+              description: 'FA31: annulled questions that had no reserve to replace them under REEMPLAZO_POR_RESERVA (they count as NO_PUNTUA).'
+            reglaAnuladas:
+              type: string
+              enum: [REEMPLAZO_POR_RESERVA, NO_PUNTUA]
+              description: 'FA31: the rule in force frozen when the attempt started (derived when the exam sets none: reserves -> REEMPLAZO_POR_RESERVA, no reserves -> NO_PUNTUA). Absent on attempts that predate FA31.'
+            penalizacion:
+              type: object
+              required: [tipo]
+              description: 'FA31/FA36: the penalty rule FROZEN when the attempt started (a later change of the exam never alters a grade already given). tipo FIJA = numerador/denominador per wrong answer (1/3 typical). tipo RACIONAL (FA36, owner 2026-10-17) = each wrong answer subtracts 1/(n-1) of a correct one, n = the number of options of THAT question (4 options: three wrong cancel one right; 3 options: two wrong cancel one right): PD = A - E/(n-1) over the evaluable questions (annulled excluded, activated reserves included), then the usual 0-10 scale, never below 0; unanswered and skipped are never penalised; a question with fewer than 2 options carries no penalty. descuento = what the wrong answers deduct, in units of CORRECT ANSWERS (0.67 = two thirds of one right answer), not points of the 0-10 scale (informative; show as "equivale a {descuento} aciertos"). Absent when the attempt predates FA31, is a demo, or does not penalise.'
+              properties:
+                tipo:
+                  type: string
+                  enum: [FIJA, RACIONAL]
+                numerador:
+                  type: integer
+                  minimum: 1
+                denominador:
+                  type: integer
+                  minimum: 1
+                descuento:
+                  type: number
+                  minimum: 0
             calificacion:
               type: string
             duracionSegundos:
@@ -741,6 +963,16 @@ components:
               posicion:
                 type: integer
                 minimum: 1
+              estado:
+                type: string
+                enum: [CORRECT, WRONG, SKIPPED, UNANSWERED, ANNULLED, RESERVA_NO_UTILIZADA]
+                description: 'FA31: optional. RESERVA_NO_UTILIZADA = a reserve that was not activated; its content is visible only here and in the review, after the attempt finished.'
+              rol:
+                type: string
+                enum: [PRINCIPAL, RESERVA]
+              sustituyeA:
+                type: integer
+                minimum: 1
               opcionElegida:
                 type: [string, 'null']
                 format: uuid
@@ -750,6 +982,9 @@ components:
               razonamiento:
                 type: [string, 'null']
                 description: 'Markdown.'
+              razonamientoRico:
+                description: 'FA38 (additive): the styled version of razonamiento; absent when the text has no style or explanations are not served (EXPLANATIONS_VISIBLE).'
+                $ref: '#/components/schemas/RichText'
               tiempoSeg:
                 type: integer
                 minimum: 0
@@ -844,8 +1079,16 @@ components:
             $ref: '#/components/schemas/QuestionOption'
         status:
           type: string
-          description: 'Frozen at finish. ANNULLED only for questions annulled between start and finish (excluded from evaluables).'
-          enum: [CORRECT, WRONG, SKIPPED, UNANSWERED, ANNULLED]
+          description: 'Frozen at finish. ANNULLED = annulled main question (FA31: annulment is frozen at START for attempts that carry reglaAnuladas; earlier attempts keep the live rule). RESERVA_NO_UTILIZADA (FA31) = a reserve that was not activated: shown last, labelled by the client as unused, with no answer and no solution.'
+          enum: [CORRECT, WRONG, SKIPPED, UNANSWERED, ANNULLED, RESERVA_NO_UTILIZADA]
+        rol:
+          type: string
+          enum: [PRINCIPAL, RESERVA]
+          description: 'FA31: block of the question in an official exam. Absent = PRINCIPAL. A RESERVA appears in an open attempt only when it was ACTIVATED at start (REEMPLAZO_POR_RESERVA); unused reserves are never served while the attempt is open.'
+        sustituyeA:
+          type: integer
+          minimum: 1
+          description: 'FA31: only on an activated reserve: the posicion of the annulled main question it replaces.'
         firstAnswer:
           type: [object, 'null']
           description: 'primera_opcion_id / primera_es_correcta, immutable; null when never answered or ANNULLED.'
@@ -895,20 +1138,14 @@ components:
           properties:
             razonamiento:
               $ref: '../common/identifiers.yaml#/components/schemas/Markdown'
+            razonamientoRico:
+              description: 'FA38 (additive): the styled version of razonamiento (the plain text is always in razonamiento); absent when the text has no style.'
+              $ref: '#/components/schemas/RichText'
         resources:
           type: array
-          description: 'Refs only; signed URLs via D4-19. Empty when none or hidden by policy.'
+          description: 'V1 resources of the bound revision (amendment 2026-10-14); bytes via D2-66. Empty when none.'
           items:
-            type: object
-            required: [id, tipo, titulo]
-            properties:
-              id:
-                $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
-              tipo:
-                type: string
-                enum: [imagen, audio, video, texto, pdf, enlace]
-              titulo:
-                type: string
+            $ref: '#/components/schemas/AttemptResource'
         timings:
           type: object
           required: []

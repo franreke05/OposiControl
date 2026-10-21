@@ -102,6 +102,8 @@ internal class SupabaseOposiBotsAuthGateway(
     internal val accessRequestSessionGate: AccessRequestSessionGate,
     private val client: HttpClient = defaultAuthHttpClient(),
     private val profileDirectory: CanonicalProfileDirectory? = null,
+    /** FA39: binding of the email-link code to the requesting device; `null` = disabled (tests / legacy wiring). */
+    private val codeBinding: EmailCodeBinding? = null,
 ) : OposiBotsAuthGateway, AuthProviderClient, AutoCloseable {
     /** MASTER-ARCH-008: libera el `HttpClient` (lo llama [OposiBotsAuthRuntime.close] al parar la aplicacion). */
     override fun close() {
@@ -113,6 +115,7 @@ internal class SupabaseOposiBotsAuthGateway(
         context: OposiBotsAuthContext,
     ): OposiBotsRegisterResponse {
         val body = credentialBody(request.resolvedIdentifier(), request.password, request.captchaToken)
+        bindChallenge("signup", request.resolvedIdentifier(), request.codeChallenge)
         val response = authRequest(HttpMethod.Post, "/auth/v1/signup${emailConfirmRedirectQuery()}", body, context = context)
         // Enumeration-safe (D1-01): con autoconfirm GoTrue contesta 422 user_already_exists en vez del 200 ofuscado;
         // un duplicado se contesta igual que un alta nueva (202) y nunca revela que el email existe.
@@ -121,11 +124,19 @@ internal class SupabaseOposiBotsAuthGateway(
         if ((response.status.value == 422 || response.status.value == 400) && response.error().normalizedCode in DUPLICATE_SIGNUP_CODES) {
             return OposiBotsRegisterResponse()
         }
+        // REAL-AUTH GATE (E1-V1-REAL-AUTH-RESULT.md): a real GoTrue answers 429 over_email_send_rate_limit to a signup of an EXISTING unconfirmed account (60 s per user) and to anyone when the hourly mail budget is spent;
+        // the first is an existence oracle (a new signup answers 202), so a 429 is logged and answered like a new signup. (The stub never throttles.)
+        if (response.status == HttpStatusCode.TooManyRequests) {
+            GatewayLogger.warn("auth signup throttled by upstream (indistinguishable 202 returned)")
+            logStrategicEvent(StrategicEvent.AUTH_SIGNUP_THROTTLED, requestId = context.requestId, operation = "register", result = "202_without_mail")
+            return OposiBotsRegisterResponse()
+        }
         if (!response.status.isSuccessStatus()) throw mapCredentialError(response, conflictAllowed = false, purpose = AuthPurpose.REGISTER)
         return OposiBotsRegisterResponse()
     }
 
     override suspend fun resend(request: OposiBotsEmailResendRequest, context: OposiBotsAuthContext) {
+        bindChallenge("signup", request.email, request.codeChallenge)
         val response = authRequest(
             HttpMethod.Post,
             "/auth/v1/resend${emailConfirmRedirectQuery()}",
@@ -183,6 +194,8 @@ internal class SupabaseOposiBotsAuthGateway(
         request: OposiBotsEmailExchangeRequest,
         context: OposiBotsAuthContext,
     ): OposiBotsAuthSessionDto {
+        // FA39: the stored binding is spent BEFORE GoTrue spends the one-time token; no binding = the same 401 as an invalid code.
+        val boundTo = consumeBinding("signup", request.email, request.codeVerifier) { CanonicalErrorCode.AUTH_CODE_INVALID.exception() }
         val response = authRequest(
             HttpMethod.Post,
             "/auth/v1/verify",
@@ -193,7 +206,14 @@ internal class SupabaseOposiBotsAuthGateway(
             context = context,
         )
         if (!response.status.isSuccessStatus()) throw mapCredentialError(response, purpose = AuthPurpose.EXCHANGE)
-        return response.toSession(context, AccessRequestSessionGrant.EMAIL_LINK)
+        // Candidate merge: the FA39 binding check runs on the decoded session BEFORE the account gate in toSession
+        // (develop H1/RB-16), so a mismatched binding never reaches the gate; then the EMAIL_LINK grant as on develop.
+        val decoded = response.decode<SupabaseSession>()
+        if (boundTo != null && !decoded.user.email.matchesBinding(boundTo)) {
+            revokeMintedSession(decoded.accessToken, context)
+            throw CanonicalErrorCode.AUTH_CODE_INVALID.exception()
+        }
+        return response.toSession(context, AccessRequestSessionGrant.EMAIL_LINK, decoded)
     }
 
     override suspend fun login(
@@ -258,6 +278,7 @@ internal class SupabaseOposiBotsAuthGateway(
     }
 
     override suspend fun recover(request: OposiBotsRecoverRequest, context: OposiBotsAuthContext) {
+        bindChallenge("recovery", request.resolvedIdentifier(), request.codeChallenge)
         val redirect = configuration.passwordRecoveryRedirectUrl
             ?.let { "?redirect_to=${it.urlEncode()}" }
             .orEmpty()
@@ -280,6 +301,7 @@ internal class SupabaseOposiBotsAuthGateway(
     }
 
     override suspend fun reset(request: OposiBotsResetPasswordRequest, context: OposiBotsAuthContext) {
+        val boundTo = consumeBinding("recovery", request.email, request.codeVerifier) { OposiBotsAuthProblem.authentication() }
         val verified = authRequest(
             HttpMethod.Post,
             "/auth/v1/verify",
@@ -291,6 +313,10 @@ internal class SupabaseOposiBotsAuthGateway(
         )
         if (!verified.status.isSuccessStatus()) throw mapCredentialError(verified)
         val recovery = verified.decode<SupabaseSession>()
+        if (boundTo != null && !recovery.user.email.matchesBinding(boundTo)) {
+            revokeMintedSession(recovery.accessToken, context)
+            throw OposiBotsAuthProblem.authentication()
+        }
         val updated = try {
             authRequest(
                 HttpMethod.Put,
@@ -961,6 +987,34 @@ internal class SupabaseOposiBotsAuthGateway(
     }
 
     private enum class AuthPurpose { GENERIC, LOGIN, EXCHANGE, REGISTER, PASSWORD_RESET }
+
+    // ----- FA39: binding of the email-link code (see EmailCodeBinding.kt) -----
+
+    /** Before GoTrue sends the email: stores the client's challenge for that email. Fail closed: no binding stored, no email sent. */
+    private suspend fun bindChallenge(purpose: String, email: String, challenge: String?) {
+        val binding = codeBinding ?: return
+        if (configuration.pkceMode == PkceMode.OFF) return
+        if (challenge == null) {
+            if (configuration.pkceMode == PkceMode.REQUIRED) throw OposiBotsAuthProblem.validation(OposiBotsValidationIssue.INVALID_CODE_CHALLENGE)
+            return
+        }
+        binding.register(purpose, Pkce.emailRef(configuration.rateLimitHmacSecret, email), challenge)
+    }
+
+    /** Before GoTrue verifies the token: the pseudonym of the email the spent binding was requested for, or `null` when binding is not in force for this call. */
+    private suspend fun consumeBinding(purpose: String, email: String?, verifier: String?, invalid: () -> Exception): String? {
+        val binding = codeBinding ?: return null
+        if (configuration.pkceMode == PkceMode.OFF) return null
+        if (verifier == null) {
+            if (configuration.pkceMode == PkceMode.REQUIRED) throw OposiBotsAuthProblem.validation(OposiBotsValidationIssue.INVALID_CODE_VERIFIER)
+            return null
+        }
+        val emailRef = email?.takeIf(String::isNotBlank)?.let { Pkce.emailRef(configuration.rateLimitHmacSecret, it) }
+        return binding.consume(purpose, emailRef, Pkce.challengeOf(verifier)) ?: throw invalid()
+    }
+
+    private fun String?.matchesBinding(emailRef: String): Boolean =
+        this != null && java.security.MessageDigest.isEqual(Pkce.emailRef(configuration.rateLimitHmacSecret, this).toByteArray(), emailRef.toByteArray())
 
     private fun mapCredentialError(
         response: AuthResponse,

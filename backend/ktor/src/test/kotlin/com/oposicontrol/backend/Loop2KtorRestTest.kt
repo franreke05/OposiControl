@@ -392,7 +392,7 @@ class Loop2KtorRestTest {
     // ------------------------------------------------------------------ MASTER2-OPENAPI-006
 
     @Test
-    fun theNineLegacyAppRoutesCarryDeprecationAndOnlyARoutedResolvableSuccessorIsLinked() = testApplication {
+    fun theEightLegacyAppRoutesCarryDeprecationAndOnlyARoutedResolvableSuccessorIsLinked() = testApplication {
         val gateway = appGateway(CopyOnWriteArrayList())
         application {
             install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; explicitNulls = false }) }
@@ -400,13 +400,13 @@ class Loop2KtorRestTest {
             installBackendStatusPages()
             routing { appV1Routes(gateway, SupabaseJwtVerifier("https://stub.supabase.test", Json), allowDevUser = true) }
         }
-        assertEquals(9, LegacyEndpoints.SLICE_1_APP.size)
+        assertEquals(8, LegacyEndpoints.SLICE_1_APP.size) // D5-15 feedback/pregunta ya no es legacy (contrato D5-15, FA24)
         val expectedDeprecation = "@${LegacyEndpoints.SLICE_1_DEPRECATED_AT.epochSecond}"
         val attempt = "33333333-3333-4333-8333-333333333333"
         val calls = listOf(
             "GET" to "/api/v1/app/home", "GET" to "/api/v1/app/estadisticas", "GET" to "/api/v1/app/commercial/catalog",
             "GET" to "/api/v1/app/commercial/purchases", "GET" to "/api/v1/app/commercial/subscriptions",
-            "POST" to "/api/v1/app/eventos", "POST" to "/api/v1/app/feedback/pregunta",
+            "POST" to "/api/v1/app/eventos",
             "POST" to "/api/v1/app/examenes/$attempt/iniciar", "POST" to "/api/v1/app/intentos/$attempt/responder",
         )
         val links = mutableMapOf<String, String?>()

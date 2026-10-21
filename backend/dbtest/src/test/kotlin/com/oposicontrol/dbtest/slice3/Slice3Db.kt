@@ -11,7 +11,7 @@ import java.util.concurrent.atomic.AtomicInteger
 /**
  * SLICE 3: soporte para probar las migraciones REALES del runtime de examen sobre el PostgreSQL embebido (nunca MAIN).
  *
- * La forma de MAIN NO se copia a mano: se carga `supabase/baseline/main_shape_subset.sql`, el mismo fichero GENERADO
+ * La forma de MAIN NO se copia a mano: se carga `supabase/baseline/main_shape_subset_20260929.sql`, el fichero GENERADO
  * (verbatim de la captura de catalogo de MAIN) que usa el gate de PostgreSQL 17 del CI, y encima las tres migraciones de
  * Slice 3 tal cual estan en el repositorio (esquema, RPC de comando y el endurecimiento 20261008100200 que las redefine). Solo se quitan sus dos `CREATE EXTENSION` (los binarios embebidos no traen
  * `uuid-ossp`; `gen_random_uuid()` es nativo) y la palabra `MAINTAIN` de sus GRANT / REVOKE (privilegio de PG17; el
@@ -27,7 +27,9 @@ object Slice3Db {
 
     /** Gate de Slice 3 (F-01 / F-05 / F-06): marcador `creado_por_comando`, dos indices de FK y las RPC redefinidas. */
     const val HARDENING = "supabase/migrations/20261008100200_slice3_attempt_hardening.sql"
-    private const val MAIN_SUBSET = "supabase/baseline/main_shape_subset.sql"
+    // La forma de MAIN ANTERIOR a Slice 0/1/2/3/7 (captura 2026-09-29): estas pruebas aplican esas migraciones sobre ella. Desde
+    // 2026-10-14 el gate PG17 usa la captura actual (main_shape_subset.sql), en la que ya estan aplicadas.
+    private const val MAIN_SUBSET = "supabase/baseline/main_shape_subset_20260929.sql"
 
     const val UA = "a3000000-0000-0000-0000-00000000000a"
     const val UB = "a3000000-0000-0000-0000-00000000000b"

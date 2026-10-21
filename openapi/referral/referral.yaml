@@ -1,0 +1,129 @@
+# REFERRAL (FA34, V1 wave 5a): Invita y gana, inviter side. Contract: E1-V1-W5-REFERRAL-CONTRACT.md; design E4-V1-REFERRAL-DESIGN v3.1.
+# One stable code per user. The invitee enters a code ONLY while completing the profile (optional field `codigoInvitacion` of the legacy register/profile step; it is neutral: an unusable code never fails nor blocks the registration and never says why).
+# The reward goes once per invitee to BOTH sides after server-evaluated rules and a hold, through the single earn-cap function; the feature is OFF until Control sets the amounts. The inviter sees COUNTERS until an invitation is rewarded,
+# then only the invitee's public username. Nothing about pending invitees, no e-mail, no id, no device data.
+components:
+  pathItems:
+    MeInvitation:
+      get:
+        operationId: getMyInvitation
+        summary: 'Own invitation code, counters and the OT amount per invitation'
+        tags: [referral]
+        x-contract-id: D9-01
+        x-implementation: TARGET
+        x-slice: 5
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Creates the code on the first read (8 symbols of a 30-symbol alphabet, from a CSPRNG, never derived from the user). configuracion.otPorInvitacion is the amount the INVITER earns per rewarded invitation; null = the feature is off (the client hides the entry). otGanados is the sum of the OT already credited for invitations. Counters: total excludes rejected invitations.'
+        security:
+          - bearerAuth: []
+        responses:
+          '200':
+            description: 'The invitation summary.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/InvitationSummary'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    MeInvitations:
+      get:
+        operationId: listMyInvitations
+        summary: 'Rewarded invitations (public username of the invitee only)'
+        tags: [referral]
+        x-contract-id: D9-02
+        x-implementation: TARGET
+        x-slice: 5
+        x-roles: [USER]
+        x-pagination: CURSOR
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, INVALID_CURSOR, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'Only invitations already rewarded, newest first, keyset cursor (opaque). handle is the invitee public username (null prints as a neutral "a friend"). Pending invitees are never disclosed.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/pagination.yaml#/components/parameters/Cursor'
+          - $ref: '../common/pagination.yaml#/components/parameters/LimitApp'
+        responses:
+          '200':
+            description: 'One page.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  allOf:
+                    - $ref: '../common/pagination.yaml#/components/schemas/CursorPageEnvelope'
+                    - type: object
+                      required: [items]
+                      properties:
+                        items:
+                          type: array
+                          maxItems: 50
+                          items:
+                            $ref: '#/components/schemas/InvitationEntry'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+  headers:
+    NoStore:
+      description: 'no-store'
+      required: true
+      schema:
+        type: string
+        enum: ['no-store']
+  schemas:
+    InvitationSummary:
+      type: object
+      required: [codigo, invitados, otGanados, configuracion]
+      properties:
+        codigo:
+          type: string
+          pattern: '^[A-HJKMNP-TV-Z2-9]{8}$'
+        invitados:
+          type: object
+          required: [total, premiados]
+          properties:
+            total:
+              type: integer
+              minimum: 0
+            premiados:
+              type: integer
+              minimum: 0
+        otGanados:
+          type: integer
+          minimum: 0
+        configuracion:
+          type: object
+          required: [otPorInvitacion]
+          properties:
+            otPorInvitacion:
+              type: [integer, 'null']
+              minimum: 1
+    InvitationEntry:
+      type: object
+      required: [premiadaEn]
+      properties:
+        handle:
+          type: [string, 'null']
+        premiadaEn:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
