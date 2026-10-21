@@ -39,7 +39,7 @@ Commits on top of `develop`, oldest first:
   - All hashes were recomputed from the merged `openapi/`. `auth.yaml` and `profiles.yaml` changed on both sides.
 - `scripts/db-pg17-gate.sh`: V1's design (PENDING = repo minus MAIN_MIGRATION_HISTORY minus HISTORY_DIVERGENT) combined with develop's DEBT-156b.
   - Non-V1 `202610*_security_*` migrations stay out of PENDING. Step 1b checks that each has VERIFY, ROLLBACK and a dbtest class.
-  - develop's rule "a 20261022* migration may not carry _security_" would have FAILED on V1's `20261022100100_security_exam_publication_time`. It is replaced by "a V1 _security_ migration stays PENDING and must be listed". That keeps the purpose of DEBT-156b: the filter never hides a V1 migration. **Owner/OposiBot should confirm this rewording of DEBT-156b step 1b.**
+  - develop's rule "a 20261022* migration may not carry _security_" would have FAILED on V1's `20261022100100_security_exam_publication_time`. It is replaced by "a V1 _security_ migration stays PENDING and must be listed". That keeps the purpose of DEBT-156b: the filter never hides a V1 migration. **Rewording of DEBT-156b step 1b approved by the owner on 2026-10-21.**
 - `scripts/db-pg17-gate.test.sh`: V1 mutations plus develop's four DEBT-156b negative controls. The V1-probe expectation now matches the new message.
 - `scripts/verify-migrations-manifest.test.sh`: took the V1 side. It already strips CR and includes `V1_MIGRATIONS.txt`.
 - `supabase/baseline/assertions.sql`: both sides independently fixed "an annulled question is frozen" (RB-15).
@@ -217,7 +217,7 @@ The "35 new vs MAIN" expectation does not match: 34 PENDING plus 7 develop secur
 
 1. `WALLET.local_schema_matches_main` fails. The store payments migrations (20261022102600+) intentionally add `entorno`, `tienda_producto_id` and `tienda_finalizada_en` to `compras_usuario`; `suscripciones` also gets `version_evento`. They also add CHECK constraints and a unique index, and narrow the `service_role` grants. The e2e therefore differs from the 2026-10-14 MAIN capture (`main-wallet-shape.txt`). This is expected drift for pending migrations. The test was NOT changed: the owner of the harness decides whether to keep a pending-delta expectation.
 2. `db-pg17-gate.test.sh` (f) "el congelado no liga la revision" is now ineffective (TEST FAIL, the mutation passes the gate). It mutates the freeze insert of 20261022100000, but `20261022101000_v1_demo_mode` and `20261022101300_v1_official_rules` later replace the freeze function. **This is not caused by the merge:** the same test on a clean `git archive` of feature/v1-p3-store-payments `be9e0bd` also stops at `TEST FAIL: (f) el congelado no liga la revision paso` (rc=1). The fix would be to mutate the last definition (101300); this is not done here.
-3. The DEBT-156b step 1b rewording above needs OposiBot/owner confirmation.
+3. ~~The DEBT-156b step 1b rewording needs confirmation.~~ Approved by the owner on 2026-10-21.
 4. The QA stack gateway now mounts files from this worktree's `ops/local-exam/.local/`. Do not delete this worktree without first running `up.mjs` from the stack owner's worktree.
 5. Two harness facts to know before the next run:
    - J15 must run on a fresh Ktor: the in-memory limits of e2e and J15 add up.
