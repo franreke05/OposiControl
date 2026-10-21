@@ -2,7 +2,7 @@
 // EX15/EX16/EX11/EX12: E2E del motor de examen contra el stack LOCAL (up.mjs + run-ktor.mjs). Nunca contra MAIN.
 //   node ops/local-exam/e2e.mjs        -> imprime PASS/FAIL por caso y escribe .local/e2e-result.json
 // Cada caso parte de un intento NUEVO: se cierran (abandonan) los abiertos de los usuarios de prueba antes de empezar.
-import { GATEWAY as GATEWAY_URL } from './ports.mjs';
+import { ADMIN_KTOR_URL, GATEWAY as GATEWAY_URL, GOTRUE_STUB_URL, KTOR_URL, LOCAL_DIR, composeArgs } from './stack-config.mjs';
 import { execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -15,10 +15,10 @@ import { trackHarnessExams } from './harness-marker.mjs'; trackHarnessExams('e2e
 requireStackLock('e2e.mjs');
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const local = path.join(here, '.local');
-const KTOR = process.env.KTOR_URL ?? 'http://127.0.0.1:8089';
+const local = LOCAL_DIR;
+const KTOR = KTOR_URL;
 // V1: segundo Ktor con el perfil `control` (node ops/local-exam/run-ktor.mjs --admin) para la superficie de administracion.
-const ADMIN_KTOR = process.env.ADMIN_KTOR_URL ?? 'http://127.0.0.1:8090';
+const ADMIN_KTOR = ADMIN_KTOR_URL;
 // E5-B03: el e2e usa SUS PROPIOS usuarios para todo lo que escribe (intentos, cubos de limite): XA/XB (sql/94). A, B y P son
 // de los recorridos de la app: solo se LEEN (cartera, derechos, premium) y nunca se tocan sus intentos.
 const rawTokens = JSON.parse(fs.readFileSync(path.join(local, 'tokens.json'), 'utf8'));
@@ -54,8 +54,7 @@ function decode(bytes) {
   return { stream, seconds, decoded: probe.ok && full.ok && full.out.trim() === '' };
 }
 
-const sql = (text) => execFileSync('docker', ['compose', '--env-file', path.join(local, 'compose.env'), '-f', path.join(here, 'docker-compose.yaml'),
-  'exec', '-T', 'db', 'psql', '-U', 'postgres', '-h', 'localhost', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'], { input: text, encoding: 'utf8' }).trim();
+const sql = (text) => execFileSync('docker', [...composeArgs(), 'exec', '-T', 'db', 'psql', '-U', 'postgres', '-h', 'localhost', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'], { input: text, encoding: 'utf8' }).trim();
 
 async function call(user, method, p, body, key) {
   const headers = { Authorization: `Bearer ${tokens[user]}` };
@@ -74,7 +73,10 @@ const answer = (user, attempt, question, option, base = 0, k = key()) =>
   call(user, 'PUT', `/api/v1/app/intentos/${attempt}/respuestas/${question}`, { opcionSeleccionadaId: option, tiempoRespuestaMs: 1500, baseRevision: base }, k);
 
 const results = [];
+let stubStartedHere = false, stubStartError = '';
 function check(id, ok, detail = '') { results.push({ id, status: ok ? 'PASS' : 'FAIL', detail }); console.log(`${ok ? 'PASS' : 'FAIL'}  ${id}${detail ? '  ' + detail : ''}`); }
+// A prerequisite that could not be met: never a PASS. Counted apart; the run exits 5 (not 0) when nothing FAILED but something was NOT_RUN.
+function notRun(id, detail) { results.push({ id, status: 'NOT_RUN', detail }); console.log(`NOT_RUN  ${id}  ${detail}`); }
 async function scenario(id, fn) { try { await fn(); } catch (e) { check(id, false, `exception: ${e.message}`); } }
 
 function resetAttempts() {
@@ -360,8 +362,21 @@ await scenario('ENTITLEMENT', async () => {
 await scenario('REGISTER_J6', async () => {
   const MAIL = 'j6@exam.local', PASS = 'Local-Pass-0123456789';
   const ING = 'e1000000-0000-4000-8000-000000000002';
-  const stub = 'http://127.0.0.1:9999';
-  if (!(await fetch(stub + '/__local/health').then((r) => r.ok).catch(() => false))) { check('REGISTER_J6.gotrue_stub_running', false, 'start ops/local-exam/run-gotrue-stub.mjs --detach'); return; }
+  const stub = GOTRUE_STUB_URL;
+  const stubUp = () => fetch(stub + '/__local/health').then((r) => r.ok).catch(() => false);
+  if (!(await stubUp()) && process.env.E2E_NO_STUB_START !== '1') {
+    // start the LOCAL stub with the same guards as by hand (STACK_LOCK holder and APP_ENV=local|test are inherited, never forced); stopped again at the end
+    try {
+      execFileSync(process.execPath, [path.join(here, 'run-gotrue-stub.mjs'), '--detach'], { env: process.env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+      stubStartedHere = true;
+    } catch (e) { stubStartError = String(e.stderr || e.message).trim().split(/\r?\n/).pop(); }
+  }
+  if (!(await stubUp())) {
+    const why = stubStartError ? ` (auto-start failed: ${stubStartError})` : process.env.E2E_NO_STUB_START === '1' ? ' (E2E_NO_STUB_START=1)' : '';
+    notRun('REGISTER_J6', `GoTrue stub not reachable on ${stub}${why}; start it: STACK_HOLDER=<holder> APP_ENV=local node ops/local-exam/run-gotrue-stub.mjs --detach`);
+    return;
+  }
+  check('REGISTER_J6.gotrue_stub_running', true, stubStartedHere ? 'started by e2e' : 'already running');
   sql(`delete from auth.users where lower(email) = '${MAIL}'`); // el usuario del e2e; el perfil cae en cascada
   const post = (p, body, token) => fetch(KTOR + p, { method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body) })
     .then(async (r) => ({ status: r.status, json: await r.json().catch(() => null) }));
@@ -572,7 +587,7 @@ await scenario('ECONOMY', async () => {
   check('ECONOMY.D6_03_no_ot_price_422', unset.status === 422 && unset.json?.code === 'NOT_PURCHASABLE', unset.status + ' ' + unset.json?.code);
   const none = await redeem('Q4', 'e3999999-0000-4000-8000-000000000999');
   check('ECONOMY.D6_03_unknown_exam_404', none.status === 404 && none.json?.code === 'EXAM_NOT_FOUND', none.status + ' ' + none.json?.code);
-  const forged = await call('Q4', 'POST', '/api/v1/app/wallet/canjes', { examId: OT.ONE, usuarioId: Q.Q2, saldo: 9999, precioPagado: 0 }, key());
+  const forged = await call('Q4', 'POST', '/api/v1/app/wallet/canjes', { examId: OT.ONE, usuarioId: Q.Q2, saldo: 9999, precioPagado: 0 }, key());   // stack-port-check: data value, not a port
   check('ECONOMY.D6_03_forged_fields_400', forged.status === 400 && forged.json?.code === 'VALIDATION' && ledgerCount('Q4', OT.ONE) === 0 && bal('Q2') === '29', forged.status + ' ' + forged.json?.code);
   const noKey = await call('Q4', 'POST', '/api/v1/app/wallet/canjes', { examId: OT.ONE });
   check('ECONOMY.D6_03_key_required_400', noKey.status === 400 && noKey.json?.code === 'IDEMPOTENCY_KEY_REQUIRED', noKey.status + ' ' + noKey.json?.code);
@@ -607,7 +622,10 @@ await scenario('ECONOMY', async () => {
   // --- D6-11 paquetes ---
   const packs = await call('Q4', 'GET', '/api/v1/app/wallet/paquetes');
   const codes = (packs.json?.items ?? []).map((p) => p.code);
-  check('ECONOMY.D6_11_packs', packs.status === 200 && codes.join(',') === 'LOCAL_PACK_10,LOCAL_PACK_50' && packs.json.items[1].tickets === 50 && packs.json.items[1].priceCents === 449 && packs.json.items[1].currency === 'EUR',
+  // every visible pack_tickets fixture, in the server order (posicion asc, codigo asc): sql/98 (LOCAL_PACK_10 pos 1, LOCAL_PACK_50 pos 2)
+  // + sql/98b (LOCAL_RECARGA_100..1000 pos 20..23, LOCAL_PACK_1300 pos 24). The old 2-pack expectation predates sql/98b (E5 live run 2026-10-19).
+  const PACKS = 'LOCAL_PACK_10,LOCAL_PACK_50,LOCAL_RECARGA_100,LOCAL_RECARGA_200,LOCAL_RECARGA_500,LOCAL_RECARGA_1000,LOCAL_PACK_1300';
+  check('ECONOMY.D6_11_packs', packs.status === 200 && codes.join(',') === PACKS && packs.json.items[1].tickets === 50 && packs.json.items[1].priceCents === 449 && packs.json.items[1].currency === 'EUR',
     packs.status + ' ' + codes.join(','));
 
   // --- pagos: pedido, aviso firmado, repeticion, importes, caducidad, reembolso ---
@@ -632,7 +650,7 @@ await scenario('ECONOMY', async () => {
     o1.status + ' ' + o1.text.slice(0, 200));
   const o1b = await newOrder(ko);
   check('ECONOMY.D6_12_order_replay_same_key', (o1b.status === 201 || o1b.status === 200) && o1b.headers.get('idempotent-replayed') === 'true' && o1b.json?.order?.id === ord?.id, o1b.status + ' ' + o1b.json?.order?.id);
-  const forgedOrder = await call('Q2Z', 'POST', '/api/v1/app/payments/orders', { productCode: 'LOCAL_PACK_50', provider: 'sandbox', amountCents: 1, tickets: 9999 }, key());
+  const forgedOrder = await call('Q2Z', 'POST', '/api/v1/app/payments/orders', { productCode: 'LOCAL_PACK_50', provider: 'sandbox', amountCents: 1, tickets: 9999 }, key());   // stack-port-check: data value, not a port
   check('ECONOMY.D6_12_client_amounts_rejected', forgedOrder.status === 400 && forgedOrder.json?.code === 'VALIDATION', forgedOrder.status + ' ' + forgedOrder.json?.code);
   const tampered = await call('Q2Z', 'POST', '/api/v1/app/payments/orders', { productCode: 'LOCAL_PACK_UNKNOWN', provider: 'sandbox' }, key());
   check('ECONOMY.D6_12_unknown_pack_422', tampered.status === 422 && tampered.json?.code === 'PRODUCT_NOT_AVAILABLE', tampered.status + ' ' + tampered.json?.code);
@@ -777,7 +795,10 @@ async function scrape() {
 }
 
 resetAttempts();
+if (stubStartedHere) { try { execFileSync(process.execPath, [path.join(here, 'run-gotrue-stub.mjs'), '--stop'], { env: process.env, stdio: 'ignore' }); } catch { /* best effort: leave the stack as found */ } }
 const failed = results.filter((r) => r.status === 'FAIL');
-fs.writeFileSync(path.join(local, 'e2e-result.json'), JSON.stringify({ at: new Date().toISOString(), pass: results.length - failed.length, fail: failed.length, results }, null, 2));
-console.log(`\nE2E: ${results.length - failed.length} PASS, ${failed.length} FAIL`);
-process.exit(failed.length ? 1 : 0);
+const skipped = results.filter((r) => r.status === 'NOT_RUN');
+const passed = results.filter((r) => r.status === 'PASS');
+fs.writeFileSync(path.join(local, 'e2e-result.json'), JSON.stringify({ at: new Date().toISOString(), pass: passed.length, fail: failed.length, notRun: skipped.length, results }, null, 2));
+console.log(`\nE2E: ${passed.length} PASS, ${failed.length} FAIL, ${skipped.length} NOT_RUN${skipped.length ? ' (' + skipped.map((r) => r.id).join(', ') + ')' : ''}`);
+process.exit(failed.length ? 1 : skipped.length ? 5 : 0);

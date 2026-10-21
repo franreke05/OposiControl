@@ -1,31 +1,30 @@
 #!/usr/bin/env node
 // J18 (E1, OFFICIAL RULES; E5 calls it "J16" in the charter, the J16 number is taken by access-v2-journey): official exams with annulled and reserve questions over HTTP.
-// Needs STACK_LOCK, the app Ktor (:8089) and `up.mjs --converge` (migration 20261022101300). It creates its own exams (OFF-*) for the free user Q1; re-runnable.
+// Needs STACK_LOCK, the app Ktor (KTOR_URL, stack-config.mjs) and `up.mjs --converge` (migration 20261022101300). It creates its own exams (OFF-*) for the free user Q1; re-runnable.
 //   OFF-0: 6 main, nothing annulled, no reserves.        OFF-1: question 2 annulled, 3 reserves (rule derived: REEMPLAZO).
 //   OFF-2: questions 2 and 5 annulled, 3 reserves, penalty 1/3.    OFF-3: 6 main, 3 reserves, nothing annulled (reserves unused).
 //   node ops/local-exam/official-rules-journey.mjs
+import { GATEWAY as GATEWAY_URL, KTOR_URL, LOCAL_DIR, composeArgs } from './stack-config.mjs';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import crypto from 'node:crypto';
 import { requireStackLock } from './stack-lock.mjs';
-import { GATEWAY as GATEWAY_URL } from './ports.mjs';
 import { trackHarnessExams } from './harness-marker.mjs'; trackHarnessExams('official-rules-journey');
 
 requireStackLock('official-rules-journey.mjs');
 const here = path.dirname(fileURLToPath(import.meta.url));
-const local = path.join(here, '.local');
+const local = LOCAL_DIR;
 const tokens = JSON.parse(fs.readFileSync(path.join(local, 'tokens.json'), 'utf8'));
-const APP = process.env.KTOR_URL ?? 'http://127.0.0.1:8089';
+const APP = KTOR_URL;
 const Q1 = '2a000000-0000-4000-8000-00000000002a';
 const ESP = 'e5000000-0000-4000-8000-000000000001';
 const ex = (n) => `ea000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const qid = (n, p) => `fa000000-0000-4000-${String(n).padStart(4, '0')}-${String(p).padStart(12, '0')}`;
 const oid = (n, p, o) => `0a000000-0000-4000-${String(n).padStart(4, '0')}-${String(p * 10 + o).padStart(12, '0')}`;
 
-const sql = (text) => execFileSync('docker', ['compose', '--env-file', path.join(local, 'compose.env'), '-f', path.join(here, 'docker-compose.yaml'),
-  'exec', '-T', 'db', 'psql', '-U', 'postgres', '-h', 'localhost', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'], { input: text, encoding: 'utf8' }).trim();
+const sql = (text) => execFileSync('docker', [...composeArgs(), 'exec', '-T', 'db', 'psql', '-U', 'postgres', '-h', 'localhost', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'], { input: text, encoding: 'utf8' }).trim();
 const http = async (method, p, body, key) => {
   const headers = { Authorization: `Bearer ${tokens.Q1}` };
   if (body !== undefined) headers['Content-Type'] = 'application/json';

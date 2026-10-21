@@ -5,6 +5,7 @@
 // 2. Construye esos MISMOS hechos en la base local, DENTRO de una transaccion que se deshace (session_replication_role = replica: solo se escriben
 //    las tablas que lee la funcion; nada queda), evalua private.exam_access_verdict con la misma hora y compara caso por caso.
 // Sale con codigo != 0 ante la menor diferencia. Escribe (y deshace) en el stack compartido: exige STACK_LOCK como el resto de scripts.
+import { LOCAL_DIR, composeArgs } from './stack-config.mjs';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -18,7 +19,7 @@ if (!container) requireStackLock('verdict-parity.mjs');
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '..', '..');
-const local = path.join(here, '.local');
+const local = LOCAL_DIR;
 const out = path.join(local, 'verdict-parity.json');
 const windows = process.platform === 'win32';
 fs.mkdirSync(local, { recursive: true });
@@ -67,8 +68,7 @@ sql.push('rollback;');
 
 const psqlArgs = container
   ? ['exec', '-i', container, 'psql', '-U', 'postgres', '-h', 'localhost', '-d', 'postgres', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-']
-  : ['compose', '--env-file', path.join(local, 'compose.env'), '-f', path.join(here, 'docker-compose.yaml'),
-    'exec', '-T', 'db', 'psql', '-U', 'postgres', '-h', 'localhost', '-d', 'postgres', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'];
+  : [...composeArgs(), 'exec', '-T', 'db', 'psql', '-U', 'postgres', '-h', 'localhost', '-d', 'postgres', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'];
 const raw = execFileSync('docker', psqlArgs,
 { input: sql.join('\n'), encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 });
 

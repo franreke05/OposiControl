@@ -6,8 +6,18 @@
 // nunca forma parte de la imagen de Ktor ni de produccion.
 import fs from 'fs';
 
-// the issuer carries the gateway port (ports.mjs); up.mjs writes it to .local/issuer.txt, mounted at /srv/issuer.txt
+// the issuer carries the gateway port (stack-config.mjs); up.mjs writes it to <localDir>/issuer.txt, mounted at /srv/issuer.txt
 const ISSUER = fs.readFileSync('/srv/issuer.txt').toString().trim();
+
+// /auth/v1/* (except /user) -> the host GoTrue stub of THIS stack (port from stack-config.mjs); up.mjs writes the URL to .local/gotrue-stub-url.txt,
+// mounted at /srv/gotrue-stub-url.txt. Read per request; if it is missing, a closed port (502, the same as a stopped stub).
+function stubUrl() {
+  try {
+    return fs.readFileSync('/srv/gotrue-stub-url.txt').toString().trim();
+  } catch (e) {
+    return 'http://127.0.0.1:1';
+  }
+}
 
 function b64url(s) {
   return Buffer.from(s, 'base64url');
@@ -64,4 +74,4 @@ async function user(r) {
   }));
 }
 
-export default { user };
+export default { user, stubUrl };

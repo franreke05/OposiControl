@@ -58,13 +58,12 @@ on conflict (usuario_id) do nothing;
 
 -- The ledger refuses free-earn types (reto_diario ...) unless the sanctioned writer flag is on (20261022101200). This LOCAL history seed is the one place that sets it, for this insert only; the guard itself is untouched.
 select set_config('oc.free_earn_writer', 'on', false);
-insert into public.transacciones_cartera (id, usuario_id, tipo, cantidad, descripcion, creado_en)
-values ('7d000000-0000-4000-8000-000000000001', '0a000000-0000-4000-8000-00000000000a', 'recarga',        50, 'Recarga local',        now() - interval '5 days'),
-       ('7d000000-0000-4000-8000-000000000002', '0a000000-0000-4000-8000-00000000000a', 'reto_diario',     5, 'Reto diario',          now() - interval '4 days'),
-       ('7d000000-0000-4000-8000-000000000003', '0a000000-0000-4000-8000-00000000000a', 'regalo',         10, 'Regalo de bienvenida', now() - interval '3 days'),
-       ('7d000000-0000-4000-8000-000000000004', '0a000000-0000-4000-8000-00000000000a', 'compra_examen', -20, 'Compra de examen',     now() - interval '2 days'),
-       ('7d000000-0000-4000-8000-000000000005', '0a000000-0000-4000-8000-00000000000a', 'potenciador',   -10, 'Potenciador',          now() - interval '1 day')
-on conflict (id) do nothing;
+-- One statement per ledger row of the SAME wallet (the snapshot trigger runs after the statement; see 98_v1_economy_fixtures.sql).
+insert into public.transacciones_cartera (id, usuario_id, tipo, cantidad, descripcion, creado_en) values ('7d000000-0000-4000-8000-000000000001', '0a000000-0000-4000-8000-00000000000a', 'recarga',        50, 'Recarga local',        now() - interval '5 days') on conflict (id) do nothing;
+insert into public.transacciones_cartera (id, usuario_id, tipo, cantidad, descripcion, creado_en) values ('7d000000-0000-4000-8000-000000000002', '0a000000-0000-4000-8000-00000000000a', 'reto_diario',     5, 'Reto diario',          now() - interval '4 days') on conflict (id) do nothing;
+insert into public.transacciones_cartera (id, usuario_id, tipo, cantidad, descripcion, creado_en) values ('7d000000-0000-4000-8000-000000000003', '0a000000-0000-4000-8000-00000000000a', 'regalo',         10, 'Regalo de bienvenida', now() - interval '3 days') on conflict (id) do nothing;
+insert into public.transacciones_cartera (id, usuario_id, tipo, cantidad, descripcion, creado_en) values ('7d000000-0000-4000-8000-000000000004', '0a000000-0000-4000-8000-00000000000a', 'compra_examen', -20, 'Compra de examen',     now() - interval '2 days') on conflict (id) do nothing;
+insert into public.transacciones_cartera (id, usuario_id, tipo, cantidad, descripcion, creado_en) values ('7d000000-0000-4000-8000-000000000005', '0a000000-0000-4000-8000-00000000000a', 'potenciador',   -10, 'Potenciador',          now() - interval '1 day') on conflict (id) do nothing;
 select set_config('oc.free_earn_writer', 'off', false);
 
 insert into public.activaciones_servicio_usuario (id, usuario_id, servicio_id, estado, activa_desde, activa_hasta, usos_disponibles, usos_consumidos)

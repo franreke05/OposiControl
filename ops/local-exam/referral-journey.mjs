@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-// J21 (E1, W5a): Invita y gana over HTTP. Needs STACK_LOCK, the app Ktor (:8089) and `up.mjs --converge` (migration 20261022101800).
+// J21 (E1, W5a): Invita y gana over HTTP. Needs STACK_LOCK, the app Ktor (KTOR_URL, stack-config.mjs) and `up.mjs --converge` (migration 20261022101800).
 //   Inviter = Q1, invitee = Q4 (both onboarded fixture users). The invitee's attach goes through the RPC (the register/profile leg needs a fresh account: covered by the real-auth/e2e register flow).
 //   The run moves OT of Q1 and Q4: run `up.mjs --restore-fixtures` afterwards. Amounts are LOCAL SAMPLE values, never product decisions.
 //   node ops/local-exam/referral-journey.mjs
+import { KTOR_URL, LOCAL_DIR, composeArgs } from './stack-config.mjs';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -12,13 +13,12 @@ import { requireStackLock } from './stack-lock.mjs';
 
 requireStackLock('referral-journey.mjs');
 const here = path.dirname(fileURLToPath(import.meta.url));
-const local = path.join(here, '.local');
+const local = LOCAL_DIR;
 const tokens = JSON.parse(fs.readFileSync(path.join(local, 'tokens.json'), 'utf8'));
-const APP = process.env.KTOR_URL ?? 'http://127.0.0.1:8089';
+const APP = KTOR_URL;
 const Q1 = '2a000000-0000-4000-8000-00000000002a', Q4 = '2e000000-0000-4000-8000-00000000002e';
 const EXAM = 'e0000000-0000-4000-8000-000000000001';
-const sql = (text) => execFileSync('docker', ['compose', '--env-file', path.join(local, 'compose.env'), '-f', path.join(here, 'docker-compose.yaml'),
-  'exec', '-T', 'db', 'psql', '-U', 'postgres', '-h', 'localhost', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'], { input: text, encoding: 'utf8' }).trim();
+const sql = (text) => execFileSync('docker', [...composeArgs(), 'exec', '-T', 'db', 'psql', '-U', 'postgres', '-h', 'localhost', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'], { input: text, encoding: 'utf8' }).trim();
 const get = async (user, p) => { const r = await fetch(APP + p, { headers: { Authorization: `Bearer ${tokens[user]}` } }); const text = await r.text(); let json = null; try { json = JSON.parse(text); } catch { /* empty */ } return { status: r.status, json, text, headers: r.headers }; };
 const results = [];
 const check = (id, ok, detail = '') => { results.push(ok); console.log(`${ok ? 'PASS' : 'FAIL'}  ${id}${detail ? '  ' + detail : ''}`); };

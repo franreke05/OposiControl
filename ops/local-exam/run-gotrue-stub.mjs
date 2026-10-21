@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { requireStackLock } from './stack-lock.mjs';
+import { GOTRUE_STUB_URL, LOCAL_DIR } from './stack-config.mjs';
 
 requireStackLock('run-gotrue-stub.mjs');
 if (process.env.APP_ENV !== 'local' && process.env.APP_ENV !== 'test') {
@@ -15,7 +16,7 @@ if (process.env.APP_ENV !== 'local' && process.env.APP_ENV !== 'test') {
   process.exit(4);
 }
 const here = path.dirname(fileURLToPath(import.meta.url));
-const local = path.join(here, '.local');
+const local = LOCAL_DIR;
 const pidFile = path.join(local, 'gotrue-stub.pid');
 const stop = () => {
   if (!fs.existsSync(pidFile)) return console.log('no hay stub de GoTrue en segundo plano');
@@ -32,8 +33,8 @@ const child = spawn(process.execPath, [path.join(here, 'gotrue-stub.mjs')], { en
 child.unref();
 fs.writeFileSync(pidFile, String(child.pid));
 for (let i = 0; i < 30; i++) {
-  try { if ((await fetch('http://127.0.0.1:9999/__local/health')).ok) { console.log(`stub de GoTrue (LOCAL) en segundo plano (pid ${child.pid}) en 127.0.0.1:9999`); process.exit(0); } } catch { /* arrancando */ }
+  try { if ((await fetch(GOTRUE_STUB_URL + '/__local/health')).ok) { console.log(`stub de GoTrue (LOCAL) en segundo plano (pid ${child.pid}) en ${GOTRUE_STUB_URL}`); process.exit(0); } } catch { /* arrancando */ }
   await new Promise((r) => setTimeout(r, 500));
 }
-console.error('el stub de GoTrue no respondio en 15 s; mira .local/gotrue-stub.log');
+console.error(`el stub de GoTrue no respondio en 15 s; mira ${path.join(local, 'gotrue-stub.log')}`);
 process.exit(1);

@@ -10,6 +10,8 @@
 //   node ops/local-exam/up.mjs --restore-fixtures   (E5-V1-F03) deja Q1..Q4 y Q2Z en su saldo y derechos base SIN reset (stack ya levantado; exige STACK_LOCK)
 //
 // Salida: .local/compose.env (compose), .local/ktor.env (Ktor), .local/tokens.json (JWT de A, B y P), .local/jwks.json.
+// Proyecto compose, directorio .local y puertos: stack-config.mjs (OPOSI_STACK_PROJECT / OPOSI_STACK_LOCAL_DIR; una copia aislada no comparte
+// ni .local ni puertos con el stack por defecto).
 import { execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import zlib from 'node:zlib';
@@ -17,7 +19,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { requireStackLock } from './stack-lock.mjs';
-import { ensurePorts } from './ports.mjs';
+import { LOCAL_DIR, PROJECT, composeArgs, ensurePorts } from './stack-config.mjs';
 import { guardDbRecreate } from './db-guard.mjs';
 
 // Escritura en el stack compartido: falla (exit 3) si STACK_LOCK es de otro. Ver stack-lock.mjs.
@@ -31,11 +33,12 @@ if (process.argv.includes('--converge')) {
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '..', '..');
-const local = path.join(here, '.local');
-// Published host ports (E1-V1-PORT-FIX): one place, outside Windows' dynamically excluded TCP ranges; persisted in .local/ports.json.
+const local = LOCAL_DIR;
+// Published host ports (E1-V1-PORT-FIX): one place, outside Windows' dynamically excluded TCP ranges; persisted in <localDir>/ports.json (stack-config.mjs).
 const ports = await ensurePorts();
 const GATEWAY = `http://localhost:${ports.gateway}`;
 if (ports.changed) console.log(`ports: gateway ${ports.gateway}, postgres ${ports.db} (re-picked; the previous ones were excluded or busy)`);
+console.log(`stack ${PROJECT}: gateway ${ports.gateway}, postgres ${ports.db}, ktor ${ports.ktorBot}/${ports.ktorControl}, gotrue stub ${ports.gotrueStub}, mail ${ports.mail}; .local ${local}`);
 const reset = process.argv.includes('--reset');
 fs.mkdirSync(local, { recursive: true });
 
@@ -69,21 +72,24 @@ if (!secrets) {
 if (!secrets.paymentsSandboxSecret) { secrets.paymentsSandboxSecret = crypto.randomBytes(32).toString('hex'); fs.writeFileSync(secretsFile, JSON.stringify(secrets, null, 2)); }
 fs.writeFileSync(path.join(local, 'jwks.json'), JSON.stringify({ keys: [{ ...secrets.publicJwk, kid: secrets.kid, alg: 'ES256', use: 'sig' }] }));
 fs.writeFileSync(path.join(local, 'compose.env'),
-  `LOCAL_JWT_SECRET=${secrets.jwtSecret}\nLOCAL_ANON_KEY=${secrets.anonKey}\nLOCAL_SERVICE_KEY=${secrets.serviceKey}\nLOCAL_DB_PORT=${ports.db}\nLOCAL_GATEWAY_PORT=${ports.gateway}\n`);
+  `LOCAL_JWT_SECRET=${secrets.jwtSecret}\nLOCAL_ANON_KEY=${secrets.anonKey}\nLOCAL_SERVICE_KEY=${secrets.serviceKey}\nLOCAL_DB_PORT=${ports.db}\nLOCAL_GATEWAY_PORT=${ports.gateway}\n`
+  + `LOCAL_MAIL_PORT=${ports.mail}\nLOCAL_STACK_DIR=${local.split(path.sep).join('/')}\n`);
 fs.writeFileSync(path.join(local, 'issuer.txt'), `${GATEWAY}/auth/v1\n`);
+// the gateway (njs, auth-stub.js stubUrl) proxies /auth/v1/* to THIS stack's host GoTrue stub; mounted at /srv/gotrue-stub-url.txt
+fs.writeFileSync(path.join(local, 'gotrue-stub-url.txt'), `http://host.docker.internal:${ports.gotrueStub}\n`);
 
 // DB GUARD (E1-V1-PORT-FIX): the db container has no volume; a compose recreate destroys the database. Refuses (exit 4) unless --allow-db-recreate (snapshot first). --reset is the explicit destructive path.
-if (!reset) guardDbRecreate({ composeArgs: ['--env-file', path.join(local, 'compose.env'), '-f', path.join(here, 'docker-compose.yaml')], local });
-const compose = (...args) => execFileSync('docker', ['compose', '--env-file', path.join(local, 'compose.env'), '-f', path.join(here, 'docker-compose.yaml'), ...args], { stdio: 'inherit' });
-const psql = (sql, vars = {}, user = 'postgres') => execFileSync('docker', ['compose', '--env-file', path.join(local, 'compose.env'), '-f', path.join(here, 'docker-compose.yaml'),
+if (!reset) guardDbRecreate({ composeArgs: composeArgs().slice(1), local });
+const compose = (...args) => execFileSync('docker', [...composeArgs(), ...args], { stdio: 'inherit' });
+const psql = (sql, vars = {}, user = 'postgres') => execFileSync('docker', [...composeArgs(),
   'exec', '-T', 'db', 'psql', '-U', user, '-h', 'localhost', '-d', 'postgres', '-X', '-q', '-v', 'ON_ERROR_STOP=1', '-At',
   ...Object.entries(vars).flatMap(([k, v]) => ['-v', `${k}=${v}`]), '-f', '-'], { input: sql, encoding: 'utf8', stdio: ['pipe', 'pipe', 'inherit'] }).trim();
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** ktor.env carries SUPABASE_URL = the gateway URL (ports.mjs), so it is rewritten whenever the ports can have changed. */
+/** ktor.env carries SUPABASE_URL = the gateway URL (stack-config.mjs), so it is rewritten whenever the ports can have changed. */
 function writeKtorEnv() {
   fs.writeFileSync(path.join(local, 'ktor.env'), [
-    'APP_ENV=local', 'SERVER_PROFILE=bot', 'HOST=127.0.0.1', 'PORT=8089', 'LOG_LEVEL=INFO',
+    'APP_ENV=local', 'SERVER_PROFILE=bot', 'HOST=127.0.0.1', `PORT=${ports.ktorBot}`, 'LOG_LEVEL=INFO',
     `SUPABASE_URL=${GATEWAY}`, `SUPABASE_SERVICE_ROLE_KEY=${secrets.serviceKey}`, `SUPABASE_ANON_KEY=${secrets.anonKey}`,
     'OPOSIBOTS_AUTH_ENABLED=true', 'AUTH_RATE_LIMIT_MODE=memory', `AUTH_RATE_LIMIT_HMAC_SECRET=${secrets.rateLimitSecret}`,
     'AUTH_CAPTCHA_REQUIRED=false', `PAYMENTS_SANDBOX_SECRET=${secrets.paymentsSandboxSecret}`, 'METRICS_ENABLED=true', `METRICS_SCRAPE_TOKEN=${secrets.metricsToken}`, '',
@@ -112,7 +118,7 @@ function mintTokens() {
   ADMIN: es256('3a000000-0000-4000-8000-00000000003a', 'admin@exam.local') };
   fs.writeFileSync(path.join(local, 'tokens.json'), JSON.stringify(tokens, null, 2));
 }
-// REAL AUTH GATE (E1-V1-REAL-AUTH-GATE.md): --real-auth routes the gateway's /auth/v1/* to a REAL GoTrue container (+ Mailpit as the mailbox, http://127.0.0.1:8025);
+// REAL AUTH GATE (E1-V1-REAL-AUTH-GATE.md): --real-auth routes the gateway's /auth/v1/* to a REAL GoTrue container (+ Mailpit as the mailbox, http://127.0.0.1:<mail port>);
 // --stub-auth goes back to the host stub (fast path, the default). Neither touches data. A plain up.mjs run rewrites compose.env and returns to the stub.
 if (process.argv.includes('--real-auth') || process.argv.includes('--stub-auth')) {
   const real = process.argv.includes('--real-auth');
@@ -130,11 +136,11 @@ if (process.argv.includes('--real-auth') || process.argv.includes('--stub-auth')
       try { if ((await fetch(GATEWAY + '/auth/v1/health')).ok) break; } catch { /* arrancando */ }
       await sleep(2000);
     }
-    console.log('REAL AUTH ON: GoTrue behind ' + GATEWAY + '/auth/v1, mailbox http://127.0.0.1:8025. Stop the host stub if running (run-gotrue-stub.mjs --stop).');
+    console.log('REAL AUTH ON: GoTrue behind ' + GATEWAY + '/auth/v1, mailbox http://127.0.0.1:' + ports.mail + '. Stop the host stub if running (run-gotrue-stub.mjs --stop).');
   } else {
     compose('--profile', 'real-auth', 'stop', 'auth', 'mail');
     compose('up', '-d', '--force-recreate', 'gateway');
-    console.log('STUB AUTH ON (host stub on 127.0.0.1:9999 via run-gotrue-stub.mjs --detach).');
+    console.log(`STUB AUTH ON (host stub on 127.0.0.1:${ports.gotrueStub} via run-gotrue-stub.mjs --detach).`);
   }
   process.exit(0);
 }
@@ -178,7 +184,10 @@ if (!loaded) {
   psql(fs.readFileSync(path.join(here, 'sql/00_overlay_main_objects.sql'), 'utf8'));
   const pending = fs.readFileSync(path.join(repo, 'supabase/baseline/PENDING_MIGRATIONS.txt'), 'utf8')
     .split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#'));
+  // V1 stamps (V1_MIGRATIONS.txt) need the overlays (01 wallet, 96 communities ...): applied further down, after them, as on a live stack
+  const v1All = new Set(fs.readFileSync(path.join(repo, 'supabase/V1_MIGRATIONS.txt'), 'utf8').split(/\r?\n/).map((l) => l.trim()).filter((l) => l && !l.startsWith('#')));
   for (const v of pending) {
+    if (v1All.has(v)) continue;
     process.stdout.write(`  migration ${v}\n`);
     psql(fs.readFileSync(path.join(repo, 'supabase/migrations', `${v}.sql`), 'utf8'));
   }
@@ -233,16 +242,16 @@ end $$;`);
 if (psql("select to_regclass('public.ot_consumos') is not null") === 't') psql(fs.readFileSync(path.join(here, 'sql/89_f01_repair_local.sql'), 'utf8'));
 // the list is V1_MIGRATIONS.txt (single source, same as --converge): a hard-coded list went stale and a plain up.mjs re-applied OLD definitions (e.g. the pre-v2 access verdict of 20261022100500) over the current ones
 psql(fs.readFileSync(path.join(repo, 'supabase/baseline/main_shape_auth_users.sql'), 'utf8'), {}, 'supabase_admin');   // auth.users.email_confirmed_at (MAIN shape, owned by supabase_auth_admin)
-const { v1Migrations } = await import('./converge.mjs');
-for (const v of v1Migrations(repo)) {
-  psql(fs.readFileSync(path.join(repo, 'supabase/migrations', `${v}.sql`), 'utf8'));
-}
+psql(fs.readFileSync(path.join(here, 'sql/03_auth_functions_main_shape.sql'), 'utf8'), {}, 'supabase_admin');   // claims-aware auth.uid()/role()/email() as in MAIN (GoTrue never migrates this stack)
+// recorded in private.v1_applied_migrations; a non-re-runnable stamp already applied from the same file is kept, not a failure. See converge.mjs.
+const { v1Migrations, applyV1Stamps } = await import('./converge.mjs');
+applyV1Stamps({ psql: (sql) => psql(sql), files: v1Migrations(repo).map((v) => ({ v, text: fs.readFileSync(path.join(repo, 'supabase/migrations', `${v}.sql`), 'utf8') })) });
 psql(fs.readFileSync(path.join(here, 'sql/97_v1_economy_local.sql'), 'utf8'));
 // Libro de A y compra: ledger-first, asi que SOLO despues de las migraciones del libro (el libro asigna seq y la cadena).
 psql(fs.readFileSync(path.join(here, 'sql/92_phase_b_wallet_entitlement.sql'), 'utf8'));
 // V1 economia: usuarios Q1..Q4, examenes con precio de PRUEBA y paquetes de PRUEBA para E5 (valores locales, ninguna decision de producto).
 psql(fs.readFileSync(path.join(here, 'sql/98_v1_economy_fixtures.sql'), 'utf8'));
-// V1: un administrador local (rol canonico `admin`) para recorrer la superficie de administracion por HTTP (Ktor perfil control, puerto 8090).
+// V1: un administrador local (rol canonico `admin`) para recorrer la superficie de administracion por HTTP (Ktor perfil control, puerto ktorControl de stack-config.mjs).
 psql(fs.readFileSync(path.join(here, 'sql/98b_v1_access_v2_fixtures.sql'), 'utf8'));
 psql(fs.readFileSync(path.join(here, 'sql/98c_v1_qa_fixtures.sql'), 'utf8'));   // QA data: renewal dates, Q8 cancelled-but-paid, tagged stats + a ranking cohort
 psql(fs.readFileSync(path.join(here, 'sql/99_v1_admin_fixture.sql'), 'utf8'));

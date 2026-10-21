@@ -1,6 +1,10 @@
 # Forma esperada de las tablas de cartera/compras/derechos del stack local: captura de catalogo de MAIN de solo lectura (2026-10-14) + migraciones V1
-# 20261022100300/400/500 + el ensanchamiento SOLO LOCAL del CHECK de proveedor con 'sandbox' (sql/97). La genera sql/wallet_shape.sql; la compara e2e WALLET.local_schema_matches_main.
+# 20261022100300/400/500/900 y 101200 + el ensanchamiento SOLO LOCAL del CHECK de proveedor con 'sandbox' (sql/97). La genera sql/wallet_shape.sql; la compara e2e WALLET.local_schema_matches_main.
 # Unica diferencia deliberada con MAIN: sin FK usado_en_reto_id -> retos_diarios (no existe en local).
+# E5 2026-10-20 (live run 2026-10-19, WALLET.local_schema_matches_main): la captura de MAIN es ANTERIOR a dos migraciones V1 pendientes que tocan estas tablas;
+#   20261022100900_v1_plan_access_v2 (seccion 7): suscripciones.fin_motivo text + CHECK suscripciones_fin_motivo_check;
+#   20261022101200_v1_daily_challenge F4: revoke select on estado_premium_usuario from anon (se quita la linea GRANT anon SELECT).
+#   Comprobado en un PG17 desechable (disposable-db.mjs: bootstrap + pendientes): columna fin_motivo, el CHECK y la ausencia de GRANT anon salen identicos (sus otras diferencias vienen del bootstrap del gate, no del overlay local).
 INDEX CREATE INDEX idx_activaciones_servicio_usuario_compra_id ON public.activaciones_servicio_usuario USING btree (compra_id)
 INDEX CREATE INDEX idx_activaciones_servicio_usuario_servicio_id ON public.activaciones_servicio_usuario USING btree (servicio_id)
 INDEX CREATE INDEX idx_activaciones_servicio_usuario_usado_en_intento_id ON public.activaciones_servicio_usuario USING btree (usado_en_intento_id)
@@ -79,7 +83,6 @@ estado_premium_usuario CON estado_premium_usuario_estado_suscripcion_check CHECK
 estado_premium_usuario CON estado_premium_usuario_pkey PRIMARY KEY (usuario_id)
 estado_premium_usuario CON estado_premium_usuario_proveedor_check CHECK (((proveedor IS NULL) OR (proveedor = ANY (ARRAY['google_play'::text, 'app_store'::text, 'stripe'::text, 'manual'::text]))))
 estado_premium_usuario CON estado_premium_usuario_usuario_id_fkey FOREIGN KEY (usuario_id) REFERENCES auth.users(id) ON DELETE CASCADE
-estado_premium_usuario GRANT anon SELECT
 estado_premium_usuario GRANT authenticated SELECT
 estado_premium_usuario GRANT service_role DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
 estado_premium_usuario POL estado_premium_select_propio ((usuario_id = ( SELECT auth.uid() AS uid)) OR public.es_admin())
@@ -112,8 +115,9 @@ servicios GRANT anon SELECT
 servicios GRANT authenticated SELECT
 servicios GRANT service_role DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE
 servicios POL servicios_select_publico ((activo = true) OR public.es_admin())
-suscripciones COLS actualizado_en timestamp with time zone t now(), creado_en timestamp with time zone t now(), estado text t, fin_en timestamp with time zone f, id uuid t gen_random_uuid(), identificador_externo text f, inicio_en timestamp with time zone t, payload_validacion jsonb t '{}'::jsonb, producto_codigo text t, proveedor text t, renovacion_en timestamp with time zone f, usuario_id uuid t
+suscripciones COLS actualizado_en timestamp with time zone t now(), creado_en timestamp with time zone t now(), estado text t, fin_en timestamp with time zone f, id uuid t gen_random_uuid(), identificador_externo text f, inicio_en timestamp with time zone t, payload_validacion jsonb t '{}'::jsonb, producto_codigo text t, proveedor text t, renovacion_en timestamp with time zone f, usuario_id uuid t, fin_motivo text f
 suscripciones CON suscripciones_estado_check CHECK ((estado = ANY (ARRAY['activa'::text, 'pausada'::text, 'cancelada'::text, 'caducada'::text, 'periodo_prueba'::text])))
+suscripciones CON suscripciones_fin_motivo_check CHECK (((fin_motivo IS NULL) OR (fin_motivo = ANY (ARRAY['usuario_cancelo'::text, 'expiro'::text, 'reembolso'::text, 'revocada'::text, 'contracargo'::text, 'fallo_cobro'::text]))))
 suscripciones CON suscripciones_pkey PRIMARY KEY (id)
 suscripciones CON suscripciones_proveedor_check CHECK ((proveedor = ANY (ARRAY['google_play'::text, 'app_store'::text, 'stripe'::text, 'manual'::text])))
 suscripciones CON suscripciones_usuario_id_fkey FOREIGN KEY (usuario_id) REFERENCES auth.users(id) ON DELETE CASCADE

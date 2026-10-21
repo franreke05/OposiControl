@@ -1,8 +1,9 @@
 #!/usr/bin/env node
-// E2 (exam security, LOCAL ONLY): adversarial probes against the local exam stack through an ISOLATED Ktor (e2-ktor.mjs, :8090).
+// E2 (exam security, LOCAL ONLY): adversarial probes against the local exam stack through an ISOLATED Ktor (e2-ktor.mjs, ktorControl port of stack-config.mjs).
 // Uses only its own users C/D/E/F (created here); never touches A/B, never resets the stack. Tokens and signed URLs are never
 // printed. Phase "content" (--content) edits ONLY an E2-own exam fixture (e2e2...), never the shared ones.
 //   node ops/local-exam/e2-security.mjs [--content] [--expiry]   -> PASS/FAIL per check, result in E2_OUT (json)
+import { ADMIN_KTOR_URL, E2_LOCAL_DIR, GATEWAY, composeArgs } from './stack-config.mjs';
 import { execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -15,9 +16,8 @@ import { trackHarnessExams } from './harness-marker.mjs'; trackHarnessExams('e2-
 requireStackLock('e2-security.mjs');
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const stackLocal = process.env.E2_STACK_LOCAL ?? 'C:\\Users\\franr\\AndroidStudioProjects\\OposiControl-ExamServer\\ops\\local-exam\\.local';
-const KTOR = process.env.KTOR_URL ?? 'http://127.0.0.1:8090';
-import { GATEWAY } from './ports.mjs';
+const stackLocal = E2_LOCAL_DIR; // E2_STACK_LOCAL or this stack's own .local (stack-config.mjs)
+const KTOR = (process.env.KTOR_URL ?? ADMIN_KTOR_URL);
 const OUT = process.env.E2_OUT ?? path.join(process.cwd(), 'e2-security-result.json');
 const CONTENT = process.argv.includes('--content');
 const EXPIRY = process.argv.includes('--expiry');
@@ -30,7 +30,7 @@ const o = (e, n, l) => `0${e}000000-0000-4000-8${l}00-${String(n).padStart(12, '
 const RES = { IMG: '5e000000-0000-4000-8000-000000000001', AUD: '5e000000-0000-4000-8000-000000000002', PDF: '5e000000-0000-4000-8000-000000000003' };
 const USERS = { C: '0c000000-0000-4000-8000-0000000000cc', D: '0d000000-0000-4000-8000-0000000000dd', E: '0e000000-0000-4000-8000-0000000000ee', F: '0f000000-0000-4000-8000-0000000000ff' };
 
-const sql = (text) => execFileSync('docker', ['exec', '-i', 'oposi-exam-local-db-1', 'psql', '-U', 'postgres', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'],
+const sql = (text) => execFileSync('docker', [...composeArgs(), 'exec', '-T', 'db', 'psql', '-U', 'postgres', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'],
   { input: text, encoding: 'utf8' }).trim();
 
 const b64url = (b) => Buffer.from(b).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');

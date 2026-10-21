@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // E2 PHASE B (LOCAL ONLY): entitlement / catalogue / collection / wallet security probes through E2's isolated Ktor (e2-ktor.mjs,
-// :8090) and, for the direct-database surface, PostgREST with an anon key and a user token minted from the LOCAL stack secrets.
+// ktorControl port of stack-config.mjs) and, for the direct-database surface, PostgREST with an anon key and a user token minted from the LOCAL stack secrets.
 // Only E2 users C/D and E2 fixtures (ids e2b...) are written; A/B and the shared fixtures are never touched. Nothing secret printed.
 //   node ops/local-exam/e2-phaseb.mjs   -> PASS/FAIL/FINDING per check, json in E2_OUT
+import { ADMIN_KTOR_URL, E2_LOCAL_DIR, GATEWAY, composeArgs } from './stack-config.mjs';
 import { execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -13,12 +14,11 @@ import { trackHarnessExams } from './harness-marker.mjs'; trackHarnessExams('e2-
 // Arranca un Ktor / ejecuta sondas contra el stack compartido: falla (exit 3) ANTES de nada si STACK_LOCK es de otro.
 requireStackLock('e2-sec01-verify.mjs');
 
-const stackLocal = process.env.E2_STACK_LOCAL ?? 'C:/Users/franr/AndroidStudioProjects/OposiControl-PhaseB-Server/ops/local-exam/.local';
-const KTOR = process.env.KTOR_URL ?? 'http://127.0.0.1:8090';
-import { GATEWAY } from './ports.mjs';
+const stackLocal = E2_LOCAL_DIR; // E2_STACK_LOCAL or this stack's own .local (stack-config.mjs)
+const KTOR = (process.env.KTOR_URL ?? ADMIN_KTOR_URL);
 const OUT = process.env.E2_OUT ?? path.join(process.cwd(), 'e2-phaseb-result.json');
 const secrets = JSON.parse(fs.readFileSync(path.join(stackLocal, 'secrets.json'), 'utf8'));
-const sql = (text) => execFileSync('docker', ['exec', '-i', 'oposi-exam-local-db-1', 'psql', '-U', 'postgres', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'],
+const sql = (text) => execFileSync('docker', [...composeArgs(), 'exec', '-T', 'db', 'psql', '-U', 'postgres', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'],
   { input: text, encoding: 'utf8' }).trim();
 
 const b64url = (b) => Buffer.from(b).toString('base64').replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_');

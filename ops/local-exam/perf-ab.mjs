@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // PERF A/B (LOCAL ONLY, E5 PERF finding): two Ktor builds side by side on the SAME stack, same env, interleaved requests, so the
-// only variable is the build. Writes ONLY attempts of the e2e user XA (sql/94). Never touches :8089 or A/B/P.
+// only variable is the build. Writes ONLY attempts of the e2e user XA (sql/94). Never touches the app Ktor (ktorBot port) or A/B/P.
 //   STACK_HOLDER=E1 node ops/local-exam/perf-ab.mjs <installDirA> <installDirB> [iterations=25]
-//   installDir = <worktree>/backend/ktor/build/install/ktor  (A on :8091, B on :8092)
+//   installDir = <worktree>/backend/ktor/build/install/ktor  (A and B on the perfA / perfB ports of stack-config.mjs)
 // Output: p50/p95 per operation and build (client wall time) + JSON in .local/perf-ab.json.
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
@@ -10,13 +10,14 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { requireStackLock } from './stack-lock.mjs';
+import { LOCAL_DIR, PORTS } from './stack-config.mjs';
 import { trackHarnessExams } from './harness-marker.mjs'; trackHarnessExams('perf-ab');
 
 // Arranca Ktor y escribe intentos de XA en el stack compartido: falla (exit 3) ANTES de nada si STACK_LOCK es de otro.
 requireStackLock('perf-ab.mjs');
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const local = path.join(here, '.local');
+const local = LOCAL_DIR;
 const [dirA, dirB] = process.argv.slice(2, 4);
 const iterations = Number(process.argv[4] ?? 25);
 if (!dirA || !dirB) { console.error('uso: perf-ab.mjs <installDirA> <installDirB> [iteraciones]'); process.exit(2); }
@@ -27,7 +28,7 @@ const tokens = JSON.parse(fs.readFileSync(path.join(local, 'tokens.json'), 'utf8
 const env = { ...process.env, ...Object.fromEntries(fs.readFileSync(path.join(local, 'ktor.env'), 'utf8').split(/\r?\n/)
   .filter((l) => l.includes('=')).map((l) => [l.slice(0, l.indexOf('=')), l.slice(l.indexOf('=') + 1)])) };
 const NORMAL = 'e0000000-0000-4000-8000-000000000001';
-const builds = [{ name: 'A', dir: dirA, port: 8091 }, { name: 'B', dir: dirB, port: 8092 }];
+const builds = [{ name: 'A', dir: dirA, port: PORTS.perfA }, { name: 'B', dir: dirB, port: PORTS.perfB }];
 
 const children = [];
 const stopAll = () => children.forEach((c) => { try { process.platform === 'win32' ? spawn('taskkill', ['/PID', String(c.pid), '/T', '/F']) : c.kill(); } catch { /* ya parado */ } });
@@ -40,7 +41,7 @@ for (const b of builds) {
   b.url = `http://127.0.0.1:${b.port}`;
   let ok = false;
   for (let i = 0; i < 90 && !ok; i++) { try { ok = (await fetch(`${b.url}/health/live`)).ok; } catch { await new Promise((r) => setTimeout(r, 1000)); } }
-  if (!ok) { console.error(`build ${b.name} no arranca (mira .local/perf-ab-${b.name}.log)`); process.exit(1); }
+  if (!ok) { console.error(`build ${b.name} no arranca (mira ${path.join(local, `perf-ab-${b.name}.log`)})`); process.exit(1); }
 }
 
 async function call(b, method, p, body, key) {

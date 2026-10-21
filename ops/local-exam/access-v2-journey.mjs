@@ -1,7 +1,8 @@
 #!/usr/bin/env node
-// J16 (E1, W1): Access v2 over HTTP. Needs STACK_LOCK, the app Ktor (:8089) and `up.mjs --converge` (or up.mjs) applied (migrations 20261022100900..101100 + fixtures 98b).
+// J16 (E1, W1): Access v2 over HTTP. Needs STACK_LOCK, the app Ktor (KTOR_URL, stack-config.mjs) and `up.mjs --converge` (or up.mjs) applied (migrations 20261022100900..101100 + fixtures 98b).
 //   Q7 = Inmersivo subscriber (quota 2), Q6 = Rafagas subscriber, Q1 = free user. Demo exam LOC-DEMO-IMM has 5 flagged questions of 7.
 //   node ops/local-exam/access-v2-journey.mjs
+import { KTOR_URL, LOCAL_DIR, composeArgs } from './stack-config.mjs';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -12,14 +13,13 @@ import { trackHarnessExams } from './harness-marker.mjs'; trackHarnessExams('acc
 
 requireStackLock('access-v2-journey.mjs');
 const here = path.dirname(fileURLToPath(import.meta.url));
-const local = path.join(here, '.local');
+const local = LOCAL_DIR;
 const tokens = JSON.parse(fs.readFileSync(path.join(local, 'tokens.json'), 'utf8'));
-const APP = process.env.KTOR_URL ?? 'http://127.0.0.1:8089';
+const APP = KTOR_URL;
 const Q7 = '3b000000-0000-4000-8000-00000000003b';
 const DEMO = 'e3000000-0000-4000-8000-0000000000d1', IM2 = 'e3000000-0000-4000-8000-0000000000d2', IM3 = 'e3000000-0000-4000-8000-0000000000d3';
 
-const sql = (text) => execFileSync('docker', ['compose', '--env-file', path.join(local, 'compose.env'), '-f', path.join(here, 'docker-compose.yaml'),
-  'exec', '-T', 'db', 'psql', '-U', 'postgres', '-h', 'localhost', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'], { input: text, encoding: 'utf8' }).trim();
+const sql = (text) => execFileSync('docker', [...composeArgs(), 'exec', '-T', 'db', 'psql', '-U', 'postgres', '-h', 'localhost', '-X', '-q', '-At', '-v', 'ON_ERROR_STOP=1', '-f', '-'], { input: text, encoding: 'utf8' }).trim();
 const http = async (token, method, p, body, key) => {
   const headers = { Authorization: `Bearer ${token}` };
   if (body !== undefined) headers['Content-Type'] = 'application/json';

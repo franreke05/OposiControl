@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // EX16: arranca el Ktor de ESTE worktree contra el stack local (`up.mjs` antes). Construye installDist y lo ejecuta con
-// .local/ktor.env (APP_ENV=local, SERVER_PROFILE=bot, puerto 8089).
+// <localDir>/ktor.env (APP_ENV=local, SERVER_PROFILE=bot, puerto ktorBot de stack-config.mjs).
 //   node ops/local-exam/run-ktor.mjs              en primer plano (Ctrl+C lo para)
 //   node ops/local-exam/run-ktor.mjs --detach     en segundo plano, independiente de la terminal: log en .local/ktor.log,
 //                                                 pid en .local/ktor.pid; espera a /health/live antes de volver
@@ -11,14 +11,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { requireStackLock } from './stack-lock.mjs';
+import { LOCAL_DIR, PORTS } from './stack-config.mjs';
 
 // Escritura en el stack compartido: falla (exit 3) si STACK_LOCK es de otro. Ver stack-lock.mjs.
 requireStackLock('run-ktor.mjs');
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repo = path.resolve(here, '..', '..');
-const local = path.join(here, '.local');
-// --admin: SEGUNDO Ktor con el perfil `control` (superficie de administracion) en el puerto 8090, con su propio pid y log. El de la app (bot, 8089) no se toca.
+const local = LOCAL_DIR;
+// --admin: SEGUNDO Ktor con el perfil `control` (superficie de administracion) en el puerto ktorControl, con su propio pid y log. El de la app (bot, ktorBot) no se toca.
 const admin = process.argv.includes('--admin');
 const pidFile = path.join(local, admin ? 'ktor-admin.pid' : 'ktor.pid');
 const windows = process.platform === 'win32';
@@ -41,7 +42,7 @@ for (const line of fs.readFileSync(envFile, 'utf8').split(/\r?\n/)) {
   const i = line.indexOf('=');
   if (i > 0) env[line.slice(0, i)] = line.slice(i + 1);
 }
-if (admin) { env.SERVER_PROFILE = 'control'; env.PORT = '8090'; }
+if (admin) { env.SERVER_PROFILE = 'control'; env.PORT = String(PORTS.ktorControl); }
 if (!process.argv.includes('--no-build')) {
   execFileSync(path.join(repo, windows ? 'gradlew.bat' : 'gradlew'), [':backend:ktor:installDist', '-q', '--console=plain'], { cwd: repo, stdio: 'inherit', shell: windows });
 }
@@ -54,7 +55,7 @@ if (process.argv.includes('--detach')) {
   const child = spawn('java', args, { cwd: repo, env, stdio: ['ignore', log, log], detached: true, windowsHide: true });
   child.unref();
   fs.writeFileSync(pidFile, String(child.pid));
-  const url = `http://${env.HOST ?? '127.0.0.1'}:${env.PORT ?? '8089'}/health/live`;
+  const url = `http://${env.HOST ?? '127.0.0.1'}:${env.PORT ?? PORTS.ktorBot}/health/live`;
   for (let i = 0; i < 60; i++) {
     try { if ((await fetch(url)).ok) { console.log(`Ktor en segundo plano (pid ${child.pid}): ${url} ok; log ${path.join(local, admin ? 'ktor-admin.log' : 'ktor.log')}`); process.exit(0); } } catch { /* arrancando */ }
     await new Promise((r) => setTimeout(r, 1000));
