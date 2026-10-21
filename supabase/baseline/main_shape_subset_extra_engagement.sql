@@ -299,3 +299,113 @@ end
 $foro$;
 -- (anon / authenticated keep the default privileges of a new table in this image, as MAIN's tables do in the bootstrap)
 grant all on public.categorias_oposired, public.publicaciones_oposired, public.comentarios_oposired, public.reacciones_oposired to service_role;
+
+-- V1 P3 (E2, 20261022102700): the Bot-owned user tables that MAIN has and the bootstrap subset lacks. Statements VERBATIM from the read-only MAIN catalog capture of 2026-10-14
+-- (baseline_main.sql), MAIN client grants and policies INCLUDED (authenticated INSERT/UPDATE/DELETE, policies own OR es_admin()): 20261022102700 revokes the writes and the gate proves it.
+-- Each table is created only when it does not exist yet (idempotent; a live local DB that already ran 20261022102700 keeps its revoked grants).
+do $users$
+begin
+  if to_regclass('public.tokens_dispositivo') is null then
+    CREATE TABLE public.tokens_dispositivo (id uuid NOT NULL DEFAULT gen_random_uuid(), usuario_id uuid NOT NULL, plataforma text NOT NULL, token_dispositivo text NOT NULL, activo boolean NOT NULL DEFAULT true, ultimo_uso_en timestamp with time zone, creado_en timestamp with time zone NOT NULL DEFAULT now());
+    ALTER TABLE public.tokens_dispositivo ADD CONSTRAINT tokens_dispositivo_pkey PRIMARY KEY (id);
+    ALTER TABLE public.tokens_dispositivo ADD CONSTRAINT tokens_dispositivo_token_dispositivo_key UNIQUE (token_dispositivo);
+    ALTER TABLE public.tokens_dispositivo ADD CONSTRAINT tokens_dispositivo_plataforma_check CHECK ((plataforma = ANY (ARRAY['android'::text, 'ios'::text, 'web'::text])));
+    ALTER TABLE public.tokens_dispositivo ADD CONSTRAINT tokens_dispositivo_usuario_id_fkey FOREIGN KEY (usuario_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+    CREATE INDEX idx_tokens_dispositivo_usuario_id ON public.tokens_dispositivo USING btree (usuario_id);
+    ALTER TABLE public.tokens_dispositivo ENABLE ROW LEVEL SECURITY;
+    CREATE POLICY tokens_dispositivo_todo_propio ON public.tokens_dispositivo AS PERMISSIVE FOR ALL TO authenticated USING (((usuario_id = ( SELECT auth.uid() AS uid)) OR public.es_admin())) WITH CHECK (((usuario_id = ( SELECT auth.uid() AS uid)) OR public.es_admin()));
+    revoke all on table public.tokens_dispositivo from public, anon, authenticated, service_role;
+    GRANT DELETE, INSERT, MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE ON TABLE public.tokens_dispositivo TO service_role;
+    GRANT DELETE, INSERT, MAINTAIN, SELECT, UPDATE ON TABLE public.tokens_dispositivo TO authenticated;
+    GRANT MAINTAIN, SELECT ON TABLE public.tokens_dispositivo TO anon;
+  end if;
+  if to_regclass('public.configuraciones_usuario') is null then
+    CREATE TABLE public.configuraciones_usuario (usuario_id uuid NOT NULL, idioma text NOT NULL DEFAULT 'es'::text, tema text NOT NULL DEFAULT 'sistema'::text, notificaciones_push boolean NOT NULL DEFAULT true, notificaciones_email boolean NOT NULL DEFAULT true, sonido_activado boolean NOT NULL DEFAULT true, vibracion_activada boolean NOT NULL DEFAULT true, metadatos jsonb NOT NULL DEFAULT '{}'::jsonb, creado_en timestamp with time zone NOT NULL DEFAULT now(), actualizado_en timestamp with time zone NOT NULL DEFAULT now());
+    ALTER TABLE public.configuraciones_usuario ADD CONSTRAINT configuraciones_usuario_pkey PRIMARY KEY (usuario_id);
+    ALTER TABLE public.configuraciones_usuario ADD CONSTRAINT configuraciones_usuario_idioma_check CHECK ((idioma = ANY (ARRAY['es'::text, 'ca'::text, 'en'::text])));
+    ALTER TABLE public.configuraciones_usuario ADD CONSTRAINT configuraciones_usuario_tema_check CHECK ((tema = ANY (ARRAY['claro'::text, 'oscuro'::text, 'sistema'::text])));
+    ALTER TABLE public.configuraciones_usuario ADD CONSTRAINT configuraciones_usuario_usuario_id_fkey FOREIGN KEY (usuario_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+    CREATE TRIGGER trg_configuraciones_usuario_actualizado_en BEFORE UPDATE ON public.configuraciones_usuario FOR EACH ROW EXECUTE FUNCTION public.establecer_actualizado_en();
+    ALTER TABLE public.configuraciones_usuario ENABLE ROW LEVEL SECURITY;
+    CREATE POLICY configuraciones_usuario_todo_propio ON public.configuraciones_usuario AS PERMISSIVE FOR ALL TO authenticated USING (((usuario_id = ( SELECT auth.uid() AS uid)) OR public.es_admin())) WITH CHECK (((usuario_id = ( SELECT auth.uid() AS uid)) OR public.es_admin()));
+    revoke all on table public.configuraciones_usuario from public, anon, authenticated, service_role;
+    GRANT DELETE, INSERT, MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE ON TABLE public.configuraciones_usuario TO service_role;
+    GRANT DELETE, INSERT, MAINTAIN, SELECT, UPDATE ON TABLE public.configuraciones_usuario TO authenticated;
+    GRANT MAINTAIN, SELECT ON TABLE public.configuraciones_usuario TO anon;
+  end if;
+  if to_regclass('public.preguntas_favoritas_usuario') is null then
+    CREATE TABLE public.preguntas_favoritas_usuario (usuario_id uuid NOT NULL, pregunta_id uuid NOT NULL, creado_en timestamp with time zone NOT NULL DEFAULT now());
+    ALTER TABLE public.preguntas_favoritas_usuario ADD CONSTRAINT preguntas_favoritas_usuario_pkey PRIMARY KEY (usuario_id, pregunta_id);
+    ALTER TABLE public.preguntas_favoritas_usuario ADD CONSTRAINT preguntas_favoritas_usuario_pregunta_id_fkey FOREIGN KEY (pregunta_id) REFERENCES public.preguntas(id) ON DELETE CASCADE;
+    ALTER TABLE public.preguntas_favoritas_usuario ADD CONSTRAINT preguntas_favoritas_usuario_usuario_id_fkey FOREIGN KEY (usuario_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+    CREATE INDEX idx_preguntas_favoritas_usuario_pregunta_id ON public.preguntas_favoritas_usuario USING btree (pregunta_id);
+    ALTER TABLE public.preguntas_favoritas_usuario ENABLE ROW LEVEL SECURITY;
+    CREATE POLICY favoritas_todo_propio ON public.preguntas_favoritas_usuario AS PERMISSIVE FOR ALL TO authenticated USING (((usuario_id = ( SELECT auth.uid() AS uid)) OR public.es_admin())) WITH CHECK (((usuario_id = ( SELECT auth.uid() AS uid)) OR public.es_admin()));
+    revoke all on table public.preguntas_favoritas_usuario from public, anon, authenticated, service_role;
+    GRANT DELETE, INSERT, MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE ON TABLE public.preguntas_favoritas_usuario TO service_role;
+    GRANT DELETE, INSERT, MAINTAIN, SELECT, UPDATE ON TABLE public.preguntas_favoritas_usuario TO authenticated;
+    GRANT MAINTAIN, SELECT ON TABLE public.preguntas_favoritas_usuario TO anon;
+  end if;
+  if to_regclass('public.cola_repaso_usuario') is null then
+    CREATE TABLE public.cola_repaso_usuario (id uuid NOT NULL DEFAULT gen_random_uuid(), usuario_id uuid NOT NULL, pregunta_id uuid NOT NULL, origen text NOT NULL, prioridad integer NOT NULL DEFAULT 50, estado text NOT NULL DEFAULT 'pendiente'::text, programada_para timestamp with time zone, completada_en timestamp with time zone, descartada_en timestamp with time zone, metadatos jsonb NOT NULL DEFAULT '{}'::jsonb, creado_en timestamp with time zone NOT NULL DEFAULT now(), actualizado_en timestamp with time zone NOT NULL DEFAULT now());
+    ALTER TABLE public.cola_repaso_usuario ADD CONSTRAINT cola_repaso_usuario_pkey PRIMARY KEY (id);
+    ALTER TABLE public.cola_repaso_usuario ADD CONSTRAINT cola_repaso_usuario_usuario_id_pregunta_id_origen_key UNIQUE (usuario_id, pregunta_id, origen);
+    ALTER TABLE public.cola_repaso_usuario ADD CONSTRAINT cola_repaso_usuario_estado_check CHECK ((estado = ANY (ARRAY['pendiente'::text, 'vista'::text, 'completada'::text, 'descartada'::text])));
+    ALTER TABLE public.cola_repaso_usuario ADD CONSTRAINT cola_repaso_usuario_origen_check CHECK ((origen = ANY (ARRAY['fallo'::text, 'lentitud'::text, 'baja_confianza'::text, 'etiqueta_debil'::text, 'marcada_manual'::text, 'recomendacion'::text])));
+    ALTER TABLE public.cola_repaso_usuario ADD CONSTRAINT cola_repaso_usuario_prioridad_check CHECK (((prioridad >= 0) AND (prioridad <= 100)));
+    ALTER TABLE public.cola_repaso_usuario ADD CONSTRAINT cola_repaso_usuario_pregunta_id_fkey FOREIGN KEY (pregunta_id) REFERENCES public.preguntas(id) ON DELETE CASCADE;
+    ALTER TABLE public.cola_repaso_usuario ADD CONSTRAINT cola_repaso_usuario_usuario_id_fkey FOREIGN KEY (usuario_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+    CREATE INDEX idx_cola_repaso_usuario_estado ON public.cola_repaso_usuario USING btree (usuario_id, estado, prioridad DESC);
+    CREATE INDEX idx_cola_repaso_usuario_pregunta_id ON public.cola_repaso_usuario USING btree (pregunta_id);
+    CREATE TRIGGER trg_cola_repaso_usuario_actualizado_en BEFORE UPDATE ON public.cola_repaso_usuario FOR EACH ROW EXECUTE FUNCTION public.establecer_actualizado_en();
+    ALTER TABLE public.cola_repaso_usuario ENABLE ROW LEVEL SECURITY;
+    CREATE POLICY cola_repaso_select_propio ON public.cola_repaso_usuario AS PERMISSIVE FOR SELECT TO authenticated USING (((usuario_id = ( SELECT auth.uid() AS uid)) OR public.es_admin()));
+    CREATE POLICY cola_repaso_update_propio ON public.cola_repaso_usuario AS PERMISSIVE FOR UPDATE TO authenticated USING (((usuario_id = ( SELECT auth.uid() AS uid)) OR public.es_admin())) WITH CHECK (((usuario_id = ( SELECT auth.uid() AS uid)) OR public.es_admin()));
+    revoke all on table public.cola_repaso_usuario from public, anon, authenticated, service_role;
+    GRANT DELETE, INSERT, MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE ON TABLE public.cola_repaso_usuario TO service_role;
+    GRANT DELETE, INSERT, MAINTAIN, SELECT, UPDATE ON TABLE public.cola_repaso_usuario TO authenticated;
+    GRANT MAINTAIN, SELECT ON TABLE public.cola_repaso_usuario TO anon;
+  end if;
+  if to_regclass('public.recomendaciones_usuario') is null then
+    CREATE TABLE public.recomendaciones_usuario (id uuid NOT NULL DEFAULT gen_random_uuid(), usuario_id uuid NOT NULL, tipo_recomendacion text NOT NULL, titulo text NOT NULL, descripcion text, entidad_tipo text, entidad_id uuid, motivo text, prioridad integer NOT NULL DEFAULT 50, estado text NOT NULL DEFAULT 'mostrada'::text, mostrada_en timestamp with time zone, aceptada_en timestamp with time zone, ignorada_en timestamp with time zone, descartada_en timestamp with time zone, resultado_posterior jsonb NOT NULL DEFAULT '{}'::jsonb, metadatos jsonb NOT NULL DEFAULT '{}'::jsonb, creado_en timestamp with time zone NOT NULL DEFAULT now(), actualizado_en timestamp with time zone NOT NULL DEFAULT now());
+    ALTER TABLE public.recomendaciones_usuario ADD CONSTRAINT recomendaciones_usuario_pkey PRIMARY KEY (id);
+    ALTER TABLE public.recomendaciones_usuario ADD CONSTRAINT recomendaciones_usuario_entidad_tipo_check CHECK (((entidad_tipo IS NULL) OR (entidad_tipo = ANY (ARRAY['etiqueta'::text, 'pregunta'::text, 'examen'::text, 'opositeca_item'::text, 'servicio'::text]))));
+    ALTER TABLE public.recomendaciones_usuario ADD CONSTRAINT recomendaciones_usuario_estado_check CHECK ((estado = ANY (ARRAY['generada'::text, 'mostrada'::text, 'aceptada'::text, 'ignorada'::text, 'descartada'::text])));
+    ALTER TABLE public.recomendaciones_usuario ADD CONSTRAINT recomendaciones_usuario_prioridad_check CHECK (((prioridad >= 0) AND (prioridad <= 100)));
+    ALTER TABLE public.recomendaciones_usuario ADD CONSTRAINT recomendaciones_usuario_tipo_recomendacion_check CHECK ((tipo_recomendacion = ANY (ARRAY['repasar_etiqueta'::text, 'hacer_rafaga'::text, 'hacer_inmersivo'::text, 'repasar_fallos'::text, 'descansar'::text, 'premium'::text])));
+    ALTER TABLE public.recomendaciones_usuario ADD CONSTRAINT recomendaciones_usuario_usuario_id_fkey FOREIGN KEY (usuario_id) REFERENCES auth.users(id) ON DELETE CASCADE;
+    CREATE INDEX idx_recomendaciones_usuario_estado ON public.recomendaciones_usuario USING btree (usuario_id, estado, prioridad DESC);
+    CREATE TRIGGER trg_recomendaciones_usuario_actualizado_en BEFORE UPDATE ON public.recomendaciones_usuario FOR EACH ROW EXECUTE FUNCTION public.establecer_actualizado_en();
+    ALTER TABLE public.recomendaciones_usuario ENABLE ROW LEVEL SECURITY;
+    CREATE POLICY recomendaciones_select_propio ON public.recomendaciones_usuario AS PERMISSIVE FOR SELECT TO authenticated USING (((usuario_id = ( SELECT auth.uid() AS uid)) OR public.es_admin()));
+    CREATE POLICY recomendaciones_update_propio ON public.recomendaciones_usuario AS PERMISSIVE FOR UPDATE TO authenticated USING (((usuario_id = ( SELECT auth.uid() AS uid)) OR public.es_admin())) WITH CHECK (((usuario_id = ( SELECT auth.uid() AS uid)) OR public.es_admin()));
+    revoke all on table public.recomendaciones_usuario from public, anon, authenticated, service_role;
+    GRANT DELETE, INSERT, MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE ON TABLE public.recomendaciones_usuario TO service_role;
+    GRANT DELETE, INSERT, MAINTAIN, SELECT, UPDATE ON TABLE public.recomendaciones_usuario TO authenticated;
+    GRANT MAINTAIN, SELECT ON TABLE public.recomendaciones_usuario TO anon;
+  end if;
+  if to_regclass('public.uso_recursos_pregunta') is null then
+    CREATE TABLE public.uso_recursos_pregunta (id uuid NOT NULL DEFAULT gen_random_uuid(), usuario_id uuid, intento_id uuid, pregunta_id uuid NOT NULL, recurso_id uuid NOT NULL, accion text NOT NULL, tiempo_visualizacion_segundos integer, porcentaje_consumido numeric(5,2), plataforma text, version_app text, metadatos jsonb NOT NULL DEFAULT '{}'::jsonb, creado_en timestamp with time zone NOT NULL DEFAULT now());
+    ALTER TABLE public.uso_recursos_pregunta ADD CONSTRAINT uso_recursos_pregunta_pkey PRIMARY KEY (id);
+    ALTER TABLE public.uso_recursos_pregunta ADD CONSTRAINT uso_recursos_pregunta_accion_check CHECK ((accion = ANY (ARRAY['abierto'::text, 'cerrado'::text, 'reproducido'::text, 'pausado'::text, 'completado'::text, 'error_carga'::text])));
+    ALTER TABLE public.uso_recursos_pregunta ADD CONSTRAINT uso_recursos_pregunta_plataforma_check CHECK (((plataforma IS NULL) OR (plataforma = ANY (ARRAY['android'::text, 'ios'::text, 'web'::text]))));
+    ALTER TABLE public.uso_recursos_pregunta ADD CONSTRAINT uso_recursos_pregunta_porcentaje_consumido_check CHECK (((porcentaje_consumido IS NULL) OR ((porcentaje_consumido >= (0)::numeric) AND (porcentaje_consumido <= (100)::numeric))));
+    ALTER TABLE public.uso_recursos_pregunta ADD CONSTRAINT uso_recursos_pregunta_tiempo_visualizacion_segundos_check CHECK (((tiempo_visualizacion_segundos IS NULL) OR (tiempo_visualizacion_segundos >= 0)));
+    ALTER TABLE public.uso_recursos_pregunta ADD CONSTRAINT uso_recursos_pregunta_intento_id_fkey FOREIGN KEY (intento_id) REFERENCES public.intentos_examen(id) ON DELETE CASCADE;
+    ALTER TABLE public.uso_recursos_pregunta ADD CONSTRAINT uso_recursos_pregunta_pregunta_id_fkey FOREIGN KEY (pregunta_id) REFERENCES public.preguntas(id) ON DELETE CASCADE;
+    ALTER TABLE public.uso_recursos_pregunta ADD CONSTRAINT uso_recursos_pregunta_recurso_id_fkey FOREIGN KEY (recurso_id) REFERENCES public.recursos_pregunta(id) ON DELETE CASCADE;
+    ALTER TABLE public.uso_recursos_pregunta ADD CONSTRAINT uso_recursos_pregunta_usuario_id_fkey FOREIGN KEY (usuario_id) REFERENCES auth.users(id) ON DELETE SET NULL;
+    CREATE INDEX idx_uso_recursos_pregunta ON public.uso_recursos_pregunta USING btree (pregunta_id);
+    CREATE INDEX idx_uso_recursos_pregunta_intento_id ON public.uso_recursos_pregunta USING btree (intento_id);
+    CREATE INDEX idx_uso_recursos_recurso ON public.uso_recursos_pregunta USING btree (recurso_id);
+    CREATE INDEX idx_uso_recursos_usuario ON public.uso_recursos_pregunta USING btree (usuario_id);
+    ALTER TABLE public.uso_recursos_pregunta ENABLE ROW LEVEL SECURITY;
+    CREATE POLICY uso_recursos_insert_propio ON public.uso_recursos_pregunta AS PERMISSIVE FOR INSERT TO authenticated WITH CHECK (((usuario_id = ( SELECT auth.uid() AS uid)) OR public.es_admin()));
+    CREATE POLICY uso_recursos_select_staff_o_propio ON public.uso_recursos_pregunta AS PERMISSIVE FOR SELECT TO authenticated USING (((usuario_id = ( SELECT auth.uid() AS uid)) OR public.es_admin()));
+    revoke all on table public.uso_recursos_pregunta from public, anon, authenticated, service_role;
+    GRANT DELETE, INSERT, MAINTAIN, REFERENCES, SELECT, TRIGGER, TRUNCATE, UPDATE ON TABLE public.uso_recursos_pregunta TO service_role;
+    GRANT DELETE, INSERT, MAINTAIN, SELECT, UPDATE ON TABLE public.uso_recursos_pregunta TO authenticated;
+    GRANT MAINTAIN, SELECT ON TABLE public.uso_recursos_pregunta TO anon;
+  end if;
+end
+$users$;

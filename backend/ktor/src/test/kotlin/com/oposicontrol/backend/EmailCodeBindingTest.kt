@@ -71,11 +71,12 @@ class EmailCodeBindingTest {
         r.gateway.register(OposiBotsRegisterRequest(email = "Person@Example.com", password = "safe-password-12", codeChallenge = challenge), context)
         r.gateway.resend(OposiBotsEmailResendRequest("person@example.com", codeChallenge = Pkce.challengeOf(otherVerifier)), context)
         r.gateway.recover(OposiBotsRecoverRequest(email = "person@example.com", codeChallenge = Pkce.challengeOf("y".repeat(43))), context)
-        assertEquals(3, r.binding.size())
+        // SEC-V1-08: the resend (sent) superseded the signup binding: one valid binding per (purpose, email)
+        assertEquals(2, r.binding.size())
         assertEquals(listOf("/auth/v1/signup", "/auth/v1/resend", "/auth/v1/recover"), r.requests.map { it.url.encodedPath })
         // optional mode: no challenge = legacy behaviour, nothing stored
         r.gateway.recover(OposiBotsRecoverRequest(email = "person@example.com"), context)
-        assertEquals(3, r.binding.size())
+        assertEquals(2, r.binding.size())
     }
 
     @Test
@@ -172,16 +173,27 @@ class EmailCodeBindingTest {
     @Test
     fun theBindingTableIsReachedOnlyThroughServiceRoleRpcsWithShapesTheDatabaseChecks() = runTest {
         val sent = mutableListOf<Pair<String, String>>()
-        val binding = PostgrestEmailCodeBinding(rpc = { fn, body -> sent += fn to body; if (fn == "auth_code_binding_consume") "\"${"a".repeat(64)}\"" else "" })
-        binding.register("signup", "a".repeat(64), challenge)
+        val binding = PostgrestEmailCodeBinding(rpc = { fn, body ->
+            sent += fn to body
+            when (fn) {
+                "auth_code_binding_consume" -> "\"${"a".repeat(64)}\""
+                "auth_code_binding_begin" -> "42"
+                else -> ""
+            }
+        })
+        assertEquals(42L, binding.begin("signup", "a".repeat(64), challenge))
+        binding.activate(42L)
         assertEquals("a".repeat(64), binding.consume("signup", null, challenge))
-        assertEquals(listOf("auth_code_binding_register", "auth_code_binding_consume"), sent.map { it.first })
+        assertEquals(listOf("auth_code_binding_begin", "auth_code_binding_activate", "auth_code_binding_consume"), sent.map { it.first })
         assertTrue(sent[0].second.contains("\"p_challenge\":\"$challenge\"") && !sent[0].second.contains("@"), "only hashes travel")
+        assertEquals("""{"p_id":42}""", sent[1].second)
         val none = PostgrestEmailCodeBinding(rpc = { _, _ -> "null" })
         assertEquals(null, none.consume("signup", "a".repeat(64), challenge))
+        assertEquals(null, none.begin("signup", "a".repeat(64), challenge), "challenge already bound to another email")
         val down = PostgrestEmailCodeBinding(rpc = { _, _ -> error("db down") })
         assertEquals(HttpStatusCode.ServiceUnavailable, assertFailsWith<OposiBotsAuthProblem> { down.consume("signup", null, challenge) }.status, "fail closed")
-        assertEquals(HttpStatusCode.ServiceUnavailable, assertFailsWith<OposiBotsAuthProblem> { down.register("signup", "a".repeat(64), challenge) }.status)
+        assertEquals(HttpStatusCode.ServiceUnavailable, assertFailsWith<OposiBotsAuthProblem> { down.begin("signup", "a".repeat(64), challenge) }.status)
+        assertEquals(HttpStatusCode.ServiceUnavailable, assertFailsWith<OposiBotsAuthProblem> { down.activate(42L) }.status)
     }
 
     private companion object {
