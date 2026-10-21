@@ -206,6 +206,9 @@ class ControlPanelUiE2ETest {
 
     /** Pedido sandbox de Q4 por la app y aviso firmado con importe erróneo → `en_revision` (lado Bot). */
     private fun orderInReview(): String {
+        // Un pedido que una pasada anterior dejó en revisión (p. ej. cortada a mitad) aparecería primero en la lista y la
+        // prueba acreditaría ese: se rechazan antes con la misma función que usa el panel, auditado como el admin.
+        sql("select public.admin_payment_order_resolve('$adminId'::uuid, c.id, 'rechazar', 'Limpieza previa del UI E2E', false) from public.compras_usuario c where c.estado = 'en_revision'")
         val created = post(
             "$appUrl/api/v1/app/payments/orders", """{"productCode":"LOCAL_PACK_50","provider":"sandbox"}""",
             mapOf("Authorization" to "Bearer " + tokens["Q4"]!!.jsonPrimitive.content, "Idempotency-Key" to UUID.randomUUID().toString()),
@@ -556,31 +559,25 @@ class ControlPanelUiE2ETest {
     @Test
     fun uiModeratorRejectsAPendingPost() {
         if (local == null) return flow("ui-moderator") {}
-        // La publicación se prepara ANTES de montar la interfaz: su reintento (límite por usuario de la app) puede esperar
-        // hasta un minuto, y dentro de la prueba de Compose esa espera bloquearía su reloj.
+        // La publicación se prepara ANTES de montar la interfaz, con SQL y la API de la app; la interfaz solo modera.
         val channel = sql("select id from public.categorias_oposired where activa order by creado_en desc limit 1")
         check(channel.isNotBlank()) { "sin canal activo (lo crea el E2E de datos J11)" }
-        // Límite anti-spam de publicaciones por hora (lado Bot): las pasadas repetidas lo agotan para Q1. Se sube y, como la
-        // premoderación, se restaura al acabar (mismo patrón que el E2E de datos J11).
+        // Límites anti-spam de publicaciones por hora Y por día (lado Bot, `foro_posts_hora`/`foro_posts_dia`): las pasadas
+        // repetidas los agotan para Q1 (el diario es 20). Se suben y, como la premoderación, se restauran al acabar.
         val premod = sql("select valor_integer from public.configuracion_v1 where clave = 'foro_premoderacion_posts'")
         val postsHora = sql("select valor_integer from public.configuracion_v1 where clave = 'foro_posts_hora'")
+        val postsDia = sql("select valor_integer from public.configuracion_v1 where clave = 'foro_posts_dia'")
         sql("update public.configuracion_v1 set valor_integer = 1000 where clave = 'foro_posts_hora'")
+        sql("update public.configuracion_v1 set valor_integer = 100000 where clave = 'foro_posts_dia'")
         sql("update public.configuracion_v1 set valor_integer = 1 where clave = 'foro_premoderacion_posts'")
         try {
             // Solo queda en la cola la publicación de esta prueba: las pendientes anteriores se rechazan por la función de moderación.
             sql("select public.admin_foro_moderate('$adminId'::uuid, 'publicacion', p.id, 'rechazar', null, 'Limpieza previa del UI E2E') from public.publicaciones_oposired p where p.estado = 'pendiente_moderacion'")
             val marker = "UI E2E " + UUID.randomUUID().toString().take(8)
-            // El límite por usuario de la app (lado Bot) puede saltar tras muchas pasadas seguidas: se reintenta como lo haría
-            // una persona, con pausas y hasta un minuto; si sigue limitado, el fallo dice por qué.
-            var created = ""
-            for (attempt in 1..7) {
-                created = post(
-                    "$appUrl/api/v1/app/oposired/publicaciones", """{"categoriaId":"$channel","titulo":"$marker","cuerpo":"Duda de moderacion desde la interfaz $marker"}""",
-                    mapOf("Authorization" to "Bearer " + tokens["Q1"]!!.jsonPrimitive.content, "Idempotency-Key" to UUID.randomUUID().toString()),
-                )
-                if (!created.contains("rate_limited")) break
-                Thread.sleep(10_000)
-            }
+            val created = post(
+                "$appUrl/api/v1/app/oposired/publicaciones", """{"categoriaId":"$channel","titulo":"$marker","cuerpo":"Duda de moderacion desde la interfaz $marker"}""",
+                mapOf("Authorization" to "Bearer " + tokens["Q1"]!!.jsonPrimitive.content, "Idempotency-Key" to UUID.randomUUID().toString()),
+            )
             val postId = sql("select id from public.publicaciones_oposired where titulo = '$marker'")
             check(postId.isNotBlank()) { "la publicación no se creó: $created" }
             flow("ui-moderator") {
@@ -599,6 +596,7 @@ class ControlPanelUiE2ETest {
         } finally {
             sql("update public.configuracion_v1 set valor_integer = ${premod.ifEmpty { "0" }} where clave = 'foro_premoderacion_posts'")
             if (postsHora.isNotEmpty()) sql("update public.configuracion_v1 set valor_integer = $postsHora where clave = 'foro_posts_hora'")
+            if (postsDia.isNotEmpty()) sql("update public.configuracion_v1 set valor_integer = $postsDia where clave = 'foro_posts_dia'")
         }
     }
 }

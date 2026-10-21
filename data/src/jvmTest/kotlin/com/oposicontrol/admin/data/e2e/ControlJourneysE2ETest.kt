@@ -426,24 +426,20 @@ class ControlJourneysE2ETest {
         val channel = p.control.createForumChannel(ForumChannelDraft("Canal E2E", slug, "Canal de prueba E2E", true, "95", specialty, false)).ok("crear canal")
         assertEquals(1, auditCount("foro_canal_creado", channel.id))
         val premod = sql("select valor_integer from public.configuracion_v1 where clave = 'foro_premoderacion_posts'")
-        // Límite anti-spam de publicaciones por hora (lado Bot): las ejecuciones repetidas del E2E lo agotan; se sube y se restaura.
+        // Límites anti-spam de publicaciones por hora Y por día (lado Bot; el diario es 20): las ejecuciones repetidas del E2E
+        // los agotan; se suben y se restauran.
         val postsHora = sql("select valor_integer from public.configuracion_v1 where clave = 'foro_posts_hora'")
+        val postsDia = sql("select valor_integer from public.configuracion_v1 where clave = 'foro_posts_dia'")
         sql("update public.configuracion_v1 set valor_integer = 1000 where clave = 'foro_posts_hora'")
+        sql("update public.configuracion_v1 set valor_integer = 100000 where clave = 'foro_posts_dia'")
         sql("update auth.users set email_confirmed_at = now() - interval '3 days', created_at = now() - interval '3 days' where id = '$q1'; update public.configuracion_v1 set valor_integer = 1 where clave = 'foro_premoderacion_posts'")
         try {
         val body = "Duda E2E de moderacion ${UUID.randomUUID().toString().take(8)} sobre el tema 3"
-        // El límite por usuario de la app (lado Bot: PLAN_WRITE, 60/min) puede saltar si otra prueba acaba de publicar con
-        // Q1: se reintenta con pausas hasta que pasa la ventana (unos 70 s); si sigue limitado, el fallo dice por qué.
-        var created = ""
-        for (attempt in 1..7) {
-            created = client.post("$appUrl/api/v1/app/oposired/publicaciones") {
-                header("Authorization", "Bearer ${token("Q1")}"); header("Idempotency-Key", UUID.randomUUID().toString())
-                contentType(ContentType.Application.Json)
-                setBody("""{"categoriaId":"${channel.id}","titulo":"Duda E2E","cuerpo":"$body"}""")
-            }.bodyAsText()
-            if (!created.contains("rate_limited")) break
-            Thread.sleep(10_000)
-        }
+        val created = client.post("$appUrl/api/v1/app/oposired/publicaciones") {
+            header("Authorization", "Bearer ${token("Q1")}"); header("Idempotency-Key", UUID.randomUUID().toString())
+            contentType(ContentType.Application.Json)
+            setBody("""{"categoriaId":"${channel.id}","titulo":"Duda E2E","cuerpo":"$body"}""")
+        }.bodyAsText()
         val postId = sql("select id from public.publicaciones_oposired where contenido = '$body'").ifEmpty { fail("publicacion no creada: $created") }
         // Moderador real (rol `moderador`, cuenta activa): ve la cola y modera; la auditoría lo registra a ÉL como actor.
         val mod = Panel("MOD")
@@ -468,6 +464,7 @@ class ControlJourneysE2ETest {
         } finally {
             sql("update public.configuracion_v1 set valor_integer = ${premod.ifEmpty { "0" }} where clave = 'foro_premoderacion_posts'")
             if (postsHora.isNotEmpty()) sql("update public.configuracion_v1 set valor_integer = $postsHora where clave = 'foro_posts_hora'")
+            if (postsDia.isNotEmpty()) sql("update public.configuracion_v1 set valor_integer = $postsDia where clave = 'foro_posts_dia'")
         }
     }
 
