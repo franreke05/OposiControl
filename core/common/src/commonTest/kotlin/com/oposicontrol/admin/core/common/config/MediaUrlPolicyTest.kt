@@ -90,4 +90,25 @@ class MediaUrlPolicyTest {
     @Test fun httpsConfigStillAllowsTheSameHostThroughTheConfigEntryPoint() {
         assertTrue(MediaUrlPolicy.isAllowedRemoteMedia(good, config(supabase, Environment.PROD)))
     }
+
+    private fun openable(url: String) = MediaUrlPolicy.isOpenableStorageObject(url, supabase)
+
+    /** «Abrir» un recurso de pregunta: la URL firmada del bucket privado se puede ABRIR fuera, nunca cargar dentro. */
+    @Test fun signedObjectOfTheConfiguredHostCanBeOpenedButNotFetchedInApp() {
+        val signed = "https://proj.supabase.co/storage/v1/object/sign/recursos-pregunta/preguntas/q/r.jpg?token=abc"
+        assertTrue(openable(signed))
+        assertTrue(openable(good))
+        assertFalse(allowed(signed), "la politica de carga dentro de la app no cambia")
+    }
+
+    @Test fun openingRejectsEverythingOutsideOurStorage() {
+        assertFalse(openable("https://evil.example/storage/v1/object/sign/a.jpg?token=x"))
+        assertFalse(openable("https://proj.supabase.co@evil.example/storage/v1/object/sign/a.jpg"))
+        assertFalse(openable("http://proj.supabase.co/storage/v1/object/sign/a.jpg"))
+        assertFalse(openable("https://proj.supabase.co/storage/v1/object/sign/"))
+        assertFalse(openable("https://proj.supabase.co/storage/v1/object/sign/../../rest/v1/x"))
+        assertFalse(openable("https://proj.supabase.co/rest/v1/preguntas"))
+        assertFalse(openable("file:///C:/Windows/notepad.exe"))
+        assertFalse(MediaUrlPolicy.isOpenableStorageObject("https://proj.supabase.co/storage/v1/object/sign/a.jpg", null as AppConfig?))
+    }
 }

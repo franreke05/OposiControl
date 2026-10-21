@@ -221,6 +221,8 @@ kotlin {
             implementation(libs.sqldelight.sqlite.driver)
             implementation(projects.core.database)
             implementation(libs.kotlinx.serialization.json)
+            // Solo pruebas E2E: SQL al Postgres del stack aislado (misma version que backend/dbtest).
+            implementation("org.postgresql:postgresql:42.7.4")
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)

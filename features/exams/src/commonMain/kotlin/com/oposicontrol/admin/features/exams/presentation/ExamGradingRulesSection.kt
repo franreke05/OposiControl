@@ -2,7 +2,10 @@ package com.oposicontrol.admin.features.exams.presentation
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.unit.dp
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -118,6 +121,8 @@ private fun GradingForm(
     onIntent: (GradingRulesIntent) -> Unit,
 ) {
     val tokens = GlassTheme.tokens
+    // AsyncStatePane pinta su contenido en un Box: sin esta Column los hijos se apilaban unos encima de otros (UI E2E 2026-10-20).
+    Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
     Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xxs), verticalAlignment = Alignment.CenterVertically) {
         WorkspacePill("${rules.reserves} reservas")
         WorkspacePill("${rules.annulledMain} anuladas principales")
@@ -151,6 +156,7 @@ private fun GradingForm(
             label = "Fracción fija: numerador",
             value = draft.numerator,
             onValueChange = { onIntent(GradingRulesIntent.SetNumerator(it)) },
+            modifier = Modifier.width(240.dp),
             readOnly = draft.rationalPenalty,
             isError = state.validation?.field == GradingValidation.Field.FRACTION,
         )
@@ -158,6 +164,7 @@ private fun GradingForm(
             label = "Denominador",
             value = draft.denominator,
             onValueChange = { onIntent(GradingRulesIntent.SetDenominator(it)) },
+            modifier = Modifier.width(240.dp),
             readOnly = draft.rationalPenalty,
             isError = state.validation?.field == GradingValidation.Field.FRACTION,
         )
@@ -204,5 +211,6 @@ private fun GradingForm(
             onConfirm = { onIntent(GradingRulesIntent.ConfirmSave) },
             onDismiss = { onIntent(GradingRulesIntent.DismissConfirm) },
         )
+    }
     }
 }

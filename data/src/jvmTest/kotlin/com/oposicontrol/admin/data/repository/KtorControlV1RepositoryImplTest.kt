@@ -8,6 +8,7 @@ import com.oposicontrol.admin.core.common.logging.NoOpLogger
 import com.oposicontrol.admin.core.common.result.AppError
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.core.database.AdminDatabase
+import com.oposicontrol.admin.core.network.AdminApiJson
 import com.oposicontrol.admin.core.network.NetworkResultAdapter
 import com.oposicontrol.admin.data.local.SessionLocalDataSource
 import com.oposicontrol.admin.domain.model.ExamEconomyDraft
@@ -86,6 +87,24 @@ class KtorControlV1RepositoryImplTest {
         assertTrue(text.contains("\"penalizacionNum\":0") && text.contains("\"penalizacionDen\":1"), text)
         assertTrue(text.contains("\"motivo\":\"Por el tribunal\""), text)
         assertTrue(text.contains("\"actor") .not() && text.contains("usuarioId").not(), "el actor lo pone el servidor desde el JWT")
+    }
+
+    /** Con el Json REAL del panel (explicitNulls = false): la regla derivada (null) tiene que viajar como clave, o el servidor responde 400 (UI E2E 2026-10-20). */
+    @Test
+    fun theDerivedRuleTravelsAsAnExplicitNullWithTheProductionJson() = runTest {
+        val requests = mutableListOf<HttpRequestData>()
+        val client = HttpClient(
+            MockEngine { request ->
+                requests += request
+                respond(ByteReadChannel("""{"examenId":"e1"}"""), HttpStatusCode.OK, headersOf(HttpHeaders.ContentType, "application/json"))
+            },
+        ) { install(ContentNegotiation) { json(AdminApiJson) } }
+        KtorControlV1RepositoryImpl(client, appConfig(), session(), NetworkResultAdapter(NoOpLogger))
+            .saveGradingRules("e1", null, false, 1, 3, null)
+        val text = requests.single().text()
+        assertTrue(text.contains("\"reglaAnuladas\":null"), text)
+        assertTrue(text.contains("\"penalizacionRacional\":false") && text.contains("\"penalizacionNum\":1") && text.contains("\"penalizacionDen\":3"), text)
+        assertTrue(!text.contains("motivo"), text)
     }
 
     @Test

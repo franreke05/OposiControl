@@ -487,7 +487,7 @@ private fun ImportStagingDetail(
             ImportTextField(
                 value = draft.annulmentReason.orEmpty(),
                 onValueChange = { onIntent(ImportIntent.UpdateEditDraft(draft.copy(annulmentReason = it))) },
-                placeholder = "Motivo de la anulación (opcional)",
+                placeholder = "Motivo de la anulación (obligatorio)",
                 enabled = editable,
             )
         }

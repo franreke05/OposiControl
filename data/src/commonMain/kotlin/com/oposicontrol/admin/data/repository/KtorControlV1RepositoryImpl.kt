@@ -53,6 +53,9 @@ import io.ktor.http.contentType
 import io.ktor.http.encodeURLPathPart
 import io.ktor.http.isSuccess
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 
 /**
  * Control V1 a través del límite canónico de Ktor. Ninguna validación de este cliente es la guarda: son las del
@@ -86,7 +89,19 @@ class KtorControlV1RepositoryImpl(
         client.put(url("/examenes/$examId/reglas-puntuacion")) {
             auth()
             contentType(ContentType.Application.Json)
-            setBody(GradingRulesPutDto(annulledRule, rationalPenalty, numerator, denominator, reason?.trim()?.ifEmpty { null }))
+            // El servidor exige la clave `reglaAnuladas` aunque sea null (null = regla derivada), y el Json del cliente
+            // (`explicitNulls = false`) la omitiría: se envía como JsonObject para que el null viaje (UI E2E 2026-10-20).
+            setBody(
+                JsonObject(
+                    listOfNotNull(
+                        "reglaAnuladas" to (annulledRule?.let(::JsonPrimitive) ?: JsonNull),
+                        "penalizacionRacional" to JsonPrimitive(rationalPenalty),
+                        "penalizacionNum" to JsonPrimitive(numerator),
+                        "penalizacionDen" to JsonPrimitive(denominator),
+                        reason?.trim()?.ifEmpty { null }?.let { "motivo" to JsonPrimitive(it) },
+                    ).toMap(),
+                ),
+            )
         }.checkedBody<GradingRulesDto>("/api/v1/admin/examenes/$examId/reglas-puntuacion").toDomain()
     }
 
@@ -372,15 +387,6 @@ private data class GradingRulesDto(
 
 @Serializable
 private data class GradingCheckDto(val problema: String? = null, val avisos: List<String> = emptyList(), val regla: String? = null)
-
-@Serializable
-private data class GradingRulesPutDto(
-    val reglaAnuladas: String?,
-    val penalizacionRacional: Boolean,
-    val penalizacionNum: Int,
-    val penalizacionDen: Int,
-    val motivo: String? = null,
-)
 
 @Serializable
 private data class GradingSnapshotDto(

@@ -653,4 +653,23 @@ class QuestionsPresentationTest {
             assertTrue(capability.note.isNotBlank(), "«${capability.name}» no dice por qué")
         }
     }
+
+    /** Para comprobar qué archivo se subió: el formato se lee y «Abrir» solo existe si la politica acepta la URL. */
+    @Test
+    fun `un recurso subido dice su formato y solo se abre con una URL aceptada`() {
+        val imagen = QuestionResource(
+            id = "r-9", questionId = "q-1", type = QuestionResourceType.IMAGE, title = "cc",
+            textBody = null, storagePath = "preguntas/q-1/r-9.jpg",
+            publicUrl = "https://proj.supabase.co/storage/v1/object/sign/recursos-pregunta/preguntas/q-1/r-9.jpg?token=t",
+            mimeType = "image/jpeg", sortOrder = 0,
+        )
+        val abierta = questionResourceRows(listOf(imagen)) { it.contains("/object/sign/") }.single()
+        assertEquals("JPEG", abierta.formatLabel)
+        assertEquals(imagen.publicUrl, abierta.openUrl)
+        assertEquals(null, questionResourceRows(listOf(imagen)).single().openUrl, "sin politica no hay boton")
+        assertEquals("MP3", questionResourceFormatLabel("audio/mpeg"))
+        assertEquals("MP4", questionResourceFormatLabel("video/mp4"))
+        assertEquals("WAV", questionResourceFormatLabel("audio/x-wav"))
+        assertEquals(null, questionResourceFormatLabel(null))
+    }
 }

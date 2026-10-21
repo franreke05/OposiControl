@@ -1,6 +1,8 @@
 package com.oposicontrol.admin.features.exams.presentation
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.Row
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -59,6 +61,8 @@ internal fun ExamOfficialQuestionsContent(state: OfficialQuestionsUiState, onInt
             emptyMessage = "Este examen aún no tiene preguntas vinculadas.",
             onRetry = { onIntent(OfficialQuestionsIntent.Refresh) },
         ) { data ->
+            // AsyncStatePane pinta su contenido en un Box: sin esta Column los hijos se apilaban (UI E2E 2026-10-20).
+            Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(Spacing.sm)) {
             if (!data.reservesAvailable) {
                 WorkspaceNotice(
                     WorkspaceNoticeTone.WARNING,
@@ -114,7 +118,7 @@ internal fun ExamOfficialQuestionsContent(state: OfficialQuestionsUiState, onInt
                             label = "Motivo de la anulación",
                             value = draft.reason,
                             onValueChange = { onIntent(OfficialQuestionsIntent.SetReason(it)) },
-                            supportingText = state.errors["reason"] ?: "Opcional. Máximo ${OfficialQuestionValidator.REASON_MAX} caracteres.",
+                            supportingText = state.errors["reason"] ?: "Obligatorio. Máximo ${OfficialQuestionValidator.REASON_MAX} caracteres.",
                             isError = state.errors.containsKey("reason"),
                             singleLine = false,
                             minLines = 2,
@@ -149,6 +153,7 @@ internal fun ExamOfficialQuestionsContent(state: OfficialQuestionsUiState, onInt
                         )
                     }
                 }
+            }
             }
         }
     }

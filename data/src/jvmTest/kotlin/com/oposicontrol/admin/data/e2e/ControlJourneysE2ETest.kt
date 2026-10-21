@@ -138,14 +138,24 @@ class ControlJourneysE2ETest {
         is AppResult.Failure -> error
     }
 
-    /** psql dentro del contenedor del stack aislado; devuelve la salida `-At`. Solo datos sintéticos. */
-    private fun sql(query: String): String {
-        val p = ProcessBuilder("docker", "exec", "-i", dbContainer, "psql", "-U", "postgres", "-X", "-q", "-At", "-v", "ON_ERROR_STOP=1")
-            .redirectErrorStream(true).start()
-        p.outputStream.use { it.write(query.toByteArray()) }
-        val out = p.inputStream.bufferedReader().readText().trim()
-        check(p.waitFor() == 0) { "psql: $out" }
-        return out
+    /** SQL contra el stack aislado; devuelve filas `a|b` como `psql -At`. Solo datos sintéticos. Por JDBC al puerto del stack aislado (`ports.json`): `docker exec` abría una consola por consulta en Windows. */
+    private fun sql(query: String): String = E2eDb.connection(local!!).createStatement().use { st ->
+        var hasRows = st.execute(query)
+        var last = ""
+        while (true) {
+            if (hasRows) {
+                st.resultSet.use { rs ->
+                    val n = rs.metaData.columnCount
+                    val rows = mutableListOf<String>()
+                    while (rs.next()) rows += (1..n).joinToString("|") { rs.getString(it) ?: "" }
+                    last = rows.joinToString("\n")
+                }
+            } else if (st.updateCount == -1) {
+                break
+            }
+            hasRows = st.moreResults
+        }
+        last
     }
 
     private fun auditCount(action: String, record: String) =
@@ -467,5 +477,19 @@ class ControlJourneysE2ETest {
         // Append-only: ni el admin ni nadie cambia auditoria_log por la Data API.
         assertEquals("1", sql("select count(*) from public.auditoria_log where id = '${mine.id}'"))
         assertIs<AppError.Authorization>(Panel("Q1").audit.fetchMovements(AuditFilter(), null).failure("usuario lee auditoria"))
+    }
+}
+
+/** Una conexión por proceso de pruebas al Postgres del stack aislado (`127.0.0.1`, datos sintéticos, credenciales locales). */
+private object E2eDb {
+    private var conn: java.sql.Connection? = null
+
+    @Synchronized
+    fun connection(local: File): java.sql.Connection {
+        conn?.takeIf { !it.isClosed }?.let { return it }
+        val port = Json.parseToJsonElement(File(local, "ports.json").readText()).jsonObject["db"]!!.jsonPrimitive.content
+        return java.sql.DriverManager.getConnection("jdbc:postgresql://127.0.0.1:$port/postgres", "postgres", "postgres")
+            .apply { autoCommit = true }
+            .also { conn = it }
     }
 }
