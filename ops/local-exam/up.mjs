@@ -255,6 +255,12 @@ psql(fs.readFileSync(path.join(here, 'sql/03_auth_functions_main_shape.sql'), 'u
 // recorded in private.v1_applied_migrations; a non-re-runnable stamp already applied from the same file is kept, not a failure. See converge.mjs.
 const { v1Migrations, applyV1Stamps } = await import('./converge.mjs');
 applyV1Stamps({ psql: (sql) => psql(sql), files: v1Migrations(repo).map((v) => ({ v, text: fs.readFileSync(path.join(repo, 'supabase/migrations', `${v}.sql`), 'utf8') })) });
+// 01_overlay_wallet_entitlement.sql (above, every run) resets the MAIN grants of compras_usuario/suscripciones, and 20261022102600 is not
+// re-runnable ("kept"), so its ECO-11 narrowing (section 2) was lost on every later plain run. Re-assert exactly those two statements.
+if (psql("select count(*) from private.v1_applied_migrations where version = '20261022102600_v1_store_payments'") === '1') {
+  psql('revoke insert, update, delete, truncate on table public.compras_usuario from service_role;\n'
+    + 'revoke insert, update, delete, truncate on table public.suscripciones from service_role;');
+}
 psql(fs.readFileSync(path.join(here, 'sql/97_v1_economy_local.sql'), 'utf8'));
 // Libro de A y compra: ledger-first, asi que SOLO despues de las migraciones del libro (el libro asigna seq y la cadena).
 psql(fs.readFileSync(path.join(here, 'sql/92_phase_b_wallet_entitlement.sql'), 'utf8'));
