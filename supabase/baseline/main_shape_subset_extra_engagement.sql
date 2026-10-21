@@ -2,6 +2,8 @@
 -- Loaded by the PG17 gate after main_shape_subset_extra_plans.sql, and by the local stack (up.mjs, converge.mjs). IDEMPOTENT and safe on a live local DB. NOT a migration: MAIN already has these objects.
 -- The MAIN client grants/policies are reproduced ON PURPOSE (registros_reto_diario writable by clients, ranking_liga and preguntas_reto_diario readable by every authenticated user, recalcular_* executable by
 -- anon/authenticated): migration 20261022101200 removes them and the gate proves the removal.
+-- Client ACLs and policies of every table/function below are MAIN's VERBATIM (READ-ONLY catalog capture of MAIN, 2026-10-14: baseline_main.sql, sha256 07acead5...), with MAIN's
+-- grantee order, so the gate's ROLLBACK round trip compares against MAIN's real ACL/policy text (V1-DEPLOY-REHEARSAL finding 2026-10-21: the hand-written grants hid three wrong ROLLBACKs).
 create table if not exists public.retos_diarios (
   id uuid primary key default gen_random_uuid(),
   fecha date not null,
@@ -102,13 +104,16 @@ begin
       create policy registros_reto_todo_propio on public.registros_reto_diario for all to authenticated using (usuario_id = (select auth.uid()) or es_admin()) with check (usuario_id = (select auth.uid()) or es_admin());
     end if;
     if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'ranking_liga') then
-      create policy ranking_liga_select_auth_ligas_activas on public.ranking_liga for select to authenticated using (exists (select 1 from public.ligas l where l.id = ranking_liga.liga_id and l.activa) or es_admin());
+      create policy ranking_liga_select_auth_ligas_activas on public.ranking_liga for select to authenticated using (exists (select 1 from public.ligas l where l.id = ranking_liga.liga_id and l.activa = true) or es_admin());
     end if;
     if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'rachas_usuario') then
       create policy rachas_select_propio on public.rachas_usuario for select to authenticated using (usuario_id = (select auth.uid()) or es_admin());
     end if;
     if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'retos_diarios') then
-      create policy retos_diarios_select_publico on public.retos_diarios for select to anon, authenticated using (activo or es_admin());
+      create policy retos_diarios_select_publico on public.retos_diarios for select to anon, authenticated using (activo = true or es_admin());
+    end if;
+    if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'ligas') then
+      create policy ligas_select_publico on public.ligas for select to anon, authenticated using (activa = true or es_admin());
     end if;
   end if;
   if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'preguntas_reto_diario') then
@@ -116,11 +121,13 @@ begin
   end if;
 end
 $e$;
-revoke all on public.retos_diarios, public.preguntas_reto_diario, public.registros_reto_diario, public.rachas_usuario, public.ligas, public.ranking_liga from anon, authenticated;  -- the image default privileges are not MAIN's: set MAIN's exactly
-grant select on public.retos_diarios, public.ligas, public.rachas_usuario, public.registros_reto_diario, public.ranking_liga to anon;
-grant select on public.retos_diarios, public.preguntas_reto_diario, public.ligas, public.rachas_usuario, public.ranking_liga to authenticated;
-grant select, insert, update, delete on public.registros_reto_diario to authenticated;
-grant all on public.retos_diarios, public.preguntas_reto_diario, public.registros_reto_diario, public.rachas_usuario, public.ligas, public.ranking_liga to service_role;
+-- the image default privileges are not MAIN's: set MAIN's exactly (capture 2026-10-14, verbatim, MAIN's grantee order)
+revoke all on table public.retos_diarios, public.preguntas_reto_diario, public.registros_reto_diario, public.rachas_usuario, public.ligas, public.ranking_liga from public, anon, authenticated, service_role;
+grant delete, insert, maintain, references, select, trigger, truncate, update on table public.retos_diarios, public.preguntas_reto_diario, public.registros_reto_diario, public.rachas_usuario, public.ligas, public.ranking_liga to service_role;
+grant maintain, select on table public.retos_diarios, public.rachas_usuario, public.ligas, public.ranking_liga to anon, authenticated;
+grant select on table public.preguntas_reto_diario to authenticated;
+grant delete, insert, maintain, select, update on table public.registros_reto_diario to authenticated;
+grant maintain, select on table public.registros_reto_diario to anon;
 
 -- The MAIN recompute functions exist with bodies that are not carried here: STUBS with the MAIN attributes (not security definer, search_path public, executable by everyone) so the
 -- privilege matrix can be proven. Created only when absent (a live DB keeps whatever it has).
@@ -132,15 +139,18 @@ begin
     create function public.recalcular_estadisticas_usuario_etiquetas(p_usuario_id uuid) returns void language plpgsql set search_path = public as 'begin null; end';
     create function public.recalcular_estadisticas_usuario_globales(p_usuario_id uuid) returns void language plpgsql set search_path = public as 'begin null; end';
     create function public.recalcular_estadisticas_usuario_preguntas(p_usuario_id uuid) returns void language plpgsql set search_path = public as 'begin null; end';
+    -- MAIN's ACL verbatim (capture 2026-10-14): {postgres=X, =X, anon=X, authenticated=X, service_role=X}
+    revoke all on function public.recalcular_estadisticas_globales_preguntas(), public.recalcular_estadisticas_globales_etiquetas(),
+      public.recalcular_estadisticas_usuario_etiquetas(uuid), public.recalcular_estadisticas_usuario_globales(uuid), public.recalcular_estadisticas_usuario_preguntas(uuid) from public, anon, authenticated, service_role;
     grant execute on function public.recalcular_estadisticas_globales_preguntas(), public.recalcular_estadisticas_globales_etiquetas(),
-      public.recalcular_estadisticas_usuario_etiquetas(uuid), public.recalcular_estadisticas_usuario_globales(uuid), public.recalcular_estadisticas_usuario_preguntas(uuid) to anon, authenticated, service_role;
+      public.recalcular_estadisticas_usuario_etiquetas(uuid), public.recalcular_estadisticas_usuario_globales(uuid), public.recalcular_estadisticas_usuario_preguntas(uuid) to public, anon, authenticated, service_role;
   end if;
 end
 $f$;
 
 -- ============================================================================================================================================================
 -- W3 STATS TABLES that MAIN has and the bootstrap subset lacks (shapes from the structure-only reads of 2026-10-16 and the repository's live-shape captures; MAIN client grants and policies
--- reproduced ON PURPOSE: anon SELECT without policy, authenticated own-row SELECT, lotes_actualizacion_ranking with full authenticated DML behind an admin policy).
+-- reproduced ON PURPOSE and VERBATIM from the capture of 2026-10-14: anon SELECT without policy, authenticated own-row SELECT, lotes_actualizacion_ranking with authenticated DML behind an admin policy).
 -- Migrations 20261022101200 (revokes, guarded) and 20261022101600 remove what the app must not expose; the gate proves it. IDEMPOTENT.
 -- ============================================================================================================================================================
 create table if not exists public.ligas_nivel (
@@ -234,31 +244,33 @@ do $s$
 begin
   if to_regprocedure('public.es_admin()') is not null then
     if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'estadisticas_usuario') then
-      create policy estadisticas_usuario_select_propio on public.estadisticas_usuario for select to authenticated using (usuario_id = (select auth.uid()) or es_admin());
+      create policy estadisticas_select_propio on public.estadisticas_usuario for select to authenticated using (usuario_id = (select auth.uid()) or es_admin());
     end if;
     if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'estadisticas_usuario_etiqueta') then
       create policy estadisticas_usuario_etiqueta_select_propio on public.estadisticas_usuario_etiqueta for select to authenticated using (usuario_id = (select auth.uid()) or es_admin());
     end if;
     if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'estado_competitivo_usuario') then
-      create policy estado_competitivo_select_propio on public.estado_competitivo_usuario for select to authenticated using (usuario_id = (select auth.uid()) or es_admin());
+      create policy canonical_v2_competitivo_select on public.estado_competitivo_usuario for select to authenticated using ((select auth.uid()) = usuario_id);
     end if;
     if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'ligas_nivel') then
-      create policy ligas_nivel_select_publico on public.ligas_nivel for select to authenticated using (activa or es_admin());
+      create policy canonical_v2_leagues_public_read on public.ligas_nivel for select to anon, authenticated using (activa);
     end if;
     if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'estadisticas_globales_pregunta') then
-      create policy estadisticas_globales_pregunta_select on public.estadisticas_globales_pregunta for select to authenticated using (true);
+      create policy estadisticas_globales_pregunta_select_auth on public.estadisticas_globales_pregunta for select to authenticated using (true);
     end if;
     if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'lotes_actualizacion_ranking') then
-      create policy lotes_actualizacion_ranking_admin on public.lotes_actualizacion_ranking for all to authenticated using (es_admin()) with check (es_admin());
+      create policy lotes_actualizacion_ranking_staff_all on public.lotes_actualizacion_ranking for all to authenticated using (es_admin()) with check (es_admin());
     end if;
   end if;
 end
 $s$;
-revoke all on public.ligas_nivel, public.estadisticas_usuario, public.estadisticas_usuario_etiqueta, public.estadisticas_globales_pregunta, public.estado_competitivo_usuario, public.lotes_actualizacion_ranking from anon, authenticated;
-grant select on public.ligas_nivel, public.estadisticas_usuario, public.estadisticas_usuario_etiqueta, public.estadisticas_globales_pregunta, public.estado_competitivo_usuario, public.lotes_actualizacion_ranking to anon;
-grant select on public.ligas_nivel, public.estadisticas_usuario, public.estadisticas_usuario_etiqueta, public.estadisticas_globales_pregunta, public.estado_competitivo_usuario to authenticated;
-grant select, insert, update, delete on public.lotes_actualizacion_ranking to authenticated;
-grant all on public.ligas_nivel, public.estadisticas_usuario, public.estadisticas_usuario_etiqueta, public.estadisticas_globales_pregunta, public.estado_competitivo_usuario, public.lotes_actualizacion_ranking to service_role;
+revoke all on table public.ligas_nivel, public.estadisticas_usuario, public.estadisticas_usuario_etiqueta, public.estadisticas_globales_pregunta, public.estado_competitivo_usuario, public.lotes_actualizacion_ranking from public, anon, authenticated, service_role;
+grant delete, insert, maintain, references, select, trigger, truncate, update on table public.ligas_nivel, public.estadisticas_usuario, public.estadisticas_usuario_etiqueta, public.estadisticas_globales_pregunta, public.estado_competitivo_usuario, public.lotes_actualizacion_ranking to service_role;
+grant select on table public.ligas_nivel to anon, authenticated;
+grant maintain, select on table public.estadisticas_usuario, public.estadisticas_usuario_etiqueta, public.estadisticas_globales_pregunta to anon, authenticated;
+grant select on table public.estado_competitivo_usuario to authenticated;
+grant delete, insert, maintain, select, update on table public.lotes_actualizacion_ranking to authenticated;
+grant maintain, select on table public.lotes_actualizacion_ranking to anon;
 
 -- W5b FORO: MAIN shapes of the forum tables (E1-V1-MAIN-FACTS-FORO-REFERRAL.md, structure read), WITH MAIN's client policies and grants, so the gate proves that 20261022101900 closes them.
 create table if not exists public.categorias_oposired (id uuid primary key default gen_random_uuid(), nombre text not null, slug text not null unique, descripcion text, activa boolean not null default true, posicion integer not null default 1, creado_en timestamptz not null default now());
@@ -284,12 +296,12 @@ begin
   if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'categorias_oposired') then
     create policy categorias_oposired_select_publico on public.categorias_oposired for select to anon, authenticated using (activa = true or public.es_admin());
     create policy publicaciones_oposired_select_publico on public.publicaciones_oposired for select to anon, authenticated using (estado = 'publicada' or public.es_moderador_o_admin());
-    create policy publicaciones_oposired_insert_auth on public.publicaciones_oposired for insert to authenticated with check (usuario_id = auth.uid());
-    create policy publicaciones_oposired_update_propias on public.publicaciones_oposired for update to authenticated using (usuario_id = auth.uid() or public.es_moderador_o_admin()) with check (usuario_id = auth.uid() or public.es_moderador_o_admin());
+    create policy publicaciones_oposired_insert_auth on public.publicaciones_oposired for insert to authenticated with check (usuario_id = (select auth.uid()));
+    create policy publicaciones_oposired_update_propias on public.publicaciones_oposired for update to authenticated using (usuario_id = (select auth.uid()) or public.es_moderador_o_admin()) with check (usuario_id = (select auth.uid()) or public.es_moderador_o_admin());
     create policy comentarios_oposired_select_publico on public.comentarios_oposired for select to anon, authenticated using (estado = 'publicado' or public.es_moderador_o_admin());
-    create policy comentarios_oposired_insert_auth on public.comentarios_oposired for insert to authenticated with check (usuario_id = auth.uid());
-    create policy comentarios_oposired_update_propios on public.comentarios_oposired for update to authenticated using (usuario_id = auth.uid() or public.es_moderador_o_admin()) with check (usuario_id = auth.uid() or public.es_moderador_o_admin());
-    create policy reacciones_oposired_todo_propias on public.reacciones_oposired for all to authenticated using (usuario_id = auth.uid() or public.es_moderador_o_admin()) with check (usuario_id = auth.uid() or public.es_moderador_o_admin());
+    create policy comentarios_oposired_insert_auth on public.comentarios_oposired for insert to authenticated with check (usuario_id = (select auth.uid()));
+    create policy comentarios_oposired_update_propios on public.comentarios_oposired for update to authenticated using (usuario_id = (select auth.uid()) or public.es_moderador_o_admin()) with check (usuario_id = (select auth.uid()) or public.es_moderador_o_admin());
+    create policy reacciones_oposired_todo_propias on public.reacciones_oposired for all to authenticated using (usuario_id = (select auth.uid()) or public.es_moderador_o_admin()) with check (usuario_id = (select auth.uid()) or public.es_moderador_o_admin());
   end if;
   if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'acciones_moderacion') then
     alter table public.acciones_moderacion enable row level security;
@@ -297,8 +309,12 @@ begin
   end if;
 end
 $foro$;
--- (anon / authenticated keep the default privileges of a new table in this image, as MAIN's tables do in the bootstrap)
-grant all on public.categorias_oposired, public.publicaciones_oposired, public.comentarios_oposired, public.reacciones_oposired to service_role;
+-- MAIN's client ACL verbatim (capture 2026-10-14, MAIN's grantee order): anon SELECT/MAINTAIN, authenticated without TRUNCATE/REFERENCES/TRIGGER (NOT the image default privileges)
+revoke all on table public.categorias_oposired, public.publicaciones_oposired, public.comentarios_oposired, public.reacciones_oposired from public, anon, authenticated, service_role;
+grant delete, insert, maintain, references, select, trigger, truncate, update on table public.categorias_oposired, public.publicaciones_oposired, public.comentarios_oposired, public.reacciones_oposired to service_role;
+grant maintain, select on table public.categorias_oposired to anon, authenticated;
+grant delete, insert, maintain, select, update on table public.publicaciones_oposired, public.comentarios_oposired, public.reacciones_oposired to authenticated;
+grant maintain, select on table public.publicaciones_oposired, public.comentarios_oposired, public.reacciones_oposired to anon;
 
 -- V1 P3 (E2, 20261022102700): the Bot-owned user tables that MAIN has and the bootstrap subset lacks. Statements VERBATIM from the read-only MAIN catalog capture of 2026-10-14
 -- (baseline_main.sql), MAIN client grants and policies INCLUDED (authenticated INSERT/UPDATE/DELETE, policies own OR es_admin()): 20261022102700 revokes the writes and the gate proves it.

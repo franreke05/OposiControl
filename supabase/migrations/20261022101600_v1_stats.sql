@@ -267,8 +267,7 @@
 -- alter table public.estado_competitivo_usuario drop column if exists ventana_tiempo_mediano_ms;
 -- drop table if exists public.primeras_respuestas_usuario;
 -- delete from public.configuracion_v1 where clave in ('evolucion_cada_preguntas', 'debilidad_min_respuestas', 'dificultad_min_respuestas', 'dificultad_muestra', 'dominio_medio_pct', 'dominio_alto_pct', 'ventana_nota_defecto', 'cohorte_minima_comparativa', 'dificultad_job_minutos', 'recalculo_admin_cooldown_min');
--- create policy estadisticas_globales_pregunta_select on public.estadisticas_globales_pregunta for select to authenticated using (true);
--- grant select on public.estadisticas_globales_pregunta to anon;
+-- -- no policy is created: MAIN has no estadisticas_globales_pregunta_select (its estadisticas_globales_pregunta_select_auth is never dropped), and anon SELECT was revoked by 20261022101200, whose ROLLBACK restores it
 -- grant select on public.estadisticas_globales_pregunta to authenticated;
 -- commit;
 -- ROLLBACK-END
