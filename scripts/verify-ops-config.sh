@@ -125,11 +125,37 @@ env_examples_ok() { local p
   # Los secretos de administracion no se ofrecen a bot ni al comun, ni los de auth de consumidor a control ni al comun.
   ! (env_names common; env_names bot) | grep -qx 'OPOSICONTROL_BACKEND_TOKEN' \
     && ! (env_names common; env_names control) | grep -Eqx 'AUTH_RATE_LIMIT_HMAC_SECRET|VALKEY_URL|APPLE_CLIENT_SECRET|APPLE_CLIENT_ID|SUPABASE_PUBLISHABLE_KEY|SUPABASE_ANON_KEY'; }
-# F-07 (gate Slice 3): el pool bot solo expulsa una replica por salud ACTIVA (/health/live) o por fallos de conexion. Un
-# `unhealthy_status` / `unhealthy_latency` expulsaba las DOS a la vez ante un 5xx de una dependencia compartida.
-caddy_no_status_ejection() { local f=ops/caddy/Caddyfile.production
-  ! grep -Ev '^[[:space:]]*#' "$f" | grep -Eq '^[[:space:]]*(unhealthy_status|unhealthy_latency)[[:space:]]' \
-    && grep -Eq '^[[:space:]]*fail_duration[[:space:]]+[0-9]+s' "$f" && grep -Eq '^[[:space:]]*max_fails[[:space:]]+[0-9]+' "$f"; }
+# F-07 (gate Slice 3): el pool bot solo expulsa una replica por salud ACTIVA (/health/live). Un `unhealthy_status` /
+# `unhealthy_latency` expulsaba las DOS a la vez ante un 5xx de una dependencia compartida.
+# CERT-LOAD-1000 (2026-10-21): tampoco salud PASIVA en el pool bot (`max_fails` / `fail_duration`): Caddy cuenta como fallo
+# pasivo tambien el `response_header_timeout`, y una punta con timeouts aparto las dos replicas ("no upstreams available").
+# Bloque `handle @bot { ... }` (sin comentarios) de un Caddyfile.
+caddy_bot_block() { awk '/^[[:space:]]*handle @bot \{/{f=1} f{print} f&&/^\t\t\}[[:space:]]*$/{exit}' "${1:-ops/caddy/Caddyfile.production}" | grep -Ev '^[[:space:]]*#'; }
+caddy_no_status_ejection() { local f
+  for f in ops/caddy/Caddyfile.production ops/caddy/Caddyfile.hostcaddy; do
+    ! grep -Ev '^[[:space:]]*#' "$f" | grep -Eq '^[[:space:]]*(unhealthy_status|unhealthy_latency)[[:space:]]' || return 1
+    caddy_bot_block "$f" | grep -Eq '^[[:space:]]*reverse_proxy ' || return 1
+    ! caddy_bot_block "$f" | grep -Eq '^[[:space:]]*(max_fails|fail_duration|unhealthy_request_count)[[:space:]]' || return 1
+  done; }
+# CERT-LOAD-1000: el 503 SERVER_BUSY + Retry-After de Ktor llega tal cual al cliente: sin reintentos por respuesta
+# (`lb_retry_match`), sin reescribirla (`handle_response`, `replace_status`), sin quitar Retry-After, y con un
+# lb_try_duration corto (1..5 s: solo reintentos de CONEXION, nunca una tormenta de reintentos).
+caddy_bot_passes_busy() { local f b
+  for f in ops/caddy/Caddyfile.production ops/caddy/Caddyfile.hostcaddy; do
+    b="$(caddy_bot_block "$f")"
+    ! echo "$b" | grep -Eq '^[[:space:]]*(lb_retry_match|handle_response|replace_status)([[:space:]]|$)' || return 1
+    ! echo "$b" | grep -Eiq 'header_down[[:space:]]+-?Retry-After' || return 1
+    echo "$b" | grep -Eq '^[[:space:]]*lb_try_duration[[:space:]]+[1-5]s[[:space:]]*$' || return 1
+  done; }
+# CERT-LOAD-1000: GC elegido a mano (con 1 cpu la JVM elegia Serial) y log de GC para los tres Ktor.
+jvm_gc_explicit() { local s o
+  for s in ktor-bot-1 ktor-bot-2 ktor-control; do o="$(svc "$s" | grep -E '^[[:space:]]+JAVA_TOOL_OPTIONS:')"
+    echo "$o" | grep -Eq -- '-XX:\+Use(G1|Parallel|Serial|Z|Shenandoah)GC' && echo "$o" | grep -Eq -- '-Xlog:gc' || return 1; done; }
+# CERT-LOAD-1000: los mandos de admision del perfil bot estan documentados (solo nombres) en el ejemplo de bot.
+admission_knobs_documented() { local v
+  for v in BOT_ADMISSION_ENABLED BOT_ADMISSION_MAX_IN_FLIGHT BOT_ADMISSION_MAX_QUEUED BOT_ADMISSION_QUEUE_TIMEOUT_MS \
+      BOT_ADMISSION_RETRY_AFTER_SECONDS BOT_REQUEST_DEADLINE_MS PROFILE_IDENTITY_CACHE_TTL_MS; do
+    env_names bot | grep -qx "$v" || return 1; done; }
 # Nombres de metrica que existen de verdad en el codigo (Micrometer/Ktor). Cualquier otro nombre en alertas o paneles es inventado.
 metrics_known() {
   local m bad=0
@@ -173,8 +199,12 @@ check "Caddyfile.production: control por rutas explicitas (no /admin* en bloque)
 # balanceador agoto la cuota de trafico de salida y, al caer la dependencia COMPARTIDA, expulsaba todas las replicas a la vez.
 check "Caddyfile.production: balanceo least_conn con salud activa en /health/live (nunca /health/ready), IP real de Cloudflare y reescritura de X-Forwarded-For" \
   "grep -Eq 'lb_policy least_conn' ops/caddy/Caddyfile.production && grep -Eq 'health_uri /health/live' ops/caddy/Caddyfile.production && ! grep -Ev '^[[:space:]]*#' ops/caddy/Caddyfile.production | grep -Eq 'health_uri /health/ready' && grep -Eq 'trusted_proxies static .*173\\.245\\.48\\.0/20' ops/caddy/Caddyfile.production && grep -Eq 'client_ip_headers CF-Connecting-IP' ops/caddy/Caddyfile.production && grep -Eq 'header_up X-Forwarded-For \\{client_ip\\}' ops/caddy/Caddyfile.production"
-check "Caddyfile.production: el pool bot no expulsa replicas por codigo de estado ni latencia (solo salud activa y fallos de conexion) (F-07)" \
+check "Caddyfile.production y .hostcaddy: el pool bot no expulsa replicas por codigo de estado ni latencia ni timeouts (solo salud activa) (F-07, CERT-LOAD-1000)" \
   "caddy_no_status_ejection"
+check "Caddyfile.production y .hostcaddy: el pool bot deja pasar el 503 + Retry-After de Ktor (sin reintentos por respuesta, lb_try_duration 1..5 s) (CERT-LOAD-1000)" \
+  "caddy_bot_passes_busy"
+check "compose.production: GC explicito y log de GC en los tres Ktor (CERT-LOAD-1000)" "jvm_gc_explicit"
+check "backend.bot.env.example: mandos de admision, plazo y cache de perfil documentados (CERT-LOAD-1000)" "admission_knobs_documented"
 check "Caddyfile.production: el log de acceso no registra Authorization ni cookies" \
   "grep -Eq 'request>headers>Authorization delete' ops/caddy/Caddyfile.production && grep -Eq 'request>headers>Cookie delete' ops/caddy/Caddyfile.production"
 check "prometheus.production.yml: scrape de bot-1, bot-2 y control con Bearer y etiquetas service/profile/replica" \

@@ -110,21 +110,25 @@
 				lb_try_interval 250ms
 				header_up X-Forwarded-For {client_ip}
 				header_up X-Request-Id {http.request.uuid}
-				# Salud ACTIVA: es la unica que saca una replica de rotacion por su ESTADO (readiness real, con Supabase).
+				# Salud ACTIVA: es la UNICA que saca una replica de rotacion (proceso vivo y sirviendo; /health/live esta exenta de
+				# la admision de Ktor, asi que contesta aunque la replica este llena). Cada 5 s: una replica caida sale en <= 5 s.
 				health_uri /health/live
-				health_interval 10s
-				health_timeout 6s
+				health_interval 5s
+				health_timeout 4s
 				health_status 2xx
-				# Salud PASIVA solo por fallos de CONEXION/transporte (replica caida o reiniciando): 2 en 10 s la apartan
-				# 10 s y lb_retries reintenta en la otra. A proposito NO hay `unhealthy_status` ni `unhealthy_latency`: un
-				# 5xx o una respuesta lenta casi siempre vienen de una dependencia COMPARTIDA por las dos replicas (Supabase
-				# -> 502/504; Valkey -> el limitador falla cerrado con 503), y expulsarlas por eso apartaba las DOS a la vez
-				# y convertia una degradacion parcial en una caida total (503 de Caddy para todo, tambien lo que si funciona).
-				fail_duration 10s
-				max_fails 2
+				# SIN salud PASIVA (CERT-LOAD-1000 2026-10-21): Caddy cuenta como fallo pasivo CUALQUIER error de ida y vuelta,
+				# tambien el `response_header_timeout`, y no se puede limitar a fallos de conexion. Con `max_fails 2` una punta que
+				# encolaba peticiones hasta los 25 s aparto las DOS replicas a la vez ("no upstreams available" para todos). Ahora
+				# Ktor rechaza al instante lo que no cabe (503 SERVER_BUSY + Retry-After) y corta por plazo antes del borde; ese 503
+				# es una RESPUESTA, no un error: pasa tal cual al cliente y no se reintenta aqui (sin `lb_retry_match` ni
+				# `handle_response`). Tampoco `unhealthy_status` / `unhealthy_latency` (F-07: dependencia compartida -> caida total).
+				# Coste aceptado: una replica que muere sin drenar puede recibir peticiones hasta la siguiente sonda (<= 5 s);
+				# lb_retries reintenta los fallos de CONEXION (siempre reintentables) durante lb_try_duration.
 				transport http {
-					dial_timeout 3s
-					# Ktor corta a Supabase a los 20 s (UPSTREAM_REQUEST_TIMEOUT_MS); 25 s deja margen al 504 propio.
+					# 1 s (red interna): deja sitio a los reintentos de conexion dentro de lb_try_duration 3s.
+					dial_timeout 1s
+					# Ktor corta a Supabase a los 20 s (UPSTREAM_REQUEST_TIMEOUT_MS) y cada peticion bot tiene un plazo de 15 s
+					# (BOT_REQUEST_DEADLINE_MS): 25 s deja margen a su 503/504 propio.
 					response_header_timeout 25s
 					keepalive 60s
 				}

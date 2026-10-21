@@ -60,6 +60,8 @@ internal class AccountDeletionService(
         if (identity.accountStatus == AccountStatus.ACTIVA) reauthenticate(accessToken, claims, request, context)
 
         val row = requestDeletion(identity)
+        // CERT-LOAD-1000: la cuenta deja de ser ACTIVA: fuera de la cache de estado de ESTA replica al momento (la otra: TTL).
+        CanonicalProfileCacheInvalidation.invalidate(identity.userId)
         // MASTER-AUTH-015: una repeticion vuelve a intentar la revocacion si la anterior NO consta como `hecha`
         // (fallo, o el intento se corto antes de registrarse). Toda la revocacion corre en NonCancellable: que el
         // cliente cierre la conexion ya no deja la sesion viva sin anotar.

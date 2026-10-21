@@ -1072,6 +1072,12 @@ enum class CanonicalErrorCode(val status: HttpStatusCode, val defaultMessage: St
     DB_BUSY(HttpStatusCode.ServiceUnavailable, "La base de datos esta ocupada. Vuelve a intentarlo en unos segundos."),
     UPSTREAM_TIMEOUT(HttpStatusCode.GatewayTimeout, "El servicio de datos tardo demasiado en responder."),
 
+    /**
+     * CERT-LOAD-1000: la replica esta llena (admision) o la peticion agoto su plazo ANTES de aplicar ninguna escritura de
+     * negocio (AdmissionControl.kt). Siempre con Retry-After. Nada se aplico: reintentar (con la misma Idempotency-Key) es seguro.
+     */
+    SERVER_BUSY(HttpStatusCode.ServiceUnavailable, "El servicio esta muy ocupado ahora mismo. Vuelve a intentarlo en unos segundos."),
+
     // Intentos: congelados en SLICE 0, implementados en SLICE 3.
     EXAM_NOT_FOUND(HttpStatusCode.NotFound, "El examen no existe."),
     EXAM_LOCKED(HttpStatusCode.Forbidden, "No tienes acceso a este examen."),

@@ -287,7 +287,9 @@ internal fun Application.installBackendStatusPages() {
             // de negocio, y por eso —sólo éste— deja evento en el log.
             // MASTER-OBS-003: TODO 5xx de dominio (502 UPSTREAM_CONTRACT_ERROR, 503...) deja evento en el log con el
             // requestId, el codigo y la causa redactada; antes solo los que llevaban Retry-After.
-            if (cause.status.value >= 500) {
+            // SERVER_BUSY (admision / plazo) no deja linea por peticion: en una punta serian miles; lo cuentan las metricas
+            // admission_* y request_deadline_exceeded_total (AdmissionControl.kt).
+            if (cause.status.value >= 500 && cause.errorCode != CanonicalErrorCode.SERVER_BUSY.name) {
                 val requestId = call.ensureRequestId()
                 logStrategicEvent(
                     // MASTER4-API-002: un INTERNAL de dominio (p. ej. la contencion agotada de `updateUsuario`) NO es un
@@ -580,7 +582,8 @@ fun Application.module() {
     )
     val canonicalIdentityResolver = if (serverProfile.mountsBot) {
         PostgrestCanonicalProfileDirectory.fromEnvironment()?.let {
-            CanonicalIdentityResolver(jwtVerifier::subFrom, it)
+            // CERT-LOAD-1000 P1: estado de cuenta cacheado como mucho PROFILE_IDENTITY_CACHE_TTL_MS (solo cuentas activas; ver CanonicalIdentity.kt).
+            CanonicalIdentityResolver(jwtVerifier::subFrom, CachingCanonicalProfileDirectory(it, CachingCanonicalProfileDirectory.ttlFromEnvironment()))
         }
     } else {
         null
@@ -652,6 +655,7 @@ fun Application.module() {
         },
         // E2: `Idempotency-Key` opcional de respuesta de soporte y advertencia de moderacion (mismo almacen que noticias).
         adminIdempotencyStore = if (serverProfile.mountsControl) PostgrestIdempotencyStore.fromEnvironment() else null,
+        admissionSettings = if (serverProfile.mountsBot) AdmissionSettings.fromEnvironment() else AdmissionSettings(enabled = false),
     )
     configureServerProfile(serverProfile, json, routingDeps)
 }
@@ -672,6 +676,9 @@ internal fun Application.configureServerProfile(profile: ServerProfile, json: Js
     // MASTER2-SEC-002 / MASTER3-OBS-003: tope global de cuerpo (no multipart), explicito aqui (ya no es un efecto lateral de
     // `installBackendStatusPages()`); el 413 sale con el sobre canonico de StatusPages.
     installRequestBodyLimit()
+    // CERT-LOAD-1000: admision acotada + plazo por peticion donde se montan las rutas del Bot (AdmissionControl.kt). Despues de
+    // la correlacion y de StatusPages: el 503 SERVER_BUSY lleva X-Request-Id y el sobre canonico. /health* y /metrics exentas.
+    if (profile.mountsBot) installBotAdmissionControl(deps.admissionSettings)
     // `gateway-auth` solo lo usan las rutas admin: `bot` no lo monta ni lo necesita.
     if (profile.mountsControl) {
         install(Authentication) {
@@ -741,6 +748,8 @@ internal class CombinedRoutingDeps(
     internal val accessRequestGateway: AdminAccessRequestGateway? = null,
     /** E2: almacen de `Idempotency-Key` de soporte y moderacion. `null` = una peticion CON clave falla cerrada (500). */
     internal val adminIdempotencyStore: IdempotencyStore? = null,
+    /** CERT-LOAD-1000: admision y plazo del perfil bot (AdmissionControl.kt). Pruebas: defectos; produccion: entorno. */
+    internal val admissionSettings: AdmissionSettings = AdmissionSettings(),
 )
 
 /** Perfil historico: todo. Conjunto de rutas identico al de siempre. */

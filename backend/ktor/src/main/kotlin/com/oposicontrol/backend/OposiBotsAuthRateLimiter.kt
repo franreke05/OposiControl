@@ -8,8 +8,9 @@ import io.lettuce.core.ScriptOutputType
 import io.lettuce.core.SocketOptions
 import io.lettuce.core.TimeoutOptions
 import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import io.lettuce.core.RedisCommandTimeoutException
+import kotlinx.coroutines.future.await
+import kotlinx.coroutines.withTimeoutOrNull
 import java.nio.charset.StandardCharsets
 import java.time.Duration
 import java.util.concurrent.ConcurrentHashMap
@@ -238,7 +239,7 @@ internal class InMemoryOposiBotsAuthRateLimiter(
 }
 
 /**
- * MASTER-ARCH-007: el cliente sincrono de Lettuce corre en `Dispatchers.IO`; sin tiempos limite un Valkey degradado
+ * MASTER-ARCH-007 (historico: el cliente era sincrono en `Dispatchers.IO`; hoy es asincrono, ver [consume]): sin tiempos limite un Valkey degradado
  * bloqueaba hilos del pool durante los 60 s por defecto de Lettuce y, como TODA ruta canonica pasa por el limitador,
  * dejaba sin hilos al resto del servicio. Ahora la conexion y cada comando tienen un tope corto y cualquier fallo se
  * traduce a 503 UPSTREAM_UNAVAILABLE con Retry-After (FALLA CERRADO: sin limitador no se atiende la peticion).
@@ -275,24 +276,30 @@ internal class ValkeyOposiBotsAuthRateLimiter(
         limit: Int,
     ) = consume("subject", operation, subject, limit)
 
+    /**
+     * CERT-LOAD-1000 P1: API ASINCRONA de Lettuce. Antes era `sync().eval` dentro de `withContext(Dispatchers.IO)`: con el pool
+     * IO lleno (las llamadas a Supabase son bloqueantes) la comprobacion esperaba un hilo, agotaba su tope y fallaba CERRADA con
+     * 503 aunque Valkey estuviera sano. Ahora no ocupa ningun hilo mientras espera (la respuesta la entrega el event loop de
+     * Lettuce) y su tope es PROPIO ([commandTimeout], ademas del de Lettuce). Falla cerrado igual que antes: cualquier fallo o
+     * tope agotado es 503 UPSTREAM_UNAVAILABLE con Retry-After (el modo `memory` solo existe en desarrollo).
+     */
     private suspend fun consume(
         scope: String,
         operation: OposiBotsAuthOperation,
         rawKey: String,
         limit: Int,
-    ): OposiBotsRateLimitDecision = withContext(Dispatchers.IO) {
+    ): OposiBotsRateLimitDecision {
         val key = "oposibots:auth:$scope:${operation.name.lowercase()}:${hasher.hash(rawKey)}"
-        try {
-            val result = connection.sync().eval<List<Any>>(
-                RATE_LIMIT_SCRIPT,
-                ScriptOutputType.MULTI,
-                arrayOf(key),
-                limit.toString(),
-                (operation.windowSeconds * 1_000).toString(),
-            )
-            val allowed = (result[0] as Number).toLong() == 1L
-            val retryMillis = (result[1] as Number).toLong().coerceAtLeast(1)
-            OposiBotsRateLimitDecision(allowed, ceil(retryMillis / 1_000.0).toLong())
+        val result = try {
+            withTimeoutOrNull(commandTimeout.toMillis()) {
+                connection.async().eval<List<Any>>(
+                    RATE_LIMIT_SCRIPT,
+                    ScriptOutputType.MULTI,
+                    arrayOf(key),
+                    limit.toString(),
+                    (operation.windowSeconds * 1_000).toString(),
+                ).await()
+            } ?: throw RedisCommandTimeoutException("rate limiter command exceeded ${commandTimeout.toMillis()} ms")
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (failure: RedisException) {
@@ -300,6 +307,9 @@ internal class ValkeyOposiBotsAuthRateLimiter(
             Logger.warn("rate limiter unavailable operation={} type={}", operation.name, failure::class.simpleName)
             throw CanonicalErrorCode.UPSTREAM_UNAVAILABLE.exception(retryAfterSeconds = UNAVAILABLE_RETRY_AFTER_SECONDS, cause = failure)
         }
+        val allowed = (result[0] as Number).toLong() == 1L
+        val retryMillis = (result[1] as Number).toLong().coerceAtLeast(1)
+        return OposiBotsRateLimitDecision(allowed, ceil(retryMillis / 1_000.0).toLong())
     }
 
     override fun close() {

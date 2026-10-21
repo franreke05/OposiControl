@@ -99,6 +99,7 @@ components:
         - UPSTREAM_UNAVAILABLE
         - DB_BUSY
         - UPSTREAM_TIMEOUT
+        - SERVER_BUSY
     AttemptErrorCode:
       type: string
       description: 'Attempt codes frozen in SLICE 0, implemented in SLICE 3.'
@@ -289,7 +290,7 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorEnvelope'
     UpstreamUnavailable:
-      description: 'UPSTREAM_UNAVAILABLE or DB_BUSY (transient SQLSTATE), with Retry-After from BackendDomainException.retryAfterSeconds.'
+      description: 'UPSTREAM_UNAVAILABLE or DB_BUSY (transient SQLSTATE), with Retry-After from BackendDomainException.retryAfterSeconds. FA40 (CERT-LOAD-1000, 2026-10-21): any bot-profile operation may also answer SERVER_BUSY, always with Retry-After, when the replica is full (admission control) or the request reached its server deadline before applying any business write; nothing was applied, so the client retries after Retry-After, with the same Idempotency-Key for commands.'
       headers:
         X-Request-Id:
           $ref: '#/components/headers/XRequestId'
