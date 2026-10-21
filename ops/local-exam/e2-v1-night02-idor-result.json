@@ -1,0 +1,190 @@
+{
+  "when": "2026-10-19T19:41:02.456Z",
+  "results": [
+    {
+      "id": "Z0.POSITIVE_CONTROL_owner_reads_own_resource_2xx_for_every_route_family",
+      "status": "PASS",
+      "detail": "me/plan/opositeca/examenes/public/intentos all 2xx"
+    },
+    {
+      "id": "M1.every_me_shaped_route_answers_per_user_data_(no_shared_body_no_5xx)",
+      "status": "FAIL",
+      "detail": "/api/v1/app/opositester/me 5xx for an authenticated own-data GET (502)"
+    },
+    {
+      "id": "M2.every_protected_me_shaped_route_refuses_no_token_garbled_token_and_a_tampered_signature_(4xx_never_5xx)",
+      "status": "PASS",
+      "detail": "all refused cleanly"
+    },
+    {
+      "id": "P1.a_user_cannot_edit_another_users_profile_by_injecting_usuarioId_in_the_body_(mass_assignment)",
+      "status": "PASS",
+      "detail": "write=400 before==after:true"
+    },
+    {
+      "id": "P2.mass_assignment_of_privileged_fields_on_own_profile_is_ignored_(no_admin_no_estado_cuenta_override)",
+      "status": "PASS",
+      "detail": "write=400 {\"id\":\"0f469875-3c3b-4c13-9a46-39e6defa028d\",\"authProviders\":[],\"registeredAt\":\"2026-10-19T19:39:39Z\",\"profile\":{\"username\":\"e2x_ad62c9_wra\",\"nombreMo"
+    },
+    {
+      "id": "I1.every_intentos_subroute_refuses_another_users_attempt_id_(4xx_never_200_never_5xx)",
+      "status": "PASS",
+      "detail": "7 subroutes refused"
+    },
+    {
+      "id": "I2.the_real_owner_still_works",
+      "status": "PASS",
+      "detail": 200
+    },
+    {
+      "id": "I3.entitlement_route_is_per_caller_(no_examId_param_IDOR_surface)",
+      "status": "PASS",
+      "detail": 200
+    },
+    {
+      "id": "I4.a_random_order_id_is_404_not_500_and_leaks_no_other_order",
+      "status": "PASS",
+      "detail": "404 {\"error\":\"order_not_found\",\"message\":\"El pedido no existe.\",\"code\":\"ORDER_NOT_FO"
+    },
+    {
+      "id": "O1.saved_item_is_per_user_(a_second_users_list_does_not_show_it)",
+      "status": "PASS",
+      "detail": "save=200 a_has=true b_has=false"
+    },
+    {
+      "id": "O2.a_user_cannot_delete_another_users_saved_item_by_guessing_the_target_id",
+      "status": "PASS",
+      "detail": "b_delete=204 a_still_has=true"
+    },
+    {
+      "id": "V1.verb_tampering_and_content_type_confusion_are_refused_cleanly",
+      "status": "PASS",
+      "detail": "ok"
+    },
+    {
+      "id": "U1.oversized_body_deep_nesting_and_unicode_control_chars_are_refused_not_500",
+      "status": "PASS",
+      "detail": "big=413 deep=-1 uni=400"
+    },
+    {
+      "id": "G0.POS_B_creates_and_reads_own_payment_order",
+      "status": "PASS",
+      "detail": "create=201 id=e5f36fda"
+    },
+    {
+      "id": "G1.A_cannot_read_Bs_payment_order_by_id_4xx_no_leak",
+      "status": "PASS",
+      "detail": "A_get=404 {\"error\":\"order_not_found\",\"message\":\"El pedido no existe.\",\"code\":\"ORDER_NOT_FO"
+    },
+    {
+      "id": "G2.A_cannot_verify_Bs_order_4xx_and_Bs_order_state_unchanged",
+      "status": "PASS",
+      "detail": "A_verify=400 before=pendiente after=pendiente"
+    },
+    {
+      "id": "G3.POS_B_still_owns_and_reads_its_order_after_the_cross_attempts",
+      "status": "PASS",
+      "detail": "B_reread=200"
+    },
+    {
+      "id": "H0.POS_B_redeems_its_own_exam_with_its_own_tickets",
+      "status": "PASS",
+      "detail": "B_redeem=201 {\"canje\":{\"transactionId\":\"c3d721ee-f98e-4d75-b825-d7394beb2353\",\"examId\":\"e2a00"
+    },
+    {
+      "id": "H1.A_redeem_with_Bs_idem_key_and_forged_usuarioId_orderId_does_not_touch_Bs_wallet_or_A_draw_from_B",
+      "status": "PASS",
+      "detail": "A_forge=400 Bbal 40->40 Abal 0->0 crossRows=0"
+    },
+    {
+      "id": "H2.Bs_own_key_still_replays_for_B_only_wallet_conserved",
+      "status": "PASS",
+      "detail": "B_replay=201 bal=40"
+    },
+    {
+      "id": "I0.POS_B_creates_a_real_post_and_comment",
+      "status": "PASS",
+      "detail": "post=201 comment=201"
+    },
+    {
+      "id": "I1.A_cannot_delete_Bs_post_4xx_post_intact",
+      "status": "PASS",
+      "detail": "A_del_post=404 estado publicada->publicada"
+    },
+    {
+      "id": "I2.A_cannot_delete_Bs_comment_4xx_comment_intact",
+      "status": "PASS",
+      "detail": "A_del_comment=404 estado publicado->publicado"
+    },
+    {
+      "id": "I3.vote_on_Bs_post_is_allowed_but_attributed_to_A_never_B_no_5xx_post_intact",
+      "status": "PASS",
+      "detail": "vote=200->819a818a report=202->819a818a"
+    },
+    {
+      "id": "I4.A_cannot_read_Bs_image_status_nor_PUT_content_into_Bs_image_slot_4xx_no_verified_by_A",
+      "status": "PASS",
+      "detail": "A_get=404 A_put=404 estado=subida"
+    },
+    {
+      "id": "I5.POS_B_reads_its_own_image_status",
+      "status": "PASS",
+      "detail": "B own image status"
+    },
+    {
+      "id": "J0.POS_B_opens_its_own_daily_challenge",
+      "status": "PASS",
+      "detail": "B_hoy=200"
+    },
+    {
+      "id": "J1.A_cannot_answer_or_read_resources_of_a_reto_question_outside_its_segment_404_no_5xx",
+      "status": "PASS",
+      "detail": "A_answer=404 A_resource=404"
+    },
+    {
+      "id": "K0.POS_Bs_own_attempt_resource_passes_the_ownership_gate_not_401_403",
+      "status": "PASS",
+      "detail": "B_attempt=201 B_resource=503 (no storage object seeded)"
+    },
+    {
+      "id": "K1.A_cannot_read_a_resource_of_Bs_attempt_4xx_and_path_traversal_refused_no_5xx",
+      "status": "PASS",
+      "detail": "A_cross=404 A_trav=400 B_trav=400"
+    },
+    {
+      "id": "L1.difficulty_is_gated_to_questions_the_caller_answered_A_gets_404_for_a_question_only_B_answered",
+      "status": "PASS",
+      "detail": "B=200 A=404 {\"error\":\"not_found\",\"message\":\"El recurso solicitado no exi"
+    },
+    {
+      "id": "M1.A_setting_visibility_with_forged_usuarioId_only_changes_A_never_B",
+      "status": "PASS",
+      "detail": "A_body=400 A_query=400 Bvis false->false"
+    },
+    {
+      "id": "M2.POS_A_can_set_its_own_visibility_with_a_clean_body",
+      "status": "PASS",
+      "detail": "A_own_status=200 Avis=true"
+    },
+    {
+      "id": "N1.me_invitacion_never_returns_another_users_code_via_a_forged_usuarioId_query",
+      "status": "PASS",
+      "detail": "A=BWHYAMJK forged=(none) B=N9MQCKTH"
+    },
+    {
+      "id": "N2.redeeming_own_code_or_a_blocked_users_code_is_a_neutral_rejection_same_shape_as_unknown",
+      "status": "PASS",
+      "detail": "self={\"adjunta\":false} blocked={\"adjunta\":false} unknown={\"adjunta\":false}"
+    },
+    {
+      "id": "O1.a_normal_user_JWT_is_refused_on_every_admin_route_never_2xx",
+      "status": "PASS",
+      "detail": "where=:8090 statuses=GET /api/v1/admin/me=404 | GET /api/v1/admin/dashboard=403 | GET /api/v1/admin/examenes=403 | GET /api/v1/admin/especialidades=403 | GET /api/v1/admin/auditoria=403 | GET /api/v1/admin/accesos=403 | POST /api/v1/admin/accesos=403"
+    },
+    {
+      "id": "P.store_routes_8859ee4",
+      "status": "PENDING",
+      "detail": "store/purchase routes from 8859ee4 are not part of this server build; not testable here"
+    }
+  ]
+}

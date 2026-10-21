@@ -70,11 +70,11 @@ insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboa
  ('${U.C}', 'E2 C', 'e2_c', true, 'activa'), ('${U.D}', 'E2 D', 'e2_d', true, 'activa')
 on conflict (usuario_id) do update set estado_cuenta = 'activa';
 insert into public.especialidades (id, codigo, nombre, slug) values ('${SPEC_OTHER}', 'E2B', 'E2 otra', 'e2-otra') on conflict (id) do nothing;
-insert into public.examenes (id, codigo_examen, especialidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en, total_preguntas) values
- ('${EX.FREE_OTHER}', 'E2B-FREE', '${SPEC_OTHER}', 'E2B gratis otra', 'rafaga', 'gratuito', true, now() - interval '1 day', 1),
- ('${EX.PREMIUM_OTHER}', 'E2B-PREM', '${SPEC_OTHER}', 'E2B premium otra', 'rafaga', 'premium', true, now() - interval '1 day', 1),
- ('${EX.FUTURE}', 'E2B-FUT', '${SPEC_LOC}', 'E2B futuro', 'rafaga', 'gratuito', true, now() + interval '30 days', 1),
- ('${EX.DRAFT}', 'E2B-DRAFT', '${SPEC_LOC}', 'E2B borrador', 'rafaga', 'gratuito', true, null, 1)
+insert into public.examenes (id, codigo_examen, especialidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en, total_preguntas, comunidad_id) values
+ ('${EX.FREE_OTHER}', 'E2B-FREE', '${SPEC_OTHER}', 'E2B gratis otra', 'rafaga', 'gratuito', true, now() - interval '1 day', 1, (select id from public.comunidades_autonomas order by codigo limit 1)),
+ ('${EX.PREMIUM_OTHER}', 'E2B-PREM', '${SPEC_OTHER}', 'E2B premium otra', 'rafaga', 'premium', true, now() - interval '1 day', 1, (select id from public.comunidades_autonomas order by codigo limit 1)),
+ ('${EX.FUTURE}', 'E2B-FUT', '${SPEC_LOC}', 'E2B futuro', 'rafaga', 'gratuito', true, now() + interval '30 days', 1, (select id from public.comunidades_autonomas order by codigo limit 1)),
+ ('${EX.DRAFT}', 'E2B-DRAFT', '${SPEC_LOC}', 'E2B borrador', 'rafaga', 'gratuito', true, null, 1, (select id from public.comunidades_autonomas order by codigo limit 1))
 on conflict (id) do update set publicado_en = excluded.publicado_en, activo = true;
 insert into public.preguntas (id, codigo_pregunta, tipo_pregunta, titulo, activa)
 select ('f2b00000-0000-4000-8000-00000000000' || n)::uuid, 'E2B-Q' || n, 'rafaga', 'E2B enunciado secreto ' || n, true from generate_series(1, 4) n on conflict (id) do nothing;
@@ -147,7 +147,9 @@ await scenario('COLLECTION', async () => {
     check(`COLLECTION.${vista}_only_own`, c.status === 200 && d.status === 200 && !hasD, `C=${c.status} D=${d.status} cross=${!!hasD}`);
   }
   const forgedUser = await call('C', 'GET', `/api/v1/app/me/examenes?vista=EN_CURSO&usuarioId=${U.D}&userId=${U.D}`, undefined, { 'X-Usuario-Id': U.D });
-  check('COLLECTION.user_id_params_and_headers_ignored', forgedUser.status === 400 || (forgedUser.status === 200 && !(dAttempt && forgedUser.text.includes(dAttempt))), `${forgedUser.status}`);
+  check('COLLECTION.d2_13_forged_user_id_params_rejected_400_unknown_field', forgedUser.status === 400 && /UNKNOWN_FIELD/.test(forgedUser.text) && !(dAttempt && forgedUser.text.includes(dAttempt)), `${forgedUser.status} ${forgedUser.json?.code}`);
+  const forgedList = await call('C', 'GET', `/api/v1/app/examenes?usuarioId=${U.D}&premium=true&accessState=FREE`, undefined, { 'X-Usuario-Id': U.D });
+  check('CATALOG.d2_01_forged_params_rejected_400_unknown_field', forgedList.status === 400 && /UNKNOWN_FIELD/.test(forgedList.text), `${forgedList.status} ${forgedList.json?.code}`);
   if (dAttempt) await call('D', 'POST', `/api/v1/app/intentos/${dAttempt}/abandonar`, { posicionPregunta: 1, motivo: 'salida_usuario' });
 });
 
