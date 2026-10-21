@@ -1,0 +1,30 @@
+            tabla            |      rol      | existe | ins | upd | del | rls | politicas_escritura_permisivas | admin_all 
+-----------------------------+---------------+--------+-----+-----+-----+-----+--------------------------------+-----------
+ beneficios_plan             | anon          | t      | f   | f   | f   | t   |                              0 | 
+ beneficios_plan             | authenticated | t      | f   | f   | f   | t   |                              0 | 
+ capacidades_especialidad    | anon          | t      | f   | f   | f   | t   |                              0 | 
+ capacidades_especialidad    | authenticated | t      | f   | f   | f   | t   |                              0 | 
+ etiquetas_opositeca         | anon          | t      | f   | f   | f   | t   |                              0 | 
+ etiquetas_opositeca         | authenticated | t      | f   | f   | f   | t   |                              0 | 
+ invitaciones_referido       | anon          | t      | f   | f   | f   | t   |                              1 | 
+ invitaciones_referido       | authenticated | t      | t   | f   | f   | t   |                              1 | 
+ lotes_actualizacion_ranking | anon          | t      | f   | f   | f   | t   |                              1 | 
+ lotes_actualizacion_ranking | authenticated | t      | f   | f   | f   | t   |                              1 | 
+ opositeca_items             | anon          | t      | f   | f   | f   | t   |                              0 | 
+ opositeca_items             | authenticated | t      | f   | f   | f   | t   |                              0 | 
+ preguntas_parseadas_staging | anon          | t      | f   | f   | f   | t   |                              0 | 
+ preguntas_parseadas_staging | authenticated | t      | f   | f   | f   | t   |                              0 | 
+ suscripciones               | anon          | t      | f   | f   | f   | t   |                              0 | 
+ suscripciones               | authenticated | t      | f   | f   | f   | t   |                              0 | 
+(16 rows)
+
+ rol_que_aplica | dueno_storage_objects  | puede_cambiar_politicas_storage 
+----------------+------------------------+---------------------------------
+ postgres       | supabase_storage_admin | t
+(1 row)
+
+ storage_escritura_admin | storage_lectura_admin 
+-------------------------+-----------------------
+                       0 |                     3
+(1 row)
+

@@ -1,0 +1,66 @@
+27c27
+<   WHERE ((l.id = ranking_liga.liga_id) AND (l.activa = true)))) OR es_admin()):
+---
+>   WHERE ((l.id = ranking_liga.liga_id) AND l.activa))) OR es_admin()):
+1717,1721c1717,1721
+< fn:recalcular_estadisticas_globales_etiquetas():false:{search_path=public}:{postgres=X/postgres,=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}
+< fn:recalcular_estadisticas_globales_preguntas():false:{search_path=public}:{postgres=X/postgres,=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}
+< fn:recalcular_estadisticas_usuario_etiquetas(uuid):false:{search_path=public}:{postgres=X/postgres,=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}
+< fn:recalcular_estadisticas_usuario_globales(uuid):false:{search_path=public}:{postgres=X/postgres,=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}
+< fn:recalcular_estadisticas_usuario_preguntas(uuid):false:{search_path=public}:{postgres=X/postgres,=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}
+---
+> fn:recalcular_estadisticas_globales_etiquetas():false:{search_path=public}:{=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}
+> fn:recalcular_estadisticas_globales_preguntas():false:{search_path=public}:{=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}
+> fn:recalcular_estadisticas_usuario_etiquetas(uuid):false:{search_path=public}:{=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}
+> fn:recalcular_estadisticas_usuario_globales(uuid):false:{search_path=public}:{=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}
+> fn:recalcular_estadisticas_usuario_preguntas(uuid):false:{search_path=public}:{=X/postgres,postgres=X/postgres,anon=X/postgres,authenticated=X/postgres,service_role=X/postgres}
+2074c2074
+< pol:public.comentarios_oposired.comentarios_oposired_insert_auth:INSERT:{authenticated}::(usuario_id = ( SELECT auth.uid() AS uid))
+---
+> pol:public.comentarios_oposired.comentarios_oposired_insert_auth:INSERT:{authenticated}::(usuario_id = auth.uid())
+2076c2076
+< pol:public.comentarios_oposired.comentarios_oposired_update_propios:UPDATE:{authenticated}:((usuario_id = ( SELECT auth.uid() AS uid)) OR es_moderador_o_admin()):((usuario_id = ( SELECT auth.uid() AS uid)) OR es_moderador_o_admin())
+---
+> pol:public.comentarios_oposired.comentarios_oposired_update_propios:UPDATE:{authenticated}:((usuario_id = auth.uid()) OR es_moderador_o_admin()):((usuario_id = auth.uid()) OR es_moderador_o_admin())
+2092a2093
+> pol:public.estadisticas_globales_pregunta.estadisticas_globales_pregunta_select:SELECT:{authenticated}:true:
+2147c2148
+< pol:public.publicaciones_oposired.publicaciones_oposired_insert_auth:INSERT:{authenticated}::(usuario_id = ( SELECT auth.uid() AS uid))
+---
+> pol:public.publicaciones_oposired.publicaciones_oposired_insert_auth:INSERT:{authenticated}::(usuario_id = auth.uid())
+2149c2150
+< pol:public.publicaciones_oposired.publicaciones_oposired_update_propias:UPDATE:{authenticated}:((usuario_id = ( SELECT auth.uid() AS uid)) OR es_moderador_o_admin()):((usuario_id = ( SELECT auth.uid() AS uid)) OR es_moderador_o_admin())
+---
+> pol:public.publicaciones_oposired.publicaciones_oposired_update_propias:UPDATE:{authenticated}:((usuario_id = auth.uid()) OR es_moderador_o_admin()):((usuario_id = auth.uid()) OR es_moderador_o_admin())
+2152c2153
+< pol:public.reacciones_oposired.reacciones_oposired_todo_propias:ALL:{authenticated}:((usuario_id = ( SELECT auth.uid() AS uid)) OR es_moderador_o_admin()):((usuario_id = ( SELECT auth.uid() AS uid)) OR es_moderador_o_admin())
+---
+> pol:public.reacciones_oposired.reacciones_oposired_todo_propias:ALL:{authenticated}:((usuario_id = auth.uid()) OR es_moderador_o_admin()):((usuario_id = auth.uid()) OR es_moderador_o_admin())
+2205c2206
+< rel:categorias_oposired:r:true:{postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,anon=rm/postgres,authenticated=rm/postgres}
+---
+> rel:categorias_oposired:r:true:{postgres=arwdDxtm/postgres,anon=arwdDxtm/postgres,authenticated=arwdDxtm/postgres,service_role=arwdDxtm/postgres}
+2207c2208
+< rel:comentarios_oposired:r:true:{postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=arwdm/postgres,anon=rm/postgres}
+---
+> rel:comentarios_oposired:r:true:{postgres=arwdDxtm/postgres,anon=arwdDxtm/postgres,authenticated=arwdDxtm/postgres,service_role=arwdDxtm/postgres}
+2224,2225c2225,2226
+< rel:estado_competitivo_usuario:r:true:{postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=r/postgres}
+< rel:estado_opositester_usuario:r:true:{postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=r/postgres}
+---
+> rel:estado_competitivo_usuario:r:true:{postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,anon=r/postgres,authenticated=r/postgres}
+> rel:estado_opositester_usuario:r:true:{postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,anon=r/postgres,authenticated=r/postgres}
+2269c2270
+< rel:publicaciones_oposired:r:true:{postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=arwdm/postgres,anon=rm/postgres}
+---
+> rel:publicaciones_oposired:r:true:{postgres=arwdDxtm/postgres,anon=arwdDxtm/postgres,authenticated=arwdDxtm/postgres,service_role=arwdDxtm/postgres}
+2271,2272c2272,2273
+< rel:ranking_liga:r:true:{postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,anon=rm/postgres,authenticated=rm/postgres}
+< rel:reacciones_oposired:r:true:{postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=arwdm/postgres,anon=rm/postgres}
+---
+> rel:ranking_liga:r:true:{postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,anon=r/postgres,authenticated=r/postgres}
+> rel:reacciones_oposired:r:true:{postgres=arwdDxtm/postgres,anon=arwdDxtm/postgres,authenticated=arwdDxtm/postgres,service_role=arwdDxtm/postgres}
+2275c2276
+< rel:registros_reto_diario:r:true:{postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=arwdm/postgres,anon=rm/postgres}
+---
+> rel:registros_reto_diario:r:true:{postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,anon=r/postgres,authenticated=arwd/postgres}

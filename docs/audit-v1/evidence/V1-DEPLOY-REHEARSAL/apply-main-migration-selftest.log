@@ -1,0 +1,57 @@
+== verify-only ANTES (la migracion crea columnas: error esperado)
+ERROR:  column "intentos_verificacion" does not exist
+LINE 5: ...)::int from public.solicitudes_acceso_admin where intentos_v...
+                                                             ^
+ERROR: el VERIFY no se ejecuta
+VERIFY con valores distintos de 0 (20261020100000_security_access_request_email_verified): normal ANTES de aplicar; tras aplicar es NO-GO
+== version tecleada mal
+Fichero: supabase/migrations/20261020100000_security_access_request_email_verified.sql
+blob git: 57b44aadb2ff   (debe coincidir con la columna blob de la seccion 4 del plan)
+Teclea la version (20261020100000) para APLICARLA en la base destino: ERROR: version distinta; no se ha tocado nada.
+rc=1
+== aplicar
+Fichero: supabase/migrations/20261020100000_security_access_request_email_verified.sql
+blob git: 57b44aadb2ff   (debe coincidir con la columna blob de la seccion 4 del plan)
+Teclea la version (20261020100000) para APLICARLA en la base destino: aplicada en 9 s
+  VERIFY | column_exists_nullable_timestamptz|0
+  VERIFY | attempts_column_integer_not_null_default_0|0
+  VERIFY | attempts_check_present_and_validated|0
+  VERIFY | no_clock_ordering_check|0
+  VERIFY | rows_with_negative_attempts|0
+  VERIFY | rls_still_enabled|0
+  VERIFY | still_no_policies|0
+  VERIFY | clients_cannot_read_or_write_the_columns|0
+  VERIFY | service_role_can_write_the_columns|0
+  VERIFY | purge_fn_present_security_definer_empty_search_path|0
+  VERIFY | purge_fn_executable_by_clients|0
+  VERIFY | purge_fn_not_executable_by_service_role|0
+OK 20261020100000_security_access_request_email_verified: aplicada, VERIFY = 0, registrada.
+rc=0
+== segunda vez (debe negarse)
+STOP: 20261020100000 ya figura en el historial de MAIN; no se re-aplica (las aplicadas no se tocan).
+rc=1
+== verify-only DESPUES
+  VERIFY | column_exists_nullable_timestamptz|0
+  VERIFY | attempts_column_integer_not_null_default_0|0
+  VERIFY | attempts_check_present_and_validated|0
+  VERIFY | no_clock_ordering_check|0
+  VERIFY | rows_with_negative_attempts|0
+  VERIFY | rls_still_enabled|0
+  VERIFY | still_no_policies|0
+  VERIFY | clients_cannot_read_or_write_the_columns|0
+  VERIFY | service_role_can_write_the_columns|0
+  VERIFY | purge_fn_present_security_definer_empty_search_path|0
+  VERIFY | purge_fn_executable_by_clients|0
+  VERIFY | purge_fn_not_executable_by_service_role|0
+VERIFY = 0 (20261020100000_security_access_request_email_verified)
+== migracion que falla en PREFLIGHT (20261022100400 sin 100300)
+Fichero: supabase/migrations/20261022100400_v1_payment_orders.sql
+blob git: 265c89810ca5   (debe coincidir con la columna blob de la seccion 4 del plan)
+Teclea la version (20261022100400) para APLICARLA en la base destino: ERROR:  V1_ORDERS_PREFLIGHT
+HINT:  apply 20261022100300 first; compras_usuario, productos_comerciales and auditoria_log must exist
+CONTEXT:  PL/pgSQL function inline_code_block line 6 at RAISE
+FALLO al aplicar 20261022100400_v1_payment_orders: la transaccion del fichero se ha deshecho (nada cambio salvo que el error sea posterior al COMMIT).
+NO aplicar las siguientes. Anotar el mensaje (PREFLIGHT / lock_timeout / otro) y seguir la seccion 7 del plan.
+rc=1
+== historial
+20261020100000|security_access_request_email_verified

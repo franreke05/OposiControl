@@ -1,0 +1,2 @@
+ERROR:  fixture: 5 profiles (E has none)
+CONTEXT:  PL/pgSQL function inline_code_block line 2 at ASSERT

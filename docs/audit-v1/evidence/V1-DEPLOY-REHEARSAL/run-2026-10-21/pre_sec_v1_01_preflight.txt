@@ -1,0 +1,75 @@
+                                   check_name                                   | ok |                                                                                       info                                                                                       
+--------------------------------------------------------------------------------+----+----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ admin_all_is_main_shape:comunidades_autonomas                                  | t  | 
+ admin_all_is_main_shape:especialidades                                         | t  | 
+ admin_all_is_main_shape:etiquetas                                              | t  | 
+ admin_all_is_main_shape:etiquetas_pregunta                                     | t  | 
+ admin_all_is_main_shape:examenes                                               | t  | 
+ admin_all_is_main_shape:lotes_importacion_preguntas                            | t  | 
+ admin_all_is_main_shape:noticia                                                | t  | 
+ admin_all_is_main_shape:opciones_pregunta                                      | t  | 
+ admin_all_is_main_shape:preguntas                                              | t  | 
+ admin_all_is_main_shape:preguntas_examen                                       | t  | 
+ admin_all_is_main_shape:recursos_pregunta                                      | t  | 
+ admin_all_is_main_shape:soluciones_pregunta                                    | t  | 
+ admin_all_is_main_shape:tipo_noticia                                           | t  | 
+ admins_total                                                                   | t  | 1
+ admins_without_active_account (count must be reviewed, not necessarily 0)      | t  | 0
+ authenticated_has_exactly_IUD:comunidades_autonomas                            | t  | 
+ authenticated_has_exactly_IUD:especialidades                                   | t  | 
+ authenticated_has_exactly_IUD:etiquetas                                        | t  | 
+ authenticated_has_exactly_IUD:etiquetas_pregunta                               | t  | 
+ authenticated_has_exactly_IUD:examenes                                         | t  | 
+ authenticated_has_exactly_IUD:lotes_importacion_preguntas                      | t  | 
+ authenticated_has_exactly_IUD:noticia                                          | t  | 
+ authenticated_has_exactly_IUD:opciones_pregunta                                | t  | 
+ authenticated_has_exactly_IUD:preguntas                                        | t  | 
+ authenticated_has_exactly_IUD:preguntas_examen                                 | t  | 
+ authenticated_has_exactly_IUD:recursos_pregunta                                | t  | 
+ authenticated_has_exactly_IUD:soluciones_pregunta                              | t  | 
+ authenticated_has_exactly_IUD:tipo_noticia                                     | t  | 
+ authenticated_IUD_granted_by_owner_no_grant_option:comunidades_autonomas       | t  | 
+ authenticated_IUD_granted_by_owner_no_grant_option:especialidades              | t  | 
+ authenticated_IUD_granted_by_owner_no_grant_option:etiquetas                   | t  | 
+ authenticated_IUD_granted_by_owner_no_grant_option:etiquetas_pregunta          | t  | 
+ authenticated_IUD_granted_by_owner_no_grant_option:examenes                    | t  | 
+ authenticated_IUD_granted_by_owner_no_grant_option:lotes_importacion_preguntas | t  | 
+ authenticated_IUD_granted_by_owner_no_grant_option:noticia                     | t  | 
+ authenticated_IUD_granted_by_owner_no_grant_option:opciones_pregunta           | t  | 
+ authenticated_IUD_granted_by_owner_no_grant_option:preguntas                   | t  | 
+ authenticated_IUD_granted_by_owner_no_grant_option:preguntas_examen            | t  | 
+ authenticated_IUD_granted_by_owner_no_grant_option:recursos_pregunta           | t  | 
+ authenticated_IUD_granted_by_owner_no_grant_option:soluciones_pregunta         | t  | 
+ authenticated_IUD_granted_by_owner_no_grant_option:tipo_noticia                | t  | 
+ es_admin_body_is_main                                                          | t  | select exists ( select 1 from public.roles_usuario ru join public.roles_app ra on ra.id = ru.rol_id where ru.usuario_id = auth.uid() and ra.codigo in ('superadmin', 'admin') );
+ no_anon_or_public_write:comunidades_autonomas                                  | t  | 
+ no_anon_or_public_write:especialidades                                         | t  | 
+ no_anon_or_public_write:etiquetas                                              | t  | 
+ no_anon_or_public_write:etiquetas_pregunta                                     | t  | 
+ no_anon_or_public_write:examenes                                               | t  | 
+ no_anon_or_public_write:lotes_importacion_preguntas                            | t  | 
+ no_anon_or_public_write:noticia                                                | t  | 
+ no_anon_or_public_write:opciones_pregunta                                      | t  | 
+ no_anon_or_public_write:preguntas                                              | t  | 
+ no_anon_or_public_write:preguntas_examen                                       | t  | 
+ no_anon_or_public_write:recursos_pregunta                                      | t  | 
+ no_anon_or_public_write:soluciones_pregunta                                    | t  | 
+ no_anon_or_public_write:tipo_noticia                                           | t  | 
+ perfiles_estado_cuenta_column                                                  | t  | 
+ perfiles_update_propio_is_main                                                 | t  | ((usuario_id = ( SELECT auth.uid() AS uid)) OR es_admin()) | ((usuario_id = ( SELECT auth.uid() AS uid)) OR es_admin())
+ roles_exist                                                                    | t  | 
+ table_exists:comunidades_autonomas                                             | t  | 
+ table_exists:especialidades                                                    | t  | 
+ table_exists:etiquetas                                                         | t  | 
+ table_exists:etiquetas_pregunta                                                | t  | 
+ table_exists:examenes                                                          | t  | 
+ table_exists:lotes_importacion_preguntas                                       | t  | 
+ table_exists:noticia                                                           | t  | 
+ table_exists:opciones_pregunta                                                 | t  | 
+ table_exists:preguntas                                                         | t  | 
+ table_exists:preguntas_examen                                                  | t  | 
+ table_exists:recursos_pregunta                                                 | t  | 
+ table_exists:soluciones_pregunta                                               | t  | 
+ table_exists:tipo_noticia                                                      | t  | 
+(71 rows)
+

@@ -1,0 +1,165 @@
+             kind             |                             object                              |                                                                                                      definition                                                                                                       
+------------------------------+-----------------------------------------------------------------+-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
+ acl                          | comunidades_autonomas                                           | {postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=arwdm/postgres,anon=rm/postgres}
+ acl                          | especialidades                                                  | {postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=arwdm/postgres,anon=rm/postgres}
+ acl                          | etiquetas                                                       | {postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=arwdm/postgres,anon=rm/postgres}
+ acl                          | etiquetas_pregunta                                              | {postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=arwdm/postgres,anon=rm/postgres}
+ acl                          | examenes                                                        | {postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=arwdm/postgres,anon=rm/postgres}
+ acl                          | lotes_importacion_preguntas                                     | {postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=arwdm/postgres,anon=rm/postgres}
+ acl                          | noticia                                                         | {postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=arwdm/postgres,anon=rm/postgres}
+ acl                          | opciones_pregunta                                               | {postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=arwdm/postgres,anon=rm/postgres}
+ acl                          | perfiles_usuario                                                | {postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=arwdm/postgres,anon=rm/postgres}
+ acl                          | preguntas                                                       | {postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=arwdm/postgres,anon=rm/postgres}
+ acl                          | preguntas_examen                                                | {postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=arwdm/postgres,anon=rm/postgres}
+ acl                          | recursos_pregunta                                               | {postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=arwdm/postgres,anon=rm/postgres}
+ acl                          | soluciones_pregunta                                             | {postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=arwdm/postgres,anon=rm/postgres}
+ acl                          | tipo_noticia                                                    | {postgres=arwdDxtm/postgres,service_role=arwdDxtm/postgres,authenticated=arwdm/postgres,anon=rm/postgres}
+ depends_on_es_admin:function | public.can_manage_content()                                     | security_definer=true acl={postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}
+ depends_on_es_admin:policy   | public.abandonos_examen.abandonos_examen_insert_propio          | a
+ depends_on_es_admin:policy   | public.abandonos_examen.abandonos_examen_select_staff_o_propio  | r
+ depends_on_es_admin:policy   | public.activaciones_servicio_usuario.activaciones_select_propio | r
+ depends_on_es_admin:policy   | public.auditoria_log.auditoria_admin_select                     | r
+ depends_on_es_admin:policy   | public.carteras_usuario.carteras_select_propio                  | r
+ depends_on_es_admin:policy   | public.categorias_oposired.categorias_oposired_select_publico   | r
+ depends_on_es_admin:policy   | public.cola_repaso_usuario.cola_repaso_select_propio            | r
+ depends_on_es_admin:policy   | public.cola_repaso_usuario.cola_repaso_update_propio            | w
+ depends_on_es_admin:policy   | public.compras_usuario.compras_select_propio                    | r
+ depends_on_es_admin:policy   | public.comunidades_autonomas.comunidades_admin_all              | *
+ depends_on_es_admin:policy   | public.comunidades_autonomas.comunidades_select_publico         | r
+ depends_on_es_admin:policy   | public.configuraciones_usuario.configuraciones_usuario_todo_pro | *
+ depends_on_es_admin:policy   | public.contenido_desbloqueado_usuario.contenido_desbloqueado_se | r
+ depends_on_es_admin:policy   | public.documentos_legales.documentos_legales_select_publico     | r
+ depends_on_es_admin:policy   | public.errores_app.errores_app_select_staff                     | r
+ depends_on_es_admin:policy   | public.especialidades.especialidades_admin_all                  | *
+ depends_on_es_admin:policy   | public.especialidades.especialidades_select_publico             | r
+ depends_on_es_admin:policy   | public.estadisticas_usuario.estadisticas_select_propio          | r
+ depends_on_es_admin:policy   | public.estadisticas_usuario_etiqueta.estadisticas_usuario_etiqu | r
+ depends_on_es_admin:policy   | public.estadisticas_usuario_pregunta.estadisticas_usuario_pregu | r
+ depends_on_es_admin:policy   | public.estado_premium_usuario.estado_premium_select_propio      | r
+ depends_on_es_admin:policy   | public.etiquetas.etiquetas_admin_all                            | *
+ depends_on_es_admin:policy   | public.etiquetas.etiquetas_select_publico                       | r
+ depends_on_es_admin:policy   | public.etiquetas_opositeca.etiquetas_opositeca_admin_all        | *
+ depends_on_es_admin:policy   | public.etiquetas_pregunta.etiquetas_pregunta_admin_all          | *
+ depends_on_es_admin:policy   | public.etiquetas_pregunta.etiquetas_pregunta_select_gratuitas   | r
+ depends_on_es_admin:policy   | public.eventos_conversion_premium.eventos_conversion_select_sta | r
+ depends_on_es_admin:policy   | public.examenes.examenes_admin_all                              | *
+ depends_on_es_admin:policy   | public.examenes.examenes_select_activos                         | r
+ depends_on_es_admin:policy   | public.invitaciones_referido.invitaciones_referido_admin_all    | *
+ depends_on_es_admin:policy   | public.invitaciones_referido.invitaciones_referido_select_propi | r
+ depends_on_es_admin:policy   | public.ligas.ligas_select_publico                               | r
+ depends_on_es_admin:policy   | public.lotes_actualizacion_ranking.lotes_actualizacion_ranking_ | *
+ depends_on_es_admin:policy   | public.lotes_importacion_preguntas.lotes_importacion_admin_all  | *
+ depends_on_es_admin:policy   | public.metricas_rendimiento_app.metricas_rendimiento_select_sta | r
+ depends_on_es_admin:policy   | public.noticia.noticia_admin_all                                | *
+ depends_on_es_admin:policy   | public.noticia.noticia_select_publico                           | r
+ depends_on_es_admin:policy   | public.opciones_pregunta.opciones_pregunta_admin_all            | *
+ depends_on_es_admin:policy   | public.opciones_pregunta.opciones_pregunta_select_gratuitas     | r
+ depends_on_es_admin:policy   | public.opositeca_items.opositeca_items_admin_all                | *
+ depends_on_es_admin:policy   | public.opositeca_items.opositeca_items_select_publico           | r
+ depends_on_es_admin:policy   | public.paquetes_opositickets.paquetes_select_publico            | r
+ depends_on_es_admin:policy   | public.perfiles_usuario.perfiles_usuario_select_propio          | r
+ depends_on_es_admin:policy   | public.perfiles_usuario.perfiles_usuario_update_propio          | w
+ depends_on_es_admin:policy   | public.preguntas.preguntas_admin_all                            | *
+ depends_on_es_admin:policy   | public.preguntas.preguntas_select_gratuitas                     | r
+ depends_on_es_admin:policy   | public.preguntas_examen.preguntas_examen_admin_all              | *
+ depends_on_es_admin:policy   | public.preguntas_examen.preguntas_examen_select_gratuitas       | r
+ depends_on_es_admin:policy   | public.preguntas_favoritas_usuario.favoritas_todo_propio        | *
+ depends_on_es_admin:policy   | public.preguntas_parseadas_staging.preguntas_parseadas_admin_al | *
+ depends_on_es_admin:policy   | public.rachas_usuario.rachas_select_propio                      | r
+ depends_on_es_admin:policy   | public.ranking_liga.ranking_liga_select_auth_ligas_activas      | r
+ depends_on_es_admin:policy   | public.recomendaciones_usuario.recomendaciones_select_propio    | r
+ depends_on_es_admin:policy   | public.recomendaciones_usuario.recomendaciones_update_propio    | w
+ depends_on_es_admin:policy   | public.recursos_pregunta.recursos_pregunta_admin_all            | *
+ depends_on_es_admin:policy   | public.registros_reto_diario.registros_reto_todo_propio         | *
+ depends_on_es_admin:policy   | public.resumen_usuario_semanal.resumen_usuario_semanal_select_p | r
+ depends_on_es_admin:policy   | public.retos_diarios.retos_diarios_select_publico               | r
+ depends_on_es_admin:policy   | public.roles_usuario.roles_usuario_select_propio                | r
+ depends_on_es_admin:policy   | public.servicios.servicios_select_publico                       | r
+ depends_on_es_admin:policy   | public.sesiones_estudio.sesiones_estudio_todo_propio            | *
+ depends_on_es_admin:policy   | public.soluciones_pregunta.soluciones_pregunta_admin_all        | *
+ depends_on_es_admin:policy   | public.suscripciones.suscripciones_select_propio                | r
+ depends_on_es_admin:policy   | public.tipo_noticia.tipo_noticia_admin_all                      | *
+ depends_on_es_admin:policy   | public.tipo_noticia.tipo_noticia_select_publico                 | r
+ depends_on_es_admin:policy   | public.tokens_dispositivo.tokens_dispositivo_todo_propio        | *
+ depends_on_es_admin:policy   | public.transacciones_cartera.transacciones_select_propio        | r
+ depends_on_es_admin:policy   | public.uso_recursos_pregunta.uso_recursos_insert_propio         | a
+ depends_on_es_admin:policy   | public.uso_recursos_pregunta.uso_recursos_select_staff_o_propio | r
+ depends_on_es_admin:policy   | storage.objects.exam_resources_storage_admin_delete             | d
+ depends_on_es_admin:policy   | storage.objects.exam_resources_storage_admin_insert             | a
+ depends_on_es_admin:policy   | storage.objects.exam_resources_storage_admin_select             | r
+ depends_on_es_admin:policy   | storage.objects.exam_resources_storage_admin_update             | w
+ depends_on_es_admin:policy   | storage.objects.news_assets_storage_admin_delete                | d
+ depends_on_es_admin:policy   | storage.objects.news_assets_storage_admin_insert                | a
+ depends_on_es_admin:policy   | storage.objects.news_assets_storage_admin_update                | w
+ depends_on_es_admin:policy   | storage.objects.question_resources_storage_admin_delete         | d
+ depends_on_es_admin:policy   | storage.objects.question_resources_storage_admin_insert         | a
+ depends_on_es_admin:policy   | storage.objects.question_resources_storage_admin_select         | r
+ depends_on_es_admin:policy   | storage.objects.question_resources_storage_admin_update         | w
+ depends_on_es_admin:policy   | storage.objects.recursos_pregunta_storage_delete_admin          | d
+ depends_on_es_admin:policy   | storage.objects.recursos_pregunta_storage_insert_admin          | a
+ depends_on_es_admin:policy   | storage.objects.recursos_pregunta_storage_select_premium        | r
+ depends_on_es_admin:policy   | storage.objects.recursos_pregunta_storage_update_admin          | w
+ function                     | public.es_admin()                                               | CREATE OR REPLACE FUNCTION public.es_admin()                                                                                                                                                                         +
+                              |                                                                 |  RETURNS boolean                                                                                                                                                                                                     +
+                              |                                                                 |  LANGUAGE sql                                                                                                                                                                                                        +
+                              |                                                                 |  STABLE SECURITY DEFINER                                                                                                                                                                                             +
+                              |                                                                 |  SET search_path TO ''                                                                                                                                                                                               +
+                              |                                                                 | AS $function$                                                                                                                                                                                                        +
+                              |                                                                 |   select exists (                                                                                                                                                                                                    +
+                              |                                                                 |     select 1                                                                                                                                                                                                         +
+                              |                                                                 |     from public.roles_usuario ru                                                                                                                                                                                     +
+                              |                                                                 |     join public.roles_app ra on ra.id = ru.rol_id                                                                                                                                                                    +
+                              |                                                                 |     where ru.usuario_id = auth.uid()                                                                                                                                                                                 +
+                              |                                                                 |       and ra.codigo in ('superadmin', 'admin')                                                                                                                                                                       +
+                              |                                                                 |   );                                                                                                                                                                                                                 +
+                              |                                                                 | $function$                                                                                                                                                                                                           +
+                              |                                                                 |                                                                                                                                                                                                                      +
+                              |                                                                 | -- acl: {postgres=X/postgres,authenticated=X/postgres,service_role=X/postgres}
+ policy                       | comunidades_autonomas.comunidades_admin_all                     | * permissive=true roles={authenticated} using=es_admin() check=es_admin()
+ policy                       | comunidades_autonomas.comunidades_select_publico                | r permissive=true roles={anon,authenticated} using=((activa = true) OR es_admin()) check=
+ policy                       | especialidades.especialidades_admin_all                         | * permissive=true roles={authenticated} using=es_admin() check=es_admin()
+ policy                       | especialidades.especialidades_select_publico                    | r permissive=true roles={anon,authenticated} using=((activa = true) OR es_admin()) check=
+ policy                       | etiquetas.etiquetas_admin_all                                   | * permissive=true roles={authenticated} using=es_admin() check=es_admin()
+ policy                       | etiquetas.etiquetas_select_publico                              | r permissive=true roles={anon,authenticated} using=((activa = true) OR es_admin()) check=
+ policy                       | etiquetas_pregunta.etiquetas_pregunta_admin_all                 | * permissive=true roles={authenticated} using=es_admin() check=es_admin()
+ policy                       | etiquetas_pregunta.etiquetas_pregunta_select_gratuitas          | r permissive=true roles={anon,authenticated} using=((EXISTS ( SELECT 1                                                                                                                                               +
+                              |                                                                 |    FROM ((preguntas p                                                                                                                                                                                                +
+                              |                                                                 |      JOIN preguntas_examen pe ON ((pe.pregunta_id = p.id)))                                                                                                                                                          +
+                              |                                                                 |      JOIN examenes e ON ((e.id = pe.examen_id)))                                                                                                                                                                     +
+                              |                                                                 |   WHERE ((p.id = etiquetas_pregunta.pregunta_id) AND (p.activa = true) AND (e.activo = true) AND (e.publicado_en IS NOT NULL) AND (e.tipo_acceso = 'gratuito'::text)))) OR es_admin()) check=
+ policy                       | examenes.examenes_admin_all                                     | * permissive=true roles={authenticated} using=es_admin() check=es_admin()
+ policy                       | examenes.examenes_select_activos                                | r permissive=true roles={anon,authenticated} using=(((activo = true) AND (publicado_en IS NOT NULL)) OR es_admin()) check=
+ policy                       | lotes_importacion_preguntas.lotes_importacion_admin_all         | * permissive=true roles={authenticated} using=es_admin() check=es_admin()
+ policy                       | noticia.noticia_admin_all                                       | * permissive=true roles={authenticated} using=es_admin() check=es_admin()
+ policy                       | noticia.noticia_select_publico                                  | r permissive=true roles={anon,authenticated} using=(es_admin() OR ((estado = 'published'::text) AND ((publicar_desde IS NULL) OR (publicar_desde <= now())))) check=
+ policy                       | opciones_pregunta.opciones_pregunta_admin_all                   | * permissive=true roles={authenticated} using=es_admin() check=es_admin()
+ policy                       | opciones_pregunta.opciones_pregunta_select_gratuitas            | r permissive=true roles={anon,authenticated} using=((EXISTS ( SELECT 1                                                                                                                                               +
+                              |                                                                 |    FROM ((preguntas p                                                                                                                                                                                                +
+                              |                                                                 |      JOIN preguntas_examen pe ON ((pe.pregunta_id = p.id)))                                                                                                                                                          +
+                              |                                                                 |      JOIN examenes e ON ((e.id = pe.examen_id)))                                                                                                                                                                     +
+                              |                                                                 |   WHERE ((p.id = opciones_pregunta.pregunta_id) AND (p.activa = true) AND (e.activo = true) AND (e.publicado_en IS NOT NULL) AND (e.tipo_acceso = 'gratuito'::text)))) OR es_admin()) check=
+ policy                       | perfiles_usuario.perfiles_usuario_insert_propio                 | a permissive=true roles={authenticated} using= check=(usuario_id = ( SELECT auth.uid() AS uid))
+ policy                       | perfiles_usuario.perfiles_usuario_select_propio                 | r permissive=true roles={authenticated} using=((usuario_id = ( SELECT auth.uid() AS uid)) OR es_admin()) check=
+ policy                       | perfiles_usuario.perfiles_usuario_update_propio                 | w permissive=true roles={authenticated} using=((usuario_id = ( SELECT auth.uid() AS uid)) OR es_admin()) check=((usuario_id = ( SELECT auth.uid() AS uid)) OR es_admin())
+ policy                       | preguntas.preguntas_admin_all                                   | * permissive=true roles={authenticated} using=es_admin() check=es_admin()
+ policy                       | preguntas.preguntas_select_gratuitas                            | r permissive=true roles={anon,authenticated} using=(((activa = true) AND (EXISTS ( SELECT 1                                                                                                                          +
+                              |                                                                 |    FROM (preguntas_examen pe                                                                                                                                                                                         +
+                              |                                                                 |      JOIN examenes e ON ((e.id = pe.examen_id)))                                                                                                                                                                     +
+                              |                                                                 |   WHERE ((pe.pregunta_id = preguntas.id) AND (e.activo = true) AND (e.publicado_en IS NOT NULL) AND (e.tipo_acceso = 'gratuito'::text))))) OR es_admin()) check=
+ policy                       | preguntas_examen.preguntas_examen_admin_all                     | * permissive=true roles={authenticated} using=es_admin() check=es_admin()
+ policy                       | preguntas_examen.preguntas_examen_select_gratuitas              | r permissive=true roles={anon,authenticated} using=((EXISTS ( SELECT 1                                                                                                                                               +
+                              |                                                                 |    FROM examenes e                                                                                                                                                                                                   +
+                              |                                                                 |   WHERE ((e.id = preguntas_examen.examen_id) AND (e.activo = true) AND (e.publicado_en IS NOT NULL) AND (e.tipo_acceso = 'gratuito'::text)))) OR es_admin()) check=
+ policy                       | recursos_pregunta.recursos_pregunta_admin_all                   | * permissive=true roles={authenticated} using=es_admin() check=es_admin()
+ policy                       | recursos_pregunta.recursos_pregunta_select_premium              | r permissive=true roles={authenticated} using=((activo = true) AND (EXISTS ( SELECT 1                                                                                                                                +
+                              |                                                                 |    FROM estado_premium_usuario epu                                                                                                                                                                                   +
+                              |                                                                 |   WHERE ((epu.usuario_id = ( SELECT auth.uid() AS uid)) AND (epu.es_premium = true)))) AND (EXISTS ( SELECT 1                                                                                                        +
+                              |                                                                 |    FROM ((preguntas p                                                                                                                                                                                                +
+                              |                                                                 |      JOIN preguntas_examen pe ON ((pe.pregunta_id = p.id)))                                                                                                                                                          +
+                              |                                                                 |      JOIN examenes e ON ((e.id = pe.examen_id)))                                                                                                                                                                     +
+                              |                                                                 |   WHERE ((p.id = recursos_pregunta.pregunta_id) AND (p.activa = true) AND (e.activo = true) AND (e.publicado_en IS NOT NULL) AND (e.tipo_acceso = 'premium'::text) AND (e.tipo_examen = 'inmersivo'::text))))) check=
+ policy                       | soluciones_pregunta.soluciones_pregunta_admin_all               | * permissive=true roles={authenticated} using=es_admin() check=es_admin()
+ policy                       | tipo_noticia.tipo_noticia_admin_all                             | * permissive=true roles={authenticated} using=es_admin() check=es_admin()
+ policy                       | tipo_noticia.tipo_noticia_select_publico                        | r permissive=true roles={anon,authenticated} using=((activo = true) OR es_admin()) check=
+(127 rows)
+

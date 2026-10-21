@@ -1,0 +1,30 @@
+            tabla            |      rol      | existe | ins | upd | del | rls | politicas_escritura_permisivas |            admin_all            
+-----------------------------+---------------+--------+-----+-----+-----+-----+--------------------------------+---------------------------------
+ beneficios_plan             | anon          | t      | f   | f   | f   | t   |                              0 | 
+ beneficios_plan             | authenticated | t      | f   | f   | f   | t   |                              0 | 
+ capacidades_especialidad    | anon          | t      | f   | f   | f   | t   |                              0 | 
+ capacidades_especialidad    | authenticated | t      | f   | f   | f   | t   |                              0 | 
+ etiquetas_opositeca         | anon          | t      | f   | f   | f   | t   |                              1 | etiquetas_opositeca_admin_all
+ etiquetas_opositeca         | authenticated | t      | t   | t   | t   | t   |                              1 | etiquetas_opositeca_admin_all
+ invitaciones_referido       | anon          | t      | f   | f   | f   | t   |                              2 | invitaciones_referido_admin_all
+ invitaciones_referido       | authenticated | t      | t   | t   | t   | t   |                              2 | invitaciones_referido_admin_all
+ lotes_actualizacion_ranking | anon          | t      | f   | f   | f   | t   |                              1 | 
+ lotes_actualizacion_ranking | authenticated | t      | t   | t   | t   | t   |                              1 | 
+ opositeca_items             | anon          | t      | f   | f   | f   | t   |                              1 | opositeca_items_admin_all
+ opositeca_items             | authenticated | t      | t   | t   | t   | t   |                              1 | opositeca_items_admin_all
+ preguntas_parseadas_staging | anon          | t      | f   | f   | f   | t   |                              1 | preguntas_parseadas_admin_all
+ preguntas_parseadas_staging | authenticated | t      | t   | t   | t   | t   |                              1 | preguntas_parseadas_admin_all
+ suscripciones               | anon          | t      | f   | f   | f   | t   |                              0 | 
+ suscripciones               | authenticated | t      | f   | f   | f   | t   |                              0 | 
+(16 rows)
+
+ rol_que_aplica | dueno_storage_objects  | puede_cambiar_politicas_storage 
+----------------+------------------------+---------------------------------
+ postgres       | supabase_storage_admin | f
+(1 row)
+
+ storage_escritura_admin | storage_lectura_admin 
+-------------------------+-----------------------
+                      14 |                     3
+(1 row)
+

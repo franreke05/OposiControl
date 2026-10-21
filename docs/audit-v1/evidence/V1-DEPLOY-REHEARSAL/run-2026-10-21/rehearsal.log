@@ -1,0 +1,17 @@
+ok:   PostgreSQL 17.6; postgres superusuario = f
+ok:   forma de MAIN: 95 tablas public, 72 funciones public, 132 politicas (public+storage); semilla sintetica cargada
+ok:   orden real: 43 migraciones (fichero order.txt con sha256/16 de cada una)
+ok:   CAND-04: 20261023100200 (posicion 39) despues de 20261022102600 (posicion 29)
+ok:   PREFLIGHT de solo lectura ejecutado (catalogo, datos, SEC-V1-01 preflight/checkpoint, auditoria de comunidad); SEC-V1-01 filas ok=false: 0
+ERROR:  STORAGE_ADMIN_WRITE_PREFLIGHT
+DETAIL:  postgres is not the owner of storage.objects nor a member of supabase_storage_admin: DROP POLICY would fail
+ok:   20261023100100_security_storage_admin_write_revoke como postgres SIN pertenencia: STORAGE_ADMIN_WRITE_PREFLIGHT, catalogo intacto (caso probable en MAIN, ver plan)
+info: grant supabase_storage_admin to postgres (solo en el ensayo; en MAIN es una decision del propietario)
+ok:   primera aplicacion: 43 migraciones en orden real, VERIFY = 0 en todas (354 filas)
+ok:   cartera tras aplicar: legacy_opening_rows|2 legacy_opening_sum|60 reconcile_rows|0 saldos|50,30,20 filas_sin_seq|0 
+info: assertions.sql del gate sobre la forma COMPLETA + semilla: FALLA (ver assertions.txt; escrito para el subconjunto vacio)
+HALLAZGO: los bloques ROLLBACK solos NO devuelven la forma de MAIN (39 lineas, rollback_diff.txt; < MAIN, > tras ROLLBACK)
+ok:   ROLLBACK inverso de 41 migraciones + R2_post_rollback_restore_main_acl.sql: catalogo == estado tras las 2 LEGACY (forma de MAIN exacta)
+info: datos tras el ROLLBACK (las aperturas son filas normales y quedan, documentado en 20261022100300): legacy_opening_rows|2 saldos|50,30,20 
+ok:   re-aplicacion: VERIFY = 0, catalogo == primera aplicacion, sin aperturas duplicadas (legacy_opening_rows|2 reconcile_rows|0 saldos|50,30,20 )
+V1-DEPLOY-REHEARSAL OK

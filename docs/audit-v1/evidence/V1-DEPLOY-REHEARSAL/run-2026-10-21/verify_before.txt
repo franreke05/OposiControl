@@ -1,0 +1,148 @@
+## 20261020100000_security_access_request_email_verified
+ERROR:  column "intentos_verificacion" does not exist
+LINE 5: ...)::int from public.solicitudes_acceso_admin where intentos_v...
+                                                             ^
+## 20261021100000_security_audit_log_append_only
+ERROR:  function "public.auditoria_log_append_only()" does not exist
+LINE 1: ...tgisinternal and t.tgenabled = 'O' and t.tgfoid = 'public.au...
+                                                             ^
+## 20261022100000_slice3_attempt_content_revisions
+revisions_table_missing_or_without_rls|1|
+revisions_client_privileges|0|
+revisions_service_role_cannot_read|1|
+revisions_unique_missing|1|
+frozen_revision_column_missing|1|
+frozen_revision_fk_or_index_missing|2|
+revision_triggers_missing|3|
+revision_functions_client_executable|0|
+revision_commands_not_redefined|3|
+revision_commands_executable_by_clients|0|
+## 20261022100100_security_exam_publication_time
+policy_without_publication_time_bound:examenes_select_activos|1
+policy_without_publication_time_bound:opciones_pregunta_select_gratuitas|1
+policy_without_publication_time_bound:preguntas_select_gratuitas|1
+policy_without_publication_time_bound:preguntas_examen_select_gratuitas|1
+four_policies_present|0
+## 20261022100200_v1_exam_community_required
+ERROR:  function "private.tg_examenes_community_required()" does not exist
+## 20261022100300_v1_wallet_ledger_hardening
+ERROR:  function public.app_wallet_reconcile(unknown) does not exist
+LINE 11: ...lect 'reconcile_not_clean', count(*)::bigint from public.app...
+                                                              ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+## 20261022100400_v1_payment_orders
+ERROR:  function "public.app_create_payment_order(uuid,text,text,text)" does not exist
+## 20261022100500_v1_exam_redeem
+ERROR:  function "public.app_redeem_exam_access(uuid,uuid,text,integer)" does not exist
+## 20261022100600_v1_specialty_immutable
+ERROR:  function "public.app_my_exams_collection(uuid,text,uuid,integer,timestamp with time zone,uuid,integer,boolean,uuid)" does not exist
+## 20261022100700_v1_admin_grant
+ERROR:  function "public.admin_grant_exam_access(uuid,uuid,text,uuid)" does not exist
+## 20261022100800_v1_saved_items
+ERROR:  relation "public.recursos_guardados_usuario" does not exist
+LINE 12: ...ct c.relrowsecurity from pg_class c where c.oid = 'public.re...
+                                                              ^
+## 20261022100900_v1_plan_access_v2
+ERROR:  relation "public.configuracion_v1" does not exist
+LINE 12: ...ct c.relrowsecurity from pg_class c where c.oid = 'public.co...
+                                                              ^
+## 20261022101000_v1_demo_mode
+ERROR:  function "public.app_start_exam_attempt(uuid,uuid,text)" does not exist
+## 20261022101100_v1_attempt_limiter
+ERROR:  relation "public.preguntas_reveladas_usuario" does not exist
+LINE 9: ...ct c.relrowsecurity from pg_class c where c.oid = 'public.pr...
+                                                             ^
+## 20261022101150_v1_plan_catalog
+ERROR:  function "public.app_plan_catalog()" does not exist
+## 20261022101200_v1_daily_challenge
+ERROR:  function "public.app_get_daily_challenge(uuid)" does not exist
+## 20261022101300_v1_official_rules
+ERROR:  function "private.official_nota(integer,integer,integer,integer,integer)" does not exist
+## 20261022101500_v1_config_bounds
+ERROR:  function private.config_v1_range(text) does not exist
+LINE 3: ...config_row_out_of_bounds:' || c.clave, (case when private.co...
+                                                             ^
+HINT:  No function matches the given name and argument types. You might need to add explicit type casts.
+## 20261022101600_v1_stats
+ERROR:  relation "public.primeras_respuestas_usuario" does not exist
+## 20261022101700_v1_ranking
+ERROR:  relation "public.ranking_top" does not exist
+LINE 12: ...ct c.relrowsecurity from pg_class c where c.oid = 'public.ra...
+                                                              ^
+## 20261022101800_v1_referral
+ERROR:  function "public.app_referral_get(uuid)" does not exist
+## 20261022101900_v1_foro
+ERROR:  relation "public.restricciones_foro" does not exist
+## 20261022102000_v1_import_reserves
+ERROR:  function "private.import_lote_huella(uuid)" does not exist
+## 20261022102100_v1_razonado_markup
+ERROR:  function "private.markup_valid(jsonb)" does not exist
+## 20261022102200_v1_auth_code_binding
+ERROR:  function "public.auth_code_binding_register(text,text,text,integer)" does not exist
+## 20261022102300_v1_control_rpcs
+ERROR:  function "public.admin_referral_list(text,text,integer)" does not exist
+## 20261022102400_v1_refund_order_fix
+ERROR:  function "private.payment_order_refund_held(uuid)" does not exist
+## 20261022102500_v1_auth_binding_hardening
+ERROR:  function "public.auth_code_binding_begin(text,text,text,integer)" does not exist
+## 20261022102600_v1_store_payments
+ERROR:  function "public.app_store_account_token(uuid)" does not exist
+## 20261022102700_v1_user_tables_client_write_revoke
+user_table_client_write:public.perfiles_usuario|1
+user_table_client_write:public.tokens_dispositivo|1
+user_table_client_write:public.sesiones_estudio|1
+user_table_client_write:public.configuraciones_usuario|1
+user_table_client_write:public.preguntas_favoritas_usuario|1
+user_table_client_write:public.cola_repaso_usuario|1
+user_table_client_write:public.recomendaciones_usuario|1
+user_table_client_write:public.abandonos_examen|1
+user_table_client_write:public.uso_recursos_pregunta|1
+## 20261022102800_v1_store_payments_fixes
+ERROR:  function "public.app_store_inbox_pending(integer,boolean)" does not exist
+## 20261022102900_v1_store_payments_concurrency
+ERROR:  function "public.app_store_inbox_mark(text,text,text,text,text,text,integer)" does not exist
+## 20261022103000_v1_store_payments_round3
+ERROR:  relation "public.tienda_sondeo" does not exist
+LINE 13:   from pg_class c where c.oid = 'public.tienda_sondeo'::regc...
+                                         ^
+## 20261022103100_v1_store_payments_round4
+ERROR:  function "public.app_store_reconcile_orphan_step(boolean,timestamptz,text,text)" does not exist
+LINE 11: ...hen (select p.prosrc from pg_proc p where p.oid = 'public.ap...
+                                                              ^
+## 20261022103200_v1_store_payments_round5
+ERROR:  function "public.app_store_poll_page(text,text,text,bigint,bigint)" does not exist
+LINE 11: ...hen (select p.prosrc from pg_proc p where p.oid = 'public.ap...
+                                                              ^
+## 20261022103300_v1_store_payments_round6
+function_not_service_role_only:public.app_store_poll_page(text,text,text,bigint,bigint)|0
+poll_page_token_limit_4096|1
+poll_page_check_limit_4096|1
+## 20261023100000_security_content_admin_write_revoke
+content_client_write_privilege|39|authenticated INSERT examenes, authenticated UPDATE examenes, authenticated DELETE examenes, authenticated INSERT preguntas, authenticated UPDATE preguntas, authenticated DELETE preguntas, authenticated INSERT opciones_pregunta, authenticated UPDATE opciones_pregunta, authenticated DELETE opciones_pregunta, authenticated INSERT soluciones_pregunta, authenticated UPDATE soluciones_pregunta, authenticated DELETE soluciones_pregunta, authenticated INSERT preguntas_examen, authenticated UPDATE preguntas_examen, authenticated DELETE preguntas_examen, authenticated INSERT recursos_pregunta, authenticated UPDATE recursos_pregunta, authenticated DELETE recursos_pregunta, authenticated INSERT especialidades, authenticated UPDATE especialidades, authenticated DELETE especialidades, authenticated INSERT comunidades_autonomas, authenticated UPDATE comunidades_autonomas, authenticated DELETE comunidades_autonomas, authenticated INSERT etiquetas, authenticated UPDATE etiquetas, authenticated DELETE etiquetas, authenticated INSERT etiquetas_pregunta, authenticated UPDATE etiquetas_pregunta, authenticated DELETE etiquetas_pregunta, authenticated INSERT lotes_importacion_preguntas, authenticated UPDATE lotes_importacion_preguntas, authenticated DELETE lotes_importacion_preguntas, authenticated INSERT noticia, authenticated UPDATE noticia, authenticated DELETE noticia, authenticated INSERT tipo_noticia, authenticated UPDATE tipo_noticia, authenticated DELETE tipo_noticia
+content_client_write_policy|13|comunidades_autonomas.comunidades_admin_all,especialidades.especialidades_admin_all,etiquetas.etiquetas_admin_all,etiquetas_pregunta.etiquetas_pregunta_admin_all,examenes.examenes_admin_all,noticia.noticia_admin_all,preguntas_examen.preguntas_examen_admin_all,opciones_pregunta.opciones_pregunta_admin_all,lotes_importacion_preguntas.lotes_importacion_admin_all,preguntas.preguntas_admin_all,recursos_pregunta.recursos_pregunta_admin_all,soluciones_pregunta.soluciones_pregunta_admin_all,tipo_noticia.tipo_noticia_admin_all
+content_service_role_write_missing|0|
+es_admin_ignores_account_state|1|
+perfiles_update_admin_branch|1|perfiles_usuario_update_propio
+## 20261023100100_security_storage_admin_write_revoke
+storage_admin_write_policy|14|exam_resources_storage_admin_delete,exam_resources_storage_admin_insert,exam_resources_storage_admin_update,news_assets_storage_admin_delete,news_assets_storage_admin_insert,news_assets_storage_admin_update,p_storage_news_images_delete,p_storage_news_images_update,question_resources_storage_admin_delete,question_resources_storage_admin_insert,question_resources_storage_admin_update,recursos_pregunta_storage_delete_admin,recursos_pregunta_storage_insert_admin,recursos_pregunta_storage_update_admin
+storage_admin_write_backup_rows|1|
+## 20261023100200_security_revenue_excludes_sandbox
+revenue_counts_sandbox|1|
+revenue_rpc_client_executable|0|
+## 20261023100300_security_moderator_requires_active_account
+moderator_ignores_account_state|1|
+moderator_fn_not_definer_or_path|0|
+## 20261023100400_security_noticia_trigger_search_path
+noticia_trigger_search_path_mutable|2|noticia_sellar_published_at,noticia_touch_actualizado_en
+## 20261023100500_security_admin_tables_write_revoke
+admin_tables_client_write_privilege|11|authenticated INSERT opositeca_items, authenticated UPDATE opositeca_items, authenticated DELETE opositeca_items, authenticated INSERT etiquetas_opositeca, authenticated UPDATE etiquetas_opositeca, authenticated DELETE etiquetas_opositeca, authenticated UPDATE invitaciones_referido, authenticated DELETE invitaciones_referido, authenticated INSERT preguntas_parseadas_staging, authenticated UPDATE preguntas_parseadas_staging, authenticated DELETE preguntas_parseadas_staging
+admin_tables_admin_policy|4|etiquetas_opositeca.etiquetas_opositeca_admin_all,invitaciones_referido.invitaciones_referido_admin_all,opositeca_items.opositeca_items_admin_all,preguntas_parseadas_staging.preguntas_parseadas_admin_all
+admin_tables_unexpected_write_policy|0|
+admin_tables_service_role_write_missing|0|
+invitaciones_user_insert_missing|0|
+## 20261023100600_security_plans_store_client_write_revoke
+plans_store_client_write_privilege|0|
+plans_store_client_write_policy|0|
+plans_store_rls_disabled|0|
+plans_store_client_select_missing|0|
+plans_store_service_role_select_missing|0|

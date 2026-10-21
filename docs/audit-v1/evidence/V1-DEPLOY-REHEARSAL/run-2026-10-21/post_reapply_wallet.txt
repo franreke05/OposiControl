@@ -1,0 +1,3 @@
+legacy_opening_rows|2
+reconcile_rows|0
+saldos|50,30,20

@@ -1,0 +1,2 @@
+legacy_opening_rows|2
+saldos|50,30,20
