@@ -129,7 +129,7 @@ Columnas:
 | 34 | `20261022103100_v1_store_payments_round4` | `103dc7dde657` | E | — |
 | 35 | `20261022103200_v1_store_payments_round5` | `df9798446385` | E | — |
 | 36 | `20261022103300_v1_store_payments_round6` | `953f8e469b52` | E | — |
-| 36a | `20261022103400_v1_exam_penalty_official_default` | `95411fe58b1d` | E? | NUEVA. Rama `feature/v1-exam-penalty-scope` `74554ccd` (sin fusionar en develop). Clase por confirmar con Bot. Ensayada el 2026-10-22 (5.5) |
+| 36a | `20261022103400_v1_exam_penalty_official_default` | `95411fe58b1d` | E? | NUEVA. Rama `feature/v1-exam-penalty-scope` `74554ccd` (sin fusionar en develop). Clase por confirmar con Bot. Ensayada el 2026-10-22 (5.5). **Justo después: paso F4.3b, relleno de la penalización racional (D-11 DECIDIDA)** |
 | 36b | `20261022103500_v1_daily_challenge_dst` | `6a1c95defc8b` | E? | NUEVA. Rama `fix/v1-daily-challenge-dst` `6904357c` (sin fusionar). Reto diario con cambio de hora (DST). Ensayada el 2026-10-22 (5.5) |
 | 37 | `20261023100000_security_content_admin_write_revoke` (SEC-V1-01 / RB-01) | `d96765e28acc` | H | **YA APLICADA EN MAIN (2026-10-22, VERIFY 0, fuera del historial). SE SALTA.** F1: `--verify-only` = 0 |
 | 38 | `20261023100100_security_storage_admin_write_revoke` (RB-16) | `fcea91b64077` | H | **NO SE EJECUTA NUNCA.** RB-16 HECHO A MANO el 2026-10-22 (14 políticas borradas en Storage > Policies). Comprobación: `storage_escritura_admin = 0` |
@@ -448,6 +448,31 @@ Duración estimada: 45-60 min desde que se paran los Ktor hasta el humo. El tope
    - **PREFLIGHT** (`*_PREFLIGHT`): la migración no cambió nada. No se sigue con las siguientes que dependan de ella. Se decide R-1 o R-2.
    - **`lock_timeout`**: se reintenta una vez pasado 1 minuto. Si vuelve a fallar, NO-GO.
    - #37, #38, #40, #41 y #42 no se ejecutan en esta ventana: el script se niega a aplicarlos.
+3b. **Relleno de la penalización racional en los exámenes OFICIALES existentes** (D-11, **DECIDIDA** por el propietario el 2026-10-22).
+   - **Cuándo:** justo después de #36a (`20261022103400`) y antes de #36b. La columna `penalizacion_racional` la crea #17 (`20261022101300`), que en MAIN aún no existe, así que solo puede ir dentro de la ventana.
+   - **Qué hace:** aplica el UPDATE comentado en la cabecera de 103400 (`feature/v1-exam-penalty-scope` `74554ccd`).
+   - **Efectos aceptados:** los intentos ya congelados no cambian; solo se penalizan los intentos nuevos. Las notas de antes y de después **no son comparables** (aviso de Arturo, aceptado por el propietario).
+
+   Pasos:
+   1. **Recuento** (`RO`, editor SQL): `docs/engineering/v1-deploy/05_penalty_backfill_count_readonly.sql`. Anotar `oficiales`, `oficiales_ya_con_racional` y `candidatos` (= N).
+   2. **UPDATE** (`ESCRITURA`, GO-4b): `docs/engineering/v1-deploy/06_penalty_backfill_apply.sql`, después de sustituir `<ADMIN_UUID>` (actor de auditoría, el admin del propietario) y `<N>`. Todo va en una transacción:
+      - si se ejecuta sin sustituir los marcadores, falla sin cambiar nada;
+      - si el número de filas actualizadas no es exactamente N, se deshace todo (`PENALTY_BACKFILL_COUNT_MISMATCH`);
+      - los exámenes publicados se re-validan al COMMIT con `trg_examenes_official_rules`.
+   3. **Post-check** (`RO`): `07_penalty_backfill_postcheck_readonly.sql`. Esperado:
+      - `candidatos_restantes = 0`;
+      - `oficiales_con_racional` = `oficiales_ya_con_racional` + N;
+      - `auditoria_reglas_backfill = N` (una fila de `auditoria_log` por examen, con el actor y el motivo).
+
+   **Ensayado el 2026-10-22** (`docs/audit-v1/evidence/V1-DEPLOY-REHEARSAL/run-2026-10-22/penalty-backfill.log`). Montaje: dos exámenes oficiales heredados (uno publicado con 3 preguntas y un borrador) y las 37 migraciones del orden real hasta 103400. Resultados:
+   - recuento: 2 candidatos;
+   - sin marcadores: error y nada cambia;
+   - con N = 3: `PENALTY_BACKFILL_COUNT_MISMATCH` y nada cambia;
+   - con N = 2: 2 actualizados;
+   - post-check: 0 restantes, 2 con racional y 2 filas de auditoría con el actor y el motivo;
+   - una segunda ejecución con N = 0 es un no-op.
+
+   **Rollback:** no tiene un bloque propio. Si hiciera falta antes de GO-6: `update public.examenes set penalizacion_racional = false where id in (<ids de auditoria_log con ese motivo>)` con el mismo actor. En R-2, el ROLLBACK de 101300 borra la columna entera.
 4. **Comprobación tras migrar** (`RO`): se repiten F1.1 (deben salir las nuevas versiones) y F1.2 (valores DESPUÉS de 5.3), y todos los VERIFY:
    ```bash
    for f in $(ls supabase/migrations/2026102[0-3]*.sql | grep -v 20261023100100); do bash ops/deploy/v1/apply-main-migration.sh --verify-only "$f"; done 2>&1 | tee verify-despues.txt
@@ -663,6 +688,7 @@ Incidencias:
 | D-6 | Hora de la ventana, aviso a testers y admins, y confirmar que no hay builds de la app distribuidos | Hora de poco uso; aviso a los admins del panel |
 | D-7 | Cuentas sintéticas de producción para el humo y el IDOR (A, B y un admin de prueba), y cómo se borran después | Correos propios del propietario con `+alias`; se borran por Ktor tras F7 |
 | D-8 | Qué ramas sin fusionar entran en el SHA desplegado: `feature/v1-plans-store-grants-revoke` `4b4acf81` (100600), `feature/v1-exam-penalty-scope` `74554ccd` (103400), `fix/v1-daily-challenge-dst` `6904357c` (103500) y `fix/v1-rollback-blocks-main-acl` `0fe19e65` | Fusionarlas en develop antes de F0, y re-ensayar (5.5) y pasar el gate sobre ese SHA |
+| D-11 | Relleno de la penalización racional en los exámenes oficiales que ya hay en MAIN | **DECIDIDA el 2026-10-22: SÍ.** Paso F4.3b, después de 103400. Las notas de antes y de después no son comparables (aceptado) |
 | D-10 | Registrar en `supabase_migrations` las 4 aplicadas como SQL suelto (#37, #40, #41, #42) con `--record-only` | Sí, en F4.3: así el historial es verdad y `release.sh preflight` deja de listarlas. #38 no se registra |
 | D-9 | Aceptación escrita de los RB P1 que siguen abiertos para el servidor (RB-06, RB-10, RB-12, RB-13 parcial, RB-16 resuelto) | Cerrar RB-10 (rotar la service_role de MAIN si estuvo en un `.env` de desarrollo) **antes** de F4 |
 
@@ -679,7 +705,7 @@ Incidencias:
 
 ## 14. Bloqueantes abiertos para ejecutar este plan
 
-1. D-1 … D-4 y D-6 … D-10 sin decidir.
+1. D-1 … D-4 y D-6 … D-10 sin decidir (D-5 y D-11 ya están decididas).
 2. Las ramas de D-8 no están fusionadas en develop. Sus blobs actuales están ensayados (5.5, 40/40). Si cambian al fusionarse, se repite el ensayo. La clase de 103400 y 103500 (E?) la confirma Bot.
 3. No se sabe si `20261020100000`/`20261021100000` están en MAIN (F1.1).
 4. ~~Pertenencia a `supabase_storage_admin`~~: resuelto. `postgres` no pertenece; RB-16 se hizo a mano y 100100 queda fuera.

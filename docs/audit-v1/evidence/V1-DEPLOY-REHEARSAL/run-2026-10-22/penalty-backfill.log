@@ -1,0 +1,36 @@
+ok: punto de partida + 37 migraciones del orden real hasta 20261022103400 aplicadas (2 examenes oficiales heredados, penalizacion_racional = false)
+
+== 05 recuento (antes)
+ oficiales | oficiales_ya_con_racional | candidatos | candidatos_publicados | con_fraccion_fija_no_se_tocan 
+-----------+---------------------------+------------+-----------------------+-------------------------------
+         2 |                         0 |          2 |                     1 |                             0
+(1 row)
+
+
+== 06 SIN sustituir los marcadores (debe fallar y no cambiar nada)
+ERROR:  invalid input syntax for type uuid: "<ADMIN_UUID>"
+candidatos tras el intento: 2
+
+== 06 con <N> equivocado (3): debe deshacerse
+ERROR:  PENALTY_BACKFILL_COUNT_MISMATCH
+DETAIL:  actualizadas 2, esperadas 3: nada se guarda
+candidatos tras el intento: 2
+
+== 06 con <ADMIN_UUID> y <N> = 2
+NOTICE:  PENALTY_BACKFILL_OK: 2 examenes
+rc=0
+
+== 07 post-check
+ oficiales | oficiales_con_racional | candidatos_restantes | auditoria_reglas_backfill 
+-----------+------------------------+----------------------+---------------------------
+         2 |                      2 |                    0 |                         2
+(1 row)
+
+
+== actor y motivo en auditoria_log
+d0000000-0000-0000-0000-000000000001|backfill penalizacion racional (decision propietario 2026-10-22)
+d0000000-0000-0000-0000-000000000001|backfill penalizacion racional (decision propietario 2026-10-22)
+
+== 06 otra vez con <N> = 0 (idempotente: nada que actualizar)
+NOTICE:  PENALTY_BACKFILL_OK: 0 examenes
+PENALTY-BACKFILL-TEST FIN

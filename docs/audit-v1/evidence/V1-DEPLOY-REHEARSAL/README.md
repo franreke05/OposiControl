@@ -126,3 +126,14 @@ Modos de `apply-main-migration.sh` (`run-2026-10-22/apply-main-migration-modes.l
 - `00_history_readonly.sql` y `01_catalog_preflight_readonly.sql` se ejecutan sobre ese estado: `storage_escritura_admin = 0` y `storage_lectura_admin = 3`.
 
 El primer intento del día, antes de que volviera Docker Desktop, está en `run-2026-10-22/attempt1-docker-down.log`.
+
+### Paso F4.3b, relleno de la penalización racional (D-11): ensayado el 2026-10-22
+
+Script `run-2026-10-22/penalty-backfill-test.sh`, en el contenedor propio `v1-deploy-rehearsal-penalty` (borrado por nombre al terminar). Resultado en `run-2026-10-22/penalty-backfill.log`:
+
+- recuento: 2 candidatos;
+- sin sustituir los marcadores: ERROR y nada cambia;
+- con N mal puesto: `PENALTY_BACKFILL_COUNT_MISMATCH` y nada cambia;
+- con N correcto: 2 actualizados, y el examen publicado pasa la re-validación;
+- post-check: 0 candidatos restantes y 2 filas de auditoría con el actor y el motivo;
+- una segunda ejecución es un no-op.
