@@ -154,7 +154,10 @@ echo "ok:   rollback inverso == bootstrap; re-aplicacion == primera aplicacion (
 # (RACE_TIMEOUT s): si vence, o si la segunda termina sin bloquearse, la carrera FALLA con su id; nada se cuelga.
 RACE_TIMEOUT="${RACE_TIMEOUT:-90}"
 rq() { psqlc -At -c "$1" 2>&1; }                                         # una lectura de comprobacion
-psqla() { docker exec -i -e PGAPPNAME="$1" "$ctr" psql -U postgres -h localhost -d postgres -X -q -v ON_ERROR_STOP=1 -At "${@:2}"; }
+# lock_timeout en cada conexion de carrera: ninguna espera un cerrojo para siempre. 3 x RACE_TIMEOUT cubre la ventana legitima (b se bloquea,
+# se detecta en <= RACE_TIMEOUT y la senal libera a quien retiene, que en todo caso se rinde a los RACE_TIMEOUT); si vence: ERROR 55P03 -> noerr FALLA.
+RACE_LOCK_TIMEOUT="$((RACE_TIMEOUT * 3))s"
+psqla() { docker exec -i -e PGAPPNAME="$1" -e PGOPTIONS="-c lock_timeout=$RACE_LOCK_TIMEOUT" "$ctr" psql -U postgres -h localhost -d postgres -X -q -v ON_ERROR_STOP=1 -At "${@:2}"; }
 bg() { psqla "gate-race-$rid-$1" >"$tmp/race.$1.out" 2>"$tmp/race.$1.err" <<<"$2" & eval "race_job_$1=\$!"; }  # conexion en segundo plano
 held() { # $1 = trabajo; despues espera la senal gate-race-<id>-go con la transaccion abierta
   echo "begin; $1 do \$\$ declare t0 timestamptz := clock_timestamp(); begin /* gate-race-hold */ loop perform pg_stat_clear_snapshot();" \
@@ -200,7 +203,7 @@ race3() { # $1 = id, $2 = cerrojo de c (retenido), $3 = trabajo de a (debe bloqu
 store_race() {
   local u k i bad=0 out rid
   expect() { [ "$2" = "$3" ] || { echo "  race $1: '$2' (esperado '$3')"; bad=1; }; }
-  noerr() { local f; for f in "$@"; do [ ! -s "$tmp/race.$f.err" ] || { echo "  race $f: $(head -1 "$tmp/race.$f.err")"; bad=1; }; done; }
+  noerr() { local f; for f in "$@"; do [ ! -s "$tmp/race.$f.err" ] || { echo "  race ${rid:-?} $f: $(head -1 "$tmp/race.$f.err")"; bad=1; }; done; }
   u() { printf 'a0000000-0000-0000-0000-%012d' $((950 + $1)); }
   credit() { echo "select outcome from public.app_store_credit_purchase('$(u "$1")', public.app_store_account_token('$(u "$1")'), 'app_store', 'produccion', 'race-pack-100', 'com.x.ot100', '$2', '{}'::jsonb);"; }
   inbox() { rq "select nuevo from public.app_store_inbox_put('app_store', '$1', '$2', '$3', 'produccion', encode(sha256(convert_to('$1', 'utf8')), 'hex'), '{}'::jsonb)" >/dev/null; }
@@ -301,7 +304,9 @@ insert into public.tienda_bandeja (proveedor, evento_id, tipo, clave_compra, ent
 analyze public.tienda_bandeja;
 SQL
   out="$(rq "select coalesce((select idx_scan from pg_stat_user_indexes where indexrelname = 'ix_tienda_bandeja_atasco'), -1)")"
-  rq "select count(*) from public.app_store_inbox_stats()" >/dev/null; sleep 1   # el contador se publica al cerrar la sesion
+  rq "select count(*) from public.app_store_inbox_stats()" >/dev/null   # el contador se publica al cerrar la sesion: se espera con tope
+  k="$(rq "do \$\$ declare t0 timestamptz := clock_timestamp(); begin loop perform pg_stat_clear_snapshot(); exit when coalesce((select idx_scan from pg_stat_user_indexes where indexrelname = 'ix_tienda_bandeja_atasco'), -1) > $out; if clock_timestamp() - t0 > interval '$RACE_TIMEOUT seconds' then raise exception 'N4-5: idx_scan no sube'; end if; perform pg_sleep(0.05); end loop; end \$\$")"
+  [ -z "$k" ] || echo "  race N4-5: el contador de escaneos del indice no subio en ${RACE_TIMEOUT}s ($(echo "$k" | head -1))"
   expect "N4-5 indice del atasco" "$(rq "select coalesce((select idx_scan from pg_stat_user_indexes where indexrelname = 'ix_tienda_bandeja_atasco'), -1) > $out and $out >= 0")" t
   out="$(rq "select count(*) from public.tienda_bandeja b where b.resultado in ('REFUND_ORPHAN_HELD', 'REVERSAL_ORPHAN_HELD') and exists (select 1 from public.compras_usuario c where c.proveedor = b.proveedor and c.identificador_transaccion = b.clave_compra)")"
   expect "huerfanos con pedido" "$out" 0
@@ -320,7 +325,7 @@ echo "ok:   carreras de tienda con dos conexiones reales (R1..R4, S1..S3, D1 x2)
 exam_race() {
   local i a bad=0 snap rid ex='e4040000-0000-0000-0000-000000000002'
   expect() { [ "$2" = "$3" ] || { echo "  race $1: '$2' (esperado '$3')"; bad=1; }; }
-  noerr() { local f; for f in "$@"; do [ ! -s "$tmp/race.$f.err" ] || { echo "  race $f: $(head -1 "$tmp/race.$f.err")"; bad=1; }; done; }
+  noerr() { local f; for f in "$@"; do [ ! -s "$tmp/race.$f.err" ] || { echo "  race ${rid:-?} $f: $(head -1 "$tmp/race.$f.err")"; bad=1; }; done; }
   u() { printf 'a0000000-0000-0000-0000-0000000004a%d' "$1"; }
   q() { printf 'f4040000-0000-0000-0000-00000000001%d' "$1"; }
   ok() { printf '0a404000-0000-0000-001%d-000000000001' "$1"; }
