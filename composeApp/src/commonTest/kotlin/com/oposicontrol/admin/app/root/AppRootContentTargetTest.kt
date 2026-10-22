@@ -426,7 +426,7 @@ class AppRootContentTargetTest {
                 )
             }
         }
-        assertEquals("content.communities", sidebarRouteIdFor(AppRoute.Content.Communities, compactLayout = false))
+        // Comunidades ya no tiene entrada en el menú (2026-10-22); su pantalla sigue abriéndose por la ruta.
         assertEquals("content.tags", sidebarRouteIdFor(AppRoute.Content.Tags, compactLayout = false))
     }
 
@@ -474,7 +474,7 @@ class AppRootContentTargetTest {
         val desktopIds = com.oposicontrol.admin.app.navigation.appNavigationGroups
             .toShellGroups(compactLayout = false).flatMap { it.items }.map { it.id }
         assertTrue("commercial.catalog" in desktopIds)
-        assertTrue("content.communities" in desktopIds)
+        assertTrue("content.communities" !in desktopIds, "Comunidades salió del menú el 2026-10-22")
     }
 
     @Test

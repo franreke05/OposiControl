@@ -25,7 +25,6 @@ class NavigationInformationArchitectureTest {
         val expected = listOf(
             AppRoute.Home,
             AppRoute.Content.Taxonomy,
-            AppRoute.Content.Communities,
             AppRoute.Content.Tags,
             AppRoute.Content.Exams,
             AppRoute.Content.Questions,
@@ -171,18 +170,18 @@ class NavigationInformationArchitectureTest {
     // funcionalidad" significa.
 
     @Test
-    fun theSidebarHasExactlyTheSixteenTargetEntries() {
-        // 14 + Comunidades y Etiquetas (2026-10-15): sus pantallas CRUD existían pero ninguna ruta las abría.
+    fun theSidebarHasExactlyTheFifteenTargetEntries() {
+        // 14 + Etiquetas (2026-10-15). Comunidades salió del menú el 2026-10-22: se elige en cada examen.
         val sidebarTitles = appNavigationGroups.flatMap { it.sidebarItems }.map { it.metadata.title }
 
-        assertEquals(16, sidebarTitles.size, "El sidebar tiene ${sidebarTitles.size} entradas, se esperaban 16: $sidebarTitles")
+        assertEquals(15, sidebarTitles.size, "El sidebar tiene ${sidebarTitles.size} entradas, se esperaban 15: $sidebarTitles")
         assertEquals(
             listOf(
                 "Dashboard",
                 // Especialidades va justo debajo de Exámenes: es su configuración
                 // previa —qué modos admite la oposición— y el editor de exámenes
                 // no puede ofrecer un tipo que la especialidad no tenga abierto.
-                "Exámenes", "Especialidades", "Comunidades", "Etiquetas", "Preguntas", "Importación",
+                "Exámenes", "Especialidades", "Etiquetas", "Preguntas", "Importación",
                 "Usuarios",
                 "Catálogo", "OposiMarket",
                 "OposiRed", "Moderación", "Soporte",
@@ -205,7 +204,7 @@ class NavigationInformationArchitectureTest {
         val content = appNavigationGroups.single { it.id == NavigationGroupId.CONTENT }
         val titles = content.sidebarItems.map { it.metadata.title }
 
-        assertEquals(listOf("Exámenes", "Especialidades", "Comunidades", "Etiquetas", "Preguntas", "Importación"), titles)
+        assertEquals(listOf("Exámenes", "Especialidades", "Etiquetas", "Preguntas", "Importación"), titles)
     }
 
     @Test

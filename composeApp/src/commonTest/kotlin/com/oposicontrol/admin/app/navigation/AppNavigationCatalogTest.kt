@@ -39,7 +39,7 @@ class AppNavigationCatalogTest {
         assertEquals(AdminSection.TAGS, AppRoute.Content.Tags.toLegacySection())
         assertEquals(AppRoute.Content.Communities, AdminSection.COMMUNITIES.toAppRoute())
         assertEquals(AppRoute.Content.Tags, AdminSection.TAGS.toAppRoute())
-        listOf(AppRoute.Content.Communities, AppRoute.Content.Tags).forEach { route ->
+        listOf(AppRoute.Content.Tags).forEach { route ->
             val item = itemFor(route)
             assertEquals(NavigationGroupId.CONTENT, item.metadata.group)
             assertEquals(true, item.metadata.showInSidebar)
