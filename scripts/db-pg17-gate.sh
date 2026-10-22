@@ -182,7 +182,7 @@ race_blocked() { # la conexion $1 espera un cerrojo; con $2 = settle basta con q
   local rc; race_until "$1" "exists (select 1 from pg_stat_activity where application_name = 'gate-race-$rid-$1' and wait_event_type = 'Lock')"; rc=$?
   [ -z "${RACE_TRACE:-}" ] || echo "  trace $rid: $1 $( [ "$rc" = 0 ] && echo bloqueada en un cerrojo || echo termino sin bloquearse)"
   [ "$rc" = 0 ] || { [ "$rc" = 1 ] && [ "${2:-}" = settle ]; } \
-    || { echo "  race $rid: la conexion $1 no se bloqueo en un cerrojo (termino antes o tope de ${RACE_TIMEOUT}s)"; bad=1; return 1; }
+    || { if [ "$rc" = 1 ]; then echo "  race $rid: la conexion $1 termino sin bloquearse en un cerrojo"; else echo "  race $rid: la conexion $1 no se bloqueo en un cerrojo (tope de ${RACE_TIMEOUT}s)"; fi; bad=1; return 1; }
 }
 race_release() { # senal gate-race-<id>-go mientras la conexion $1 siga retenida
   psqla "gate-race-$rid-go" -c "do \$\$ declare t0 timestamptz := clock_timestamp(); begin loop perform pg_stat_clear_snapshot(); exit when not exists (select 1 from pg_stat_activity where application_name = 'gate-race-$rid-$1' and state = 'active' and query like '%gate-race-hold%'); if clock_timestamp() - t0 > interval '$RACE_TIMEOUT seconds' then raise exception 'gate-race-go: tope'; end if; perform pg_sleep(0.01); end loop; end \$\$" >/dev/null 2>&1 \
