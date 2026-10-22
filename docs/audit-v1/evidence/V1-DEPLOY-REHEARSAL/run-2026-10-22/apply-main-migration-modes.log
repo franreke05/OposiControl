@@ -1,0 +1,167 @@
+== estado: historial = 0 filas; politicas de escritura admin en storage = 0
+
+$ bash ops/deploy/v1/apply-main-migration.sh --verify-only supabase/migrations/20261023100000_security_content_admin_write_revoke.sql
+  VERIFY | content_client_write_privilege|0|
+  VERIFY | content_client_write_policy|0|
+  VERIFY | content_service_role_write_missing|0|
+  VERIFY | es_admin_ignores_account_state|0|
+  VERIFY | perfiles_update_admin_branch|0|
+VERIFY = 0 (20261023100000_security_content_admin_write_revoke)
+rc=0
+
+$ bash ops/deploy/v1/apply-main-migration.sh --verify-only supabase/migrations/20261023100300_security_moderator_requires_active_account.sql
+  VERIFY | moderator_ignores_account_state|0|
+  VERIFY | moderator_fn_not_definer_or_path|0|
+VERIFY = 0 (20261023100300_security_moderator_requires_active_account)
+rc=0
+
+$ bash ops/deploy/v1/apply-main-migration.sh --verify-only supabase/migrations/20261023100400_security_noticia_trigger_search_path.sql
+  VERIFY | noticia_trigger_search_path_mutable|0|
+VERIFY = 0 (20261023100400_security_noticia_trigger_search_path)
+rc=0
+
+$ bash ops/deploy/v1/apply-main-migration.sh --verify-only supabase/migrations/20261023100500_security_admin_tables_write_revoke.sql
+  VERIFY | admin_tables_client_write_privilege|0|
+  VERIFY | admin_tables_admin_policy|0|
+  VERIFY | admin_tables_unexpected_write_policy|0|
+  VERIFY | admin_tables_service_role_write_missing|0|
+  VERIFY | invitaciones_user_insert_missing|0|
+VERIFY = 0 (20261023100500_security_admin_tables_write_revoke)
+rc=0
+
+$ bash ops/deploy/v1/apply-main-migration.sh supabase/migrations/20261023100300_security_moderator_requires_active_account.sql
+STOP: 20261023100300 ya esta APLICADA en MAIN fuera del historial (2026-10-22); no se re-aplica. Usar --verify-only (y --record-only si D-10).
+rc=1
+
+$ echo 20990101000000 | apply-main-migration.sh --record-only ...20261023100000 (version mal tecleada)
+  VERIFY | content_client_write_privilege|0|
+  VERIFY | content_client_write_policy|0|
+  VERIFY | content_service_role_write_missing|0|
+  VERIFY | es_admin_ignores_account_state|0|
+  VERIFY | perfiles_update_admin_branch|0|
+VERIFY = 0. Teclea la version (20261023100000) para REGISTRARLA (sin ejecutar el fichero): ERROR: version distinta; no se ha tocado nada.
+rc=1
+historial: 0 filas
+
+$ echo 20261023100000 | apply-main-migration.sh --record-only 20261023100000
+  VERIFY | content_client_write_privilege|0|
+  VERIFY | content_client_write_policy|0|
+  VERIFY | content_service_role_write_missing|0|
+  VERIFY | es_admin_ignores_account_state|0|
+  VERIFY | perfiles_update_admin_branch|0|
+VERIFY = 0. Teclea la version (20261023100000) para REGISTRARLA (sin ejecutar el fichero): OK 20261023100000_security_content_admin_write_revoke: registrada (no re-aplicada).
+rc=0
+
+$ echo 20261023100300 | apply-main-migration.sh --record-only 20261023100300
+  VERIFY | moderator_ignores_account_state|0|
+  VERIFY | moderator_fn_not_definer_or_path|0|
+VERIFY = 0. Teclea la version (20261023100300) para REGISTRARLA (sin ejecutar el fichero): OK 20261023100300_security_moderator_requires_active_account: registrada (no re-aplicada).
+rc=0
+
+$ echo 20261023100400 | apply-main-migration.sh --record-only 20261023100400
+  VERIFY | noticia_trigger_search_path_mutable|0|
+VERIFY = 0. Teclea la version (20261023100400) para REGISTRARLA (sin ejecutar el fichero): OK 20261023100400_security_noticia_trigger_search_path: registrada (no re-aplicada).
+rc=0
+
+$ echo 20261023100500 | apply-main-migration.sh --record-only 20261023100500
+  VERIFY | admin_tables_client_write_privilege|0|
+  VERIFY | admin_tables_admin_policy|0|
+  VERIFY | admin_tables_unexpected_write_policy|0|
+  VERIFY | admin_tables_service_role_write_missing|0|
+  VERIFY | invitaciones_user_insert_missing|0|
+VERIFY = 0. Teclea la version (20261023100500) para REGISTRARLA (sin ejecutar el fichero): OK 20261023100500_security_admin_tables_write_revoke: registrada (no re-aplicada).
+rc=0
+
+$ echo 20261023100000 | apply-main-migration.sh --record-only (segunda vez)
+  VERIFY | content_client_write_privilege|0|
+  VERIFY | content_client_write_policy|0|
+  VERIFY | content_service_role_write_missing|0|
+  VERIFY | es_admin_ignores_account_state|0|
+  VERIFY | perfiles_update_admin_branch|0|
+VERIFY = 0. Teclea la version (20261023100000) para REGISTRARLA (sin ejecutar el fichero): OK 20261023100000_security_content_admin_write_revoke: registrada (no re-aplicada).
+rc=0
+
+== historial:
+20261023100000|security_content_admin_write_revoke
+20261023100300|security_moderator_requires_active_account
+20261023100400|security_noticia_trigger_search_path
+20261023100500|security_admin_tables_write_revoke
+
+$ bash ops/deploy/v1/apply-main-migration.sh --record-only supabase/migrations/20261023100200_security_revenue_excludes_sandbox.sql
+STOP: --record-only solo vale para 20261023100000 20261023100300 20261023100400 20261023100500
+rc=1
+
+$ bash ops/deploy/v1/apply-main-migration.sh supabase/migrations/20261023100100_security_storage_admin_write_revoke.sql
+STOP: 20261023100100 NO se ejecuta nunca (RB-16 hecho a mano en MAIN el 2026-10-22). Comprobar con 01_catalog_preflight_readonly.sql: storage_escritura_admin = 0.
+rc=1
+
+$ bash ops/deploy/v1/apply-main-migration.sh --verify-only supabase/migrations/20261023100100_security_storage_admin_write_revoke.sql
+  VERIFY | storage_admin_write_policy|0|
+  VERIFY | storage_admin_write_backup_rows|1|
+VERIFY con valores distintos de 0 (20261023100100_security_storage_admin_write_revoke): normal ANTES de aplicar; tras aplicar es NO-GO
+rc=0
+
+$ bash ops/deploy/v1/apply-main-migration.sh --verify-only supabase/migrations/20261023100200_security_revenue_excludes_sandbox.sql
+  VERIFY | revenue_counts_sandbox|1|
+  VERIFY | revenue_rpc_client_executable|0|
+VERIFY con valores distintos de 0 (20261023100200_security_revenue_excludes_sandbox): normal ANTES de aplicar; tras aplicar es NO-GO
+rc=0
+
+== 00_history_readonly.sql (sin las tablas de MAIN de antes de 20261020: informativo)
+ 20261023100300 | security_moderator_requires_active_account
+ 20261023100400 | security_noticia_trigger_search_path
+ 20261023100500 | security_admin_tables_write_revoke
+(4 rows)
+
+    version     | registrada |                                        esperado                                        
+----------------+------------+----------------------------------------------------------------------------------------
+ 20261020100000 | f          | pendiente o aplicada a mano (DEBT-156b); el Ktor V1 la NECESITA
+ 20261021100000 | f          | pendiente o aplicada a mano (DEBT-156b)
+ 20261023100000 | t          | APLICADA 2026-10-22 fuera del historial (SEC-V1-01): se salta; registrar solo con D-10
+ 20261023100100 | f          | NUNCA: RB-16 hecho a mano; no se registra
+ 20261023100200 | f          | pendiente (CAND-04: despues de 20261022102600)
+ 20261023100300 | t          | APLICADA 2026-10-22 fuera del historial (RB-18): se salta
+ 20261023100400 | t          | APLICADA 2026-10-22 fuera del historial: se salta
+ 20261023100500 | t          | APLICADA 2026-10-22 fuera del historial (RB-17 Control): se salta
+ 20261023100600 | f          | pendiente
+(9 rows)
+
+                                             objeto                                             | existe 
+------------------------------------------------------------------------------------------------+--------
+ solicitudes_acceso_admin.correo_verificado_en (20261020100000)                                 | f
+ trigger auditoria_log_append_only_row (20261021100000)                                         | f
+ storage.objects: politica de escritura con es_admin/can_manage_content (RB-16, debe ser false) | f
+(3 rows)
+
+
+== 01_catalog_preflight_readonly.sql (estado 2026-10-22)
+            tabla            |      rol      | existe | ins | upd | del | rls | politicas_escritura_permisivas | admin_all 
+-----------------------------+---------------+--------+-----+-----+-----+-----+--------------------------------+-----------
+ beneficios_plan             | anon          | t      | f   | f   | f   | t   |                              0 | 
+ beneficios_plan             | authenticated | t      | f   | f   | f   | t   |                              0 | 
+ capacidades_especialidad    | anon          | t      | f   | f   | f   | t   |                              0 | 
+ capacidades_especialidad    | authenticated | t      | f   | f   | f   | t   |                              0 | 
+ etiquetas_opositeca         | anon          | t      | f   | f   | f   | t   |                              0 | 
+ etiquetas_opositeca         | authenticated | t      | f   | f   | f   | t   |                              0 | 
+ invitaciones_referido       | anon          | t      | f   | f   | f   | t   |                              1 | 
+ invitaciones_referido       | authenticated | t      | t   | f   | f   | t   |                              1 | 
+ lotes_actualizacion_ranking | anon          | t      | f   | f   | f   | t   |                              1 | 
+ lotes_actualizacion_ranking | authenticated | t      | t   | t   | t   | t   |                              1 | 
+ opositeca_items             | anon          | t      | f   | f   | f   | t   |                              0 | 
+ opositeca_items             | authenticated | t      | f   | f   | f   | t   |                              0 | 
+ preguntas_parseadas_staging | anon          | t      | f   | f   | f   | t   |                              0 | 
+ preguntas_parseadas_staging | authenticated | t      | f   | f   | f   | t   |                              0 | 
+ suscripciones               | anon          | t      | f   | f   | f   | t   |                              0 | 
+ suscripciones               | authenticated | t      | f   | f   | f   | t   |                              0 | 
+(16 rows)
+
+ rol_que_aplica | dueno_storage_objects  | puede_cambiar_politicas_storage 
+----------------+------------------------+---------------------------------
+ postgres       | supabase_storage_admin | f
+(1 row)
+
+ storage_escritura_admin | storage_lectura_admin 
+-------------------------+-----------------------
+                       0 |                     3
+(1 row)
+

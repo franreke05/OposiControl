@@ -1,0 +1,5 @@
+legacy_opening_rows|2
+legacy_opening_sum|60
+reconcile_rows|0
+saldos|50,30,20
+filas_sin_seq|0

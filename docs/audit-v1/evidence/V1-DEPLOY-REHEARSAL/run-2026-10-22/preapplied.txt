@@ -1,0 +1,13 @@
+  preapplied 20261023100000_security_content_admin_write_revoke | content_client_write_privilege|0|
+  preapplied 20261023100000_security_content_admin_write_revoke | content_client_write_policy|0|
+  preapplied 20261023100000_security_content_admin_write_revoke | content_service_role_write_missing|0|
+  preapplied 20261023100000_security_content_admin_write_revoke | es_admin_ignores_account_state|0|
+  preapplied 20261023100000_security_content_admin_write_revoke | perfiles_update_admin_branch|0|
+  preapplied 20261023100300_security_moderator_requires_active_account | moderator_ignores_account_state|0|
+  preapplied 20261023100300_security_moderator_requires_active_account | moderator_fn_not_definer_or_path|0|
+  preapplied 20261023100400_security_noticia_trigger_search_path | noticia_trigger_search_path_mutable|0|
+  preapplied 20261023100500_security_admin_tables_write_revoke | admin_tables_client_write_privilege|0|
+  preapplied 20261023100500_security_admin_tables_write_revoke | admin_tables_admin_policy|0|
+  preapplied 20261023100500_security_admin_tables_write_revoke | admin_tables_unexpected_write_policy|0|
+  preapplied 20261023100500_security_admin_tables_write_revoke | admin_tables_service_role_write_missing|0|
+  preapplied 20261023100500_security_admin_tables_write_revoke | invitaciones_user_insert_missing|0|

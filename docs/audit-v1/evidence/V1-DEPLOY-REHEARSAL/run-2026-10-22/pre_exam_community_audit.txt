@@ -1,0 +1,15 @@
+                 metric                 | value 
+----------------------------------------+-------
+ total_exams                            |     1
+ without_community                      |     0
+ without_community_and_published        |     0
+ without_community_published_and_active |     0
+ with_community_pointing_nowhere        |     0
+ communities_in_catalog                 |     1
+ communities_active                     |     1
+(7 rows)
+
+ tipo_acceso | tipo_examen | published | activo | exams 
+-------------+-------------+-----------+--------+-------
+(0 rows)
+

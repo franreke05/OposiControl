@@ -49,7 +49,7 @@ export MAIN_DB_URL='postgresql://postgres.ndiooyyqtaeysnedywer:<CONTRASEÑA>@<HO
 
 | # | Requisito | Dónde se cumple | Estado |
 |---|---|---|---|
-| R1 | Ensayo completo de todas las migraciones sobre una copia con la forma de MAIN: PREFLIGHT, aplicar, VERIFY = 0, ROLLBACK, volver a aplicar, en el orden real e incluyendo CAND-04 | Sección 5 y `docs/audit-v1/evidence/V1-DEPLOY-REHEARSAL/` | **HECHO EN LOCAL** el 2026-10-21 (43/43). Resultado en 5.2. Límites en 5.4. **Re-ensayo PENDIENTE** con el estado de MAIN del 2026-10-22 y las ramas nuevas (5.5). El ensayo sobre datos reales se repite en F3.4, sobre la restauración del backup. |
+| R1 | Ensayo completo de todas las migraciones sobre una copia con la forma de MAIN: PREFLIGHT, aplicar, VERIFY = 0, ROLLBACK, volver a aplicar, en el orden real e incluyendo CAND-04 | Sección 5 y `docs/audit-v1/evidence/V1-DEPLOY-REHEARSAL/` | **HECHO EN LOCAL**: el 2026-10-21 (43/43, 5.2) y el 2026-10-22 con el estado de MAIN de ese día y las ramas nuevas (40/40, ROLLBACK idéntico sin el fichero de restauración, 5.5). Límites en 5.4. El ensayo sobre datos reales se repite en F3.4, sobre la restauración del backup. |
 | R2 | Backup verificado con prueba de restauración | Fase F3 | PLAN. Necesita GO-3 y una decisión de coste (sección 12). |
 | R3 | Qué no se ha probado nunca contra GoTrue y Storage gestionados, y comprobaciones exactas tras el despliegue | Sección 8 | PLAN. Las comprobaciones se hacen en F6. |
 | R4 | Rollback por fases con un punto de no retorno explícito | Sección 7 (PNR = R-3) | PLAN |
@@ -129,15 +129,15 @@ Columnas:
 | 34 | `20261022103100_v1_store_payments_round4` | `103dc7dde657` | E | — |
 | 35 | `20261022103200_v1_store_payments_round5` | `df9798446385` | E | — |
 | 36 | `20261022103300_v1_store_payments_round6` | `953f8e469b52` | E | — |
-| 36a | `20261022103400_v1_exam_penalty_official_default` | `95411fe58b1d` | E? | NUEVA. Rama `feature/v1-exam-penalty-scope` `74554ccd` (sin fusionar en develop). Clase por confirmar con Bot. **Pendiente de ensayo** (5.5) |
-| 36b | `20261022103500_v1_daily_challenge_dst` | `6a1c95defc8b` | E? | NUEVA. Rama `fix/v1-daily-challenge-dst` `6904357c` (sin fusionar). Reto diario con cambio de hora (DST). **Pendiente de ensayo** (5.5) |
+| 36a | `20261022103400_v1_exam_penalty_official_default` | `95411fe58b1d` | E? | NUEVA. Rama `feature/v1-exam-penalty-scope` `74554ccd` (sin fusionar en develop). Clase por confirmar con Bot. Ensayada el 2026-10-22 (5.5) |
+| 36b | `20261022103500_v1_daily_challenge_dst` | `6a1c95defc8b` | E? | NUEVA. Rama `fix/v1-daily-challenge-dst` `6904357c` (sin fusionar). Reto diario con cambio de hora (DST). Ensayada el 2026-10-22 (5.5) |
 | 37 | `20261023100000_security_content_admin_write_revoke` (SEC-V1-01 / RB-01) | `d96765e28acc` | H | **YA APLICADA EN MAIN (2026-10-22, VERIFY 0, fuera del historial). SE SALTA.** F1: `--verify-only` = 0 |
 | 38 | `20261023100100_security_storage_admin_write_revoke` (RB-16) | `fcea91b64077` | H | **NO SE EJECUTA NUNCA.** RB-16 HECHO A MANO el 2026-10-22 (14 políticas borradas en Storage > Policies). Comprobación: `storage_escritura_admin = 0` |
 | 39 | `20261023100200_security_revenue_excludes_sandbox` (PAY-F3, **CAND-04**) | `879bc8f2ecc4` | H | Después de #29 |
 | 40 | `20261023100300_security_moderator_requires_active_account` (RB-18) | `294080b01de0` | H | **YA APLICADA EN MAIN (2026-10-22). SE SALTA.** |
 | 41 | `20261023100400_security_noticia_trigger_search_path` | `0bb99d024e9c` | H | **YA APLICADA EN MAIN (2026-10-22). SE SALTA.** |
 | 42 | `20261023100500_security_admin_tables_write_revoke` (RB-17, parte de Control) | `3aba58fecce9` | H | **YA APLICADA EN MAIN (2026-10-22). SE SALTA.** RB-17: fix aplicado (parte de Control); la parte de Bot va en #30 |
-| 43 | `20261023100600_security_plans_store_client_write_revoke` (SEC-BOT-P3) | `f68f2a28f544` | H | Rama `feature/v1-plans-store-grants-revoke` `4b4acf81` (sin fusionar en develop). Sobre la forma de MAIN es un **no-op que fija el estado** (5.3). Ensayada el 2026-10-21 con un borrador anterior (`b39f7cc08aff`); la versión con commit está **pendiente de re-ensayo** (5.5) |
+| 43 | `20261023100600_security_plans_store_client_write_revoke` (SEC-BOT-P3) | `f68f2a28f544` | H | Rama `feature/v1-plans-store-grants-revoke` `4b4acf81` (sin fusionar en develop). Sobre la forma de MAIN es un **no-op que fija el estado** (5.3). Ensayado el blob con commit el 2026-10-22 (5.5) |
 
 † Blob con `fix/v1-rollback-blocks-main-acl` `0fe19e65`: solo cambian los bloques ROLLBACK (comentados), que ahora restauran el ACL y las políticas exactas de MAIN. El SQL que se aplica no cambia. Se despliega el blob que esté en el SHA aprobado, y `apply-main-migration.sh` lo imprime.
 
@@ -213,7 +213,7 @@ Storage:
 
 DESPUÉS: todo `false` salvo `authenticated` INSERT en `invitaciones_referido`, que se mantiene a propósito (`invitaciones_referido_insert_propias`). Además, 0 políticas `*_admin_all` y 0 políticas de escritura de storage con `es_admin` (si RB-16 se aplicó).
 
-### 5.5 Re-ensayo pendiente con el estado de MAIN del 2026-10-22 y las ramas nuevas
+### 5.5 Re-ensayo con el estado de MAIN del 2026-10-22 y las ramas nuevas — HECHO, `rc=0`
 
 El ensayo de 5.2 (2026-10-21) es anterior a cuatro cambios:
 
@@ -228,7 +228,18 @@ El script ya admite ese punto de partida:
 - `NEVER_RUN`: las salta siempre;
 - `MANUAL_STORAGE_DROP=1`: borra las políticas de escritura de admin de `storage.objects`, como hizo el propietario.
 
-El 2026-10-22 **no se pudo ejecutar**: Docker Desktop no respondía (`dockerDesktopLinuxEngine` no encontrado). No se arrancó por iniciativa propia. Comando (C, local), sobre un árbol que contenga el SHA aprobado o las ramas de D-8:
+**Resultado del 2026-10-22** (el segundo intento, cuando Docker Desktop volvió con aprobación del propietario; evidencia en `docs/audit-v1/evidence/V1-DEPLOY-REHEARSAL/run-2026-10-22/`):
+
+- **Árbol:** develop `666d0a57` + 103400 (`74554ccd`), 103500 (`6904357c`), 100600 (`4b4acf81`) y los ROLLBACK de `0fe19e65`.
+- **Punto de partida:** las 4 ya aplicadas con VERIFY = 0 y las 14 políticas de storage borradas.
+- **Orden y CAND-04:** **40** migraciones; 100200 en la posición 39, después de 102600 (29).
+- **Primera aplicación:** **40/40, VERIFY = 0** (353 filas).
+- **Cartera:** 2 aperturas (60 OT), reconcile 0.
+- **ROLLBACK de 38:** catálogo **idéntico a MAIN sin el fichero de restauración**, así que `0fe19e65` queda probado.
+- **Re-aplicación:** VERIFY = 0 y catálogo idéntico.
+- **`apply-main-migration.sh`, contra un contenedor con el estado de hoy:** `--verify-only` = 0 en las 4 aplicadas; `--record-only` registra sin ejecutar y es idempotente; se niega a re-aplicar las 4, a registrar 100200 y a ejecutar 100100. El VERIFY de 100100 no vale para RB-16, porque falta su tabla de copia; se usa `storage_escritura_admin = 0`.
+
+Vale para el SHA que contenga **exactamente** esos blobs. Si D-8 fusiona otra versión, se repite. Comando (C, local), sobre un árbol que contenga el SHA aprobado o las ramas de D-8:
 
 ```bash
 PREAPPLIED_ON_MAIN="20261023100000 20261023100300 20261023100400 20261023100500" NEVER_RUN="20261023100100" MANUAL_STORAGE_DROP=1 \
@@ -236,7 +247,7 @@ EXTRA_MIGRATIONS="supabase/migrations/20261022103400_v1_exam_penalty_official_de
 bash docs/audit-v1/evidence/V1-DEPLOY-REHEARSAL/rehearse-v1-deploy.sh /tmp/v1-rehearsal-2026-10-22
 ```
 
-(`EXTRA_MIGRATIONS` solo hace falta mientras 103400 y 103500 no estén en `PENDING_MIGRATIONS.txt`.) Con `0fe19e65` en el árbol, el log debe decir `ROLLBACK inverso de N migraciones: catalogo == estado tras las 2 LEGACY` **sin** usar el fichero de restauración. **Mientras no esté en verde, F0.3 no se da por cumplido.**
+(`EXTRA_MIGRATIONS` solo hace falta mientras 103400 y 103500 no estén en `PENDING_MIGRATIONS.txt`.) Con `0fe19e65` en el árbol, el log debe decir `ROLLBACK inverso de N migraciones: catalogo == estado tras las 2 LEGACY` **sin** usar el fichero de restauración. F0.3 se cumple con esta ejecución para esos blobs. Sobre el SHA final se repite junto con el gate.
 
 ### 5.4 Qué NO puede demostrar este ensayo
 
@@ -559,7 +570,7 @@ MSYS_NO_PATHCONV=1 docker run --rm -i -e MAIN_DB_URL public.ecr.aws/supabase/pos
 Casos concretos:
 
 - **HALLAZGO DEL ENSAYO DEL 2026-10-21.** Ya está corregido en la rama `fix/v1-rollback-blocks-main-acl` `0fe19e65`.
-  - **Con esa corrección en el SHA desplegado**, `R2_post_rollback_restore_main_acl.sql` pasa a ser una **red de seguridad**: es idempotente, se puede ejecutar igual y no hace daño. Re-ensayo pendiente (5.5).
+  - **Con esa corrección en el SHA desplegado**, `R2_post_rollback_restore_main_acl.sql` pasa a ser una **red de seguridad**: es idempotente, se puede ejecutar igual y no hace daño. Probado en el re-ensayo del 2026-10-22 (5.5): con `0fe19e65`, el ROLLBACK solo ya deja el catálogo idéntico a MAIN.
   - **Sin la corrección**, sigue siendo **obligatorio** en R-2.
   - Detalle original: los bloques ROLLBACK de `20261022101900`, `20261022101600` y `20261022101200` **no devuelven la forma de MAIN**. Se escribieron contra los stubs del gate, no contra la captura real. Ver `docs/audit-v1/evidence/V1-DEPLOY-REHEARSAL/rollback_diff.txt`.
   - El más grave es el de **101900**: hace `grant all` a `anon` y `authenticated` en las 4 tablas del foro. `anon` recibiría TRUNCATE, que ignora RLS. **P1**.
@@ -669,7 +680,7 @@ Incidencias:
 ## 14. Bloqueantes abiertos para ejecutar este plan
 
 1. D-1 … D-4 y D-6 … D-10 sin decidir.
-2. Las ramas de D-8 no están fusionadas en develop. 103400 y 103500 **no se han ensayado**. 100600 se ensayó con un borrador anterior. La corrección de ROLLBACK de `0fe19e65` se ensayó solo como fichero aparte (`R2_post_rollback_restore_main_acl.sql`). Re-ensayo preparado en 5.5, sin ejecutar porque Docker Desktop no respondía el 2026-10-22.
+2. Las ramas de D-8 no están fusionadas en develop. Sus blobs actuales están ensayados (5.5, 40/40). Si cambian al fusionarse, se repite el ensayo. La clase de 103400 y 103500 (E?) la confirma Bot.
 3. No se sabe si `20261020100000`/`20261021100000` están en MAIN (F1.1).
 4. ~~Pertenencia a `supabase_storage_admin`~~: resuelto. `postgres` no pertenece; RB-16 se hizo a mano y 100100 queda fuera.
 5. No hay receptor de alertas (D-4).

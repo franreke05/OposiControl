@@ -95,6 +95,34 @@ Ver la sección 5.4 del plan:
   - `PREAPPLIED_ON_MAIN` las carga como estado inicial, exige VERIFY = 0 y las deja fuera del orden y del ROLLBACK;
   - `NEVER_RUN` salta las versiones indicadas;
   - `MANUAL_STORAGE_DROP=1` borra las políticas de escritura de admin de `storage.objects`.
-- **Re-ensayo con el estado de MAIN y las ramas nuevas:** `20261022103400` (`feature/v1-exam-penalty-scope` `74554ccd`), `20261022103500` (`fix/v1-daily-challenge-dst` `6904357c`), `20261023100600` (`feature/v1-plans-store-grants-revoke` `4b4acf81`) y los ROLLBACK corregidos (`fix/v1-rollback-blocks-main-acl` `0fe19e65`).
-  - Estado: **NO EJECUTADO**. Docker Desktop no respondía; ver `run-2026-10-22-docker-down.log`. No se arrancó por iniciativa propia.
+- **Re-ensayo con el estado de MAIN y las ramas nuevas** (primer intento del 2026-10-22; el segundo, ya ejecutado, está abajo): `20261022103400` (`feature/v1-exam-penalty-scope` `74554ccd`), `20261022103500` (`fix/v1-daily-challenge-dst` `6904357c`), `20261023100600` (`feature/v1-plans-store-grants-revoke` `4b4acf81`) y los ROLLBACK corregidos (`fix/v1-rollback-blocks-main-acl` `0fe19e65`).
+  - Primer intento: no se ejecutó porque Docker Desktop no respondía; el segundo, ya ejecutado, está abajo; ver `run-2026-10-22/attempt1-docker-down.log`. No se arrancó por iniciativa propia.
   - El comando está en la sección 5.5 del plan.
+
+### Re-ensayo ejecutado (2026-10-22, tras volver Docker Desktop): `rc=0`, `V1-DEPLOY-REHEARSAL OK`
+
+Ficheros en `run-2026-10-22/` (el árbol y los blobs están en `SOURCES.txt`):
+
+| Paso | Resultado |
+|---|---|
+| Punto de partida (MAIN de hoy) | 100000, 100300, 100400 y 100500 cargadas con VERIFY = 0 (`preapplied.txt`); 14 políticas de escritura de `storage.objects` borradas como hizo el propietario; 100100 fuera del orden |
+| Orden | **40** migraciones. 103400 y 103500 en las posiciones 37-38. **CAND-04**: 100200 en la 39, después de 102600 (29). 100600 en la 40 |
+| Primera aplicación | 40/40, VERIFY = 0 (353 filas) |
+| Cartera | 2 `legacy_opening` (60 OT), reconcile 0, saldos sin cambios |
+| ROLLBACK de 38 en orden inverso | **Catálogo idéntico a MAIN SIN `R2_post_rollback_restore_main_acl.sql`**: los bloques de `0fe19e65` quedan probados. El fichero de restauración pasa a ser una red de seguridad |
+| Re-aplicación | 38/38, VERIFY = 0, catálogo idéntico a la primera aplicación, sin aperturas duplicadas |
+| `assertions.sql` | Informativo (base no vacía), como en el ensayo del 2026-10-21 |
+
+Modos de `apply-main-migration.sh` (`run-2026-10-22/apply-main-migration-modes.log`), contra el contenedor propio `v1-deploy-rehearsal-wrapper` con el estado de MAIN de hoy:
+
+- `--verify-only` de las 4 aplicadas: VERIFY = 0 en las 4.
+- Aplicar 100300: STOP (ya aplicada).
+- `--record-only` con la versión mal tecleada: no toca nada (historial con 0 filas).
+- `--record-only` de las 4: registradas sin ejecutar el fichero.
+- Repetir el registro: no-op idempotente (`on conflict do nothing`; el mensaje dice «registrada»).
+- `--record-only` de 100200: STOP.
+- Aplicar 100100: STOP.
+- `--verify-only` de 100100 tras el borrado manual: valores distintos de 0, como es de esperar, porque no existe su tabla de copia. **Para RB-16 no se usa el VERIFY de 100100; se usa `storage_escritura_admin` = 0.**
+- `00_history_readonly.sql` y `01_catalog_preflight_readonly.sql` se ejecutan sobre ese estado: `storage_escritura_admin = 0` y `storage_lectura_admin = 3`.
+
+El primer intento del día, antes de que volviera Docker Desktop, está en `run-2026-10-22/attempt1-docker-down.log`.

@@ -1,0 +1,24 @@
+                  comprobacion                   | valor |                                                regla                                                 
+-------------------------------------------------+-------+------------------------------------------------------------------------------------------------------
+ accesos_compra_duplicados_usuario_examen        |     0 | BLOQUEA 20261022100500 (V1_REDEEM_PREFLIGHT)
+ admins_y_moderadores_no_activos                 |     0 | INFORMA + APROBACION: dejan de ser staff en RLS con 20261023100000 / 100300
+ carteras_con_saldo_sin_libro                    |     1 | INFORMA + APROBACION: recibiran UNA fila legacy_opening = saldo (20261022100300 paso 7)
+ carteras_libro_no_cuadra_con_saldo              |     1 | INFORMA + APROBACION: recibiran UNA fila legacy_opening = saldo - suma(libro)
+ carteras_total                                  |     3 | INFORMA
+ compras_duplicadas_proveedor_transaccion        |     0 | BLOQUEA 20261022100400 (V1_ORDERS_PREFLIGHT)
+ compras_total_por_estado                        |       | pagada=1
+ examenes_sin_comunidad                          |     0 | BLOQUEA 20261022100200 (V1_COMMUNITY_PREFLIGHT); 2026-10-19 = 0 de 3
+ libro_claves_idempotencia_repetidas_por_usuario |     0 | BLOQUEA 20261022100300 (unique por usuario): debe ser 0
+ libro_filas_sin_cartera                         |     0 | INFORMA: el relleno las encadena; el saldo resultante pasa a ser la suma
+ libro_varias_filas_mismo_tipo_por_pedido        |     0 | BLOQUEA 20261022100300 (V1_LEDGER_PREFLIGHT 2)
+ perfiles_por_estado_cuenta                      |       | activa=4
+ publicaciones_y_comentarios_oposired            |     0 | INFORMA: 2026-10-19 = 0 (20261022101900)
+ regalos_sin_plazo                               |     0 | INFORMA: 20261022100700 no los toca (solo filas nuevas); se anotan
+ slice3_intentos_abiertos_duplicados             |     0 | BLOQUEA (debe ser 0): historica de Slice 3, ya aplicada; se repite por seguridad
+ staging_importacion_duplicados_sin_resolver     |     0 | INFORMA: lotes con duplicados no se podran publicar hasta resolverlos (IMPORT_DUPLICATES_UNRESOLVED)
+ storage_objetos_por_bucket                      |       | exam-resources=1, news-assets=1, news-images=1
+ suma_absoluta_aperturas_previstas_OT            |    60 | INFORMA + APROBACION: OT totales que se anotan como apertura (no cambia ningun saldo)
+ superadmins_activos                             |     1 | BLOQUEA si 0: nadie podria administrar tras el despliegue
+ suscripciones_duplicadas_proveedor_externo      |     0 | BLOQUEA 20261022102600 (V1_STORE_PAYMENTS_PREFLIGHT)
+(20 rows)
+

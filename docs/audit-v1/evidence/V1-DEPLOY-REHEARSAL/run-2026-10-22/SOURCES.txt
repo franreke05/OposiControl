@@ -1,0 +1,14 @@
+Arbol del re-ensayo 2026-10-22 = git archive de docs/v1-production-deploy-plan sobre origin/develop 666d0a57, mas estos blobs (git show <commit>:<ruta>):
+74554ccd  95411fe58b1d  supabase/migrations/20261022103400_v1_exam_penalty_official_default.sql      (feature/v1-exam-penalty-scope)
+6904357c  6a1c95defc8b  supabase/migrations/20261022103500_v1_daily_challenge_dst.sql               (fix/v1-daily-challenge-dst)
+4b4acf81  f68f2a28f544  supabase/migrations/20261023100600_security_plans_store_client_write_revoke.sql (feature/v1-plans-store-grants-revoke)
+0fe19e65  111a2fe76fd8  supabase/migrations/20261022101200_v1_daily_challenge.sql                   (fix/v1-rollback-blocks-main-acl)
+0fe19e65  d7a5862322f0  supabase/migrations/20261022101600_v1_stats.sql
+0fe19e65  d054c44b6b26  supabase/migrations/20261022101900_v1_foro.sql
+0fe19e65  a122496a0cb5  supabase/baseline/main_shape_subset_extra_engagement.sql
+Comando:
+PREAPPLIED_ON_MAIN="20261023100000 20261023100300 20261023100400 20261023100500" NEVER_RUN="20261023100100" MANUAL_STORAGE_DROP=1 \
+EXTRA_MIGRATIONS="supabase/migrations/20261022103400_v1_exam_penalty_official_default.sql supabase/migrations/20261022103500_v1_daily_challenge_dst.sql" \
+bash docs/audit-v1/evidence/V1-DEPLOY-REHEARSAL/rehearse-v1-deploy.sh <salida>        -> rc=0, V1-DEPLOY-REHEARSAL OK
+Modos de apply-main-migration.sh: apply-main-migration-modes.sh (contenedor propio v1-deploy-rehearsal-wrapper) -> apply-main-migration-modes.log
+Contenedores propios: v1-deploy-rehearsal-pg17 y v1-deploy-rehearsal-wrapper, borrados por nombre al terminar. oposi-exam-local-* y oposi-control-e2e-* no se tocaron.
