@@ -13,7 +13,10 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.platform.LocalUriHandler
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import androidx.compose.foundation.layout.height
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
@@ -174,22 +177,36 @@ private fun QuestionResourceRowView(
     onIntent: (QuestionsIntent) -> Unit,
 ) {
     val tokens = GlassTheme.tokens
-    Row(
+    var openError by remember(row.openUrl) { mutableStateOf<String?>(null) }
+    Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(Radius.md)
             .background(tokens.surfaceSolid)
             .border(1.dp, tokens.border, Radius.md)
             .padding(Spacing.xs),
+        verticalArrangement = Arrangement.spacedBy(Spacing.xxs),
+    ) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
     ) {
-        SemanticIconContainer(
-            icon = questionResourceIcon(resource.type),
-            role = SemanticRole.INFO,
-            size = Sizing.iconButtonSmall,
-            iconSize = 16.dp,
-        )
+        val imageUrl = row.openUrl?.takeIf { resource.type == QuestionResourceType.IMAGE }
+        if (imageUrl != null) {
+            // Para comprobar de un vistazo QUÉ imagen se subió, sin salir del panel.
+            QuestionResourceImagePreview(
+                url = imageUrl,
+                modifier = Modifier.width(96.dp).height(64.dp).clip(Radius.sm).background(tokens.surfaceMuted),
+            )
+        } else {
+            SemanticIconContainer(
+                icon = questionResourceIcon(resource.type),
+                role = SemanticRole.INFO,
+                size = Sizing.iconButtonSmall,
+                iconSize = 16.dp,
+            )
+        }
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(
                 text = row.title,
@@ -205,14 +222,13 @@ private fun QuestionResourceRowView(
                 color = tokens.textSecondary,
             )
         }
-        // Para comprobar QUÉ se subió: el archivo se abre en el navegador o reproductor del sistema con la URL firmada
-        // (caduca en una hora; al volver a cargar la pregunta llega otra). Nunca se descarga dentro del panel.
+        // El archivo entero (audio, vídeo o la imagen a tamaño real) se abre en el navegador o reproductor del sistema con
+        // la URL firmada (caduca en una hora; al volver a cargar la pregunta llega otra). Si no se puede, se dice por qué.
         row.openUrl?.let { url ->
-            val uriHandler = LocalUriHandler.current
             SecondaryButton(
                 text = "Abrir",
                 size = ButtonSize.COMPACT,
-                onClick = { runCatching { uriHandler.openUri(url) } },
+                onClick = { openError = openQuestionResourceExternally(url) },
                 icon = { AppIconImage(AppIcon.VIEW, size = 13.dp) },
             )
         }
@@ -232,6 +248,8 @@ private fun QuestionResourceRowView(
                 size = Sizing.iconButtonSmall,
             ) { AppIconImage(AppIcon.DELETE, size = 14.dp) }
         }
+    }
+    openError?.let { Text(text = it, style = MaterialTheme.typography.bodySmall, color = tokens.dangerInk) }
     }
 }
 
