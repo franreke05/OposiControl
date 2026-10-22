@@ -73,7 +73,14 @@ for m in $(tr -d '\r' < supabase/baseline/PENDING_MIGRATIONS.txt | grep -Ev '^[[
 for f in supabase/migrations/20261020100000_*.sql supabase/migrations/20261021100000_*.sql supabase/migrations/20261023*_security_*.sql; do
   m="$(basename "$f" .sql)"; PATHOF[$m]="$f"; done
 for f in ${EXTRA_MIGRATIONS:-}; do [ -s "$f" ] || fail "EXTRA_MIGRATIONS: $f no existe"; m="$(basename "$f" .sql)"; PATHOF[$m]="$f"; done
-ORDER="$(printf '%s\n' "${!PATHOF[@]}" | sort)"
+ALL="$(printf '%s\n' "${!PATHOF[@]}" | sort)"
+# Estado de MAIN despues de 2026-10-22: PREAPPLIED_ON_MAIN = versiones ya aplicadas en MAIN FUERA del historial (se cargan como
+# parte del punto de partida y NO entran en el orden ni en el ROLLBACK); NEVER_RUN = versiones que no se ejecutan nunca (100100:
+# RB-16 hecho a mano); MANUAL_STORAGE_DROP=1 reproduce el borrado manual de las 14 politicas de escritura de storage.objects.
+PRE_V="${PREAPPLIED_ON_MAIN:-}"; NEVER_V="${NEVER_RUN:-}"
+in_v() { local m="$1" v; for v in $2; do [ "${m%%_*}" = "$v" ] && return 0; done; return 1; }
+ORDER="$(for m in $ALL; do in_v "$m" "$PRE_V $NEVER_V" || echo "$m"; done)"
+PRE_ORDER="$(for m in $ALL; do in_v "$m" "$PRE_V" && echo "$m"; done)"
 n=0; : > "$OUT/order.txt"
 for m in $ORDER; do n=$((n + 1)); printf '%2d %s %s\n' "$n" "$m" "$(sha256sum "${PATHOF[$m]}" | cut -c1-16)" >> "$OUT/order.txt"; done
 say "ok:   orden real: $n migraciones (fichero order.txt con sha256/16 de cada una)"
@@ -115,15 +122,38 @@ run_sql() { # $1 = fichero; $2 = salida
   psqlc -v ON_ERROR_STOP=1 < "$1" > "$2" 2>&1 || { tail -5 "$2" | tee -a "$LOG"; fail "$1 no se ejecuta"; }
 }
 
+# ---- 2b. Punto de partida = MAIN de hoy: lo ya aplicado fuera del historial y el borrado manual de RB-16 ----
+: > "$OUT/preapplied.txt"
+for m in $PRE_ORDER; do
+  psqlc < "${PATHOF[$m]}" > /dev/null 2>"$err" || { cat "$err" | tee -a "$LOG"; fail "$m (ya aplicada en MAIN) no carga en el punto de partida"; }
+  out="$(block "${PATHOF[$m]}" VERIFY | psqlc -At -F '|' 2>&1)"; echo "$out" | sed "s/^/  preapplied $m | /" >> "$OUT/preapplied.txt"
+  echo "$out" | awk -F'|' '$2 != "0" {bad=1} END {exit bad}' || fail "$m: VERIFY del punto de partida distinto de 0"
+done
+[ -n "$PRE_ORDER" ] && say "ok:   punto de partida = MAIN 2026-10-22: aplicadas fuera del historial con VERIFY = 0: $(echo $PRE_ORDER | tr ' ' ',')"
+if [ "${MANUAL_STORAGE_DROP:-0}" = 1 ]; then
+  psqla -At > "$OUT/manual_storage_drop.txt" 2>"$err" <<'SQL' || { cat "$err"; fail "borrado manual de storage"; }
+do $$ declare p record; n int := 0; begin
+  for p in select polname from pg_policy where polrelid = 'storage.objects'::regclass and polcmd in ('a','w','d','*')
+             and (coalesce(pg_get_expr(polqual, polrelid), '') ~ '(es_admin|can_manage_content)\(' or coalesce(pg_get_expr(polwithcheck, polrelid), '') ~ '(es_admin|can_manage_content)\(')
+  loop execute format('drop policy %I on storage.objects', p.polname); n := n + 1; end loop;
+  raise notice 'politicas borradas: %', n; end $$;
+SQL
+  say "ok:   RB-16 a mano (como el propietario en Storage > Policies): $(grep -oE 'borradas: [0-9]+' "$err" || echo '?') politicas de escritura de storage.objects; $NEVER_V no se ejecuta nunca"
+fi
+
 # ---- 3. PREFLIGHT de solo lectura (los mismos ficheros que el propietario ejecutara en MAIN) ----
 run_sql "$SQLD/01_catalog_preflight_readonly.sql" "$OUT/pre_01_catalog.txt"
 run_sql "$SQLD/02_data_preflight_readonly.sql" "$OUT/pre_02_data.txt"
-run_sql supabase/canonical/sec_v1_01_main_intervention/01_preflight_readonly.sql "$OUT/pre_sec_v1_01_preflight.txt"
-run_sql supabase/canonical/sec_v1_01_main_intervention/02_checkpoint_and_compat_readonly.sql "$OUT/pre_sec_v1_01_checkpoint.txt"
 run_sql scripts/db-exam-community-audit.sql "$OUT/pre_exam_community_audit.txt"
-falses="$(grep -cE '\| f +\|' "$OUT/pre_sec_v1_01_preflight.txt" || true)"
-say "ok:   PREFLIGHT de solo lectura ejecutado (catalogo, datos, SEC-V1-01 preflight/checkpoint, auditoria de comunidad); SEC-V1-01 filas ok=false: $falses"
-[ "$falses" = 0 ] || fail "SEC-V1-01 preflight con filas false"
+if in_v 20261023100000 "$PRE_V"; then
+  say "ok:   PREFLIGHT de solo lectura ejecutado (catalogo, datos, auditoria de comunidad); SEC-V1-01 ya aplicada: su preflight no aplica"
+else
+  run_sql supabase/canonical/sec_v1_01_main_intervention/01_preflight_readonly.sql "$OUT/pre_sec_v1_01_preflight.txt"
+  run_sql supabase/canonical/sec_v1_01_main_intervention/02_checkpoint_and_compat_readonly.sql "$OUT/pre_sec_v1_01_checkpoint.txt"
+  falses="$(grep -cE '\| f +\|' "$OUT/pre_sec_v1_01_preflight.txt" || true)"
+  say "ok:   PREFLIGHT de solo lectura ejecutado (catalogo, datos, SEC-V1-01 preflight/checkpoint, auditoria de comunidad); SEC-V1-01 filas ok=false: $falses"
+  [ "$falses" = 0 ] || fail "SEC-V1-01 preflight con filas false"
+fi
 grep -E 'BLOQUEA' "$OUT/pre_02_data.txt" | awk -F'|' '$2+0 != 0 && $3 !~ /BLOQUEA si 0/ {print; bad=1} END {exit bad}' | tee -a "$LOG"; [ "${PIPESTATUS[1]}" = 0 ] || fail "preflight de datos con un BLOQUEA distinto de 0"
 
 # ---- 4. Primera aplicacion, en el orden real, con VERIFY despues de cada una ----
@@ -166,19 +196,21 @@ if psqlc < supabase/baseline/assertions.sql > "$OUT/assertions.txt" 2>&1; then s
 else say "info: assertions.sql del gate sobre la forma COMPLETA + semilla: FALLA (ver assertions.txt; escrito para el subconjunto vacio)"; fi
 
 # ---- 6. ROLLBACK en orden inverso (las LEGACY quedan: forward-only) ----
+rbn=0
 for m in $(echo "$ORDER" | sort -r); do
   case " $LEGACY_NO_ROLLBACK " in *" $m "*) continue ;; esac
   block "${PATHOF[$m]}" ROLLBACK | psqlc >/dev/null 2>"$err" || { cat "$err" | tee -a "$LOG"; fail "$m: ROLLBACK falla"; }
+  rbn=$((rbn + 1))
 done
 fingerprint "$tmp/f2"
-if cmp -s "$tmp/f0" "$tmp/f2"; then say "ok:   ROLLBACK inverso de $(( n - 2 )) migraciones: catalogo == estado tras las 2 LEGACY"
+if cmp -s "$tmp/f0" "$tmp/f2"; then say "ok:   ROLLBACK inverso de $rbn migraciones: catalogo == estado tras las 2 LEGACY"
 else
   diff "$tmp/f0" "$tmp/f2" > "$OUT/rollback_diff.txt"
   say "HALLAZGO: los bloques ROLLBACK solos NO devuelven la forma de MAIN ($(grep -c '^[<>]' "$OUT/rollback_diff.txt") lineas, rollback_diff.txt; < MAIN, > tras ROLLBACK)"
   psqlc < "$SQLD/R2_post_rollback_restore_main_acl.sql" >/dev/null 2>"$err" || { cat "$err" | tee -a "$LOG"; fail "R2_post_rollback_restore_main_acl.sql no se ejecuta"; }
   fingerprint "$tmp/f2b"
   cmp -s "$tmp/f0" "$tmp/f2b" || { diff "$tmp/f0" "$tmp/f2b" > "$OUT/rollback_diff_after_restore.txt"; fail "ROLLBACK + R2_post_rollback_restore_main_acl.sql sigue difiriendo (rollback_diff_after_restore.txt)"; }
-  say "ok:   ROLLBACK inverso de $(( n - 2 )) migraciones + R2_post_rollback_restore_main_acl.sql: catalogo == estado tras las 2 LEGACY (forma de MAIN exacta)"
+  say "ok:   ROLLBACK inverso de $rbn migraciones + R2_post_rollback_restore_main_acl.sql: catalogo == estado tras las 2 LEGACY (forma de MAIN exacta)"
 fi
 psqlc -At -F '|' > "$OUT/post_rollback_wallet.txt" 2>&1 <<'SQL'
 select 'legacy_opening_rows', count(*) from public.transacciones_cartera where referencia_tipo = 'legacy_opening';

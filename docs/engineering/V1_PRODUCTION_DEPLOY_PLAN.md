@@ -1,6 +1,17 @@
 # Plan de despliegue V1 a PRODUCCIÓN — backend OposiBots (Bot + Control)
 
-Estado: **PLAN, NO EJECUTADO.** Rama `docs/v1-production-deploy-plan` (desde `origin/develop` `ac0e1670`). Redactado el 2026-10-21.
+Estado: **PLAN, NO EJECUTADO.** Rama `docs/v1-production-deploy-plan`, rebasada sobre `origin/develop` `3e5ea526`. Redactado el 2026-10-21 y actualizado el 2026-10-22.
+
+**Cambio del 2026-10-22.** OposiControl informa de que, con GO del propietario, ya están aplicadas en MAIN con VERIFY = 0 y **fuera del historial** `supabase_migrations` (se ejecutaron como SQL suelto):
+
+- `20261023100000` (SEC-V1-01);
+- `20261023100300` (RB-18);
+- `20261023100400`;
+- `20261023100500` (RB-17, parte de Control).
+
+**RB-16 se hizo A MANO.** El propietario borró las 14 políticas en Storage > Policies, porque `20261023100100` se detuvo en su PREFLIGHT sin cambiar nada. `20261023100100` **no se ejecuta nunca**: no existe `private.sec_v1_storage_admin_policy_backup` y su PREFLIGHT fallaría cerrado.
+
+`service_role` conserva I/U/D en todas las tablas. Las tablas, filas y pasos de abajo ya reflejan este estado.
 Nada de este documento se ha ejecutado contra producción: ni SSH al VPS `oposibots-prod-01`, ni llamadas a `api.oposibots.es`, Cloudflare o al proyecto Supabase MAIN (`ndiooyyqtaeysnedywer`). El único trabajo hecho es local: el ensayo de migraciones (sección 5) en un contenedor PG17 desechable.
 
 **Quién decide:** OposiControl audita este plan; después, el **propietario** aprueba y ejecuta cada paso de producción. Ningún paso de producción lo ejecuta Claude.
@@ -38,7 +49,7 @@ export MAIN_DB_URL='postgresql://postgres.ndiooyyqtaeysnedywer:<CONTRASEÑA>@<HO
 
 | # | Requisito | Dónde se cumple | Estado |
 |---|---|---|---|
-| R1 | Ensayo completo de todas las migraciones sobre una copia con la forma de MAIN: PREFLIGHT, aplicar, VERIFY = 0, ROLLBACK, volver a aplicar, en el orden real e incluyendo CAND-04 | Sección 5 y `docs/audit-v1/evidence/V1-DEPLOY-REHEARSAL/` | **HECHO EN LOCAL**. Resultado en 5.2. Límites en 5.4. El ensayo sobre datos reales se repite en F3.4, sobre la restauración del backup. |
+| R1 | Ensayo completo de todas las migraciones sobre una copia con la forma de MAIN: PREFLIGHT, aplicar, VERIFY = 0, ROLLBACK, volver a aplicar, en el orden real e incluyendo CAND-04 | Sección 5 y `docs/audit-v1/evidence/V1-DEPLOY-REHEARSAL/` | **HECHO EN LOCAL** el 2026-10-21 (43/43). Resultado en 5.2. Límites en 5.4. **Re-ensayo PENDIENTE** con el estado de MAIN del 2026-10-22 y las ramas nuevas (5.5). El ensayo sobre datos reales se repite en F3.4, sobre la restauración del backup. |
 | R2 | Backup verificado con prueba de restauración | Fase F3 | PLAN. Necesita GO-3 y una decisión de coste (sección 12). |
 | R3 | Qué no se ha probado nunca contra GoTrue y Storage gestionados, y comprobaciones exactas tras el despliegue | Sección 8 | PLAN. Las comprobaciones se hacen en F6. |
 | R4 | Rollback por fases con un punto de no retorno explícito | Sección 7 (PNR = R-3) | PLAN |
@@ -56,7 +67,7 @@ export MAIN_DB_URL='postgresql://postgres.ndiooyyqtaeysnedywer:<CONTRASEÑA>@<HO
 - **Base de datos MAIN:** las migraciones de la sección 4 (hasta 43), en ese orden.
 - **No se despliega:** cliente OposiBot (sección 13), panel OposiControl (se distribuye aparte, después del backend: MASTER4-API-005), cambios de Caddy (las rutas de webhooks de tienda solo hacen falta con G1/D8; con los pagos apagados es más seguro dejarlas en deny-by-default, que responde 404), Cloudflare.
 
-Producción hoy (inventario de solo lectura del 2026-10-14, `DEPLOYMENT_PLAN.md` 10.1): `oposibots-prod-01` (Ubuntu, 4 vCPU, 7,7 GB), Caddy en el host, `bot-1`/`bot-2`/`control` con `oposicontrol-backend:cfa2e14afc8e`, Valkey, Prometheus, Grafana y Alertmanager. MAIN tiene aplicadas las migraciones hasta `20261015100000`. Si después se aplicaron `20261020100000`/`20261021100000` (DEBT-156b, a mano), **no consta**: lo resuelve F1.1.
+MAIN, además, desde el 2026-10-22: #37, #40, #41 y #42 aplicadas y RB-16 hecho a mano (cabecera). Producción hoy (inventario de solo lectura del 2026-10-14, `DEPLOYMENT_PLAN.md` 10.1): `oposibots-prod-01` (Ubuntu, 4 vCPU, 7,7 GB), Caddy en el host, `bot-1`/`bot-2`/`control` con `oposicontrol-backend:cfa2e14afc8e`, Valkey, Prometheus, Grafana y Alertmanager. MAIN tiene aplicadas las migraciones hasta `20261015100000`. Si después se aplicaron `20261020100000`/`20261021100000` (DEBT-156b, a mano), **no consta**: lo resuelve F1.1.
 
 ## 3. Orden imagen ↔ migraciones (la regla)
 
@@ -67,7 +78,8 @@ Producción hoy (inventario de solo lectura del 2026-10-14, `DEPLOYMENT_PLAN.md`
 2. **`20261022100700_v1_admin_grant` nunca sin el código `admin_grant_exam_access` del Ktor.** Añade el trigger `GIFT_UNLIMITED_FORBIDDEN` y cambia la firma de la RPC. El control VIEJO (`cfa2e14`) inserta directo en `contenido_desbloqueado_usuario` sin `valido_hasta` y recibiría 23514. Por eso los tres Ktor viejos se **paran antes** de migrar (F4.1) y el siguiente arranque ya es la imagen V1.
 3. La imagen VIEJA deja de ser compatible a partir de `20261022100300`: retira las escrituras de `service_role` en el libro y la cartera. Además, `20261022100600` y `20261022101000` borran la firma vieja de `app_my_exams_collection` y `20261022101600` borra una columna y una vista. Consecuencia: **la imagen vieja solo puede volver mientras se deshacen TODAS las migraciones** (rollback R-2, sección 7). Regla heredada que sigue vigente: la imagen anterior a `20260930100800` no se rearranca nunca.
 4. Las `_security_` de DEBT-156b (`20261023100000..100600`) no dependen del Ktor (Ktor escribe con `service_role`). Se aplican en la misma ventana, por versión. **CAND-04:** `20261023100200` va después de `20261022102600`, porque lee `compras_usuario.entorno`. El orden numérico ya lo cumple.
-5. `20261023100100` (RB-16, políticas de `storage.objects`) puede **detenerse en su PREFLIGHT** si el rol que aplica no pertenece a `supabase_storage_admin`. Se ensayó en local (5.2). Si pasa en MAIN, no cambia nada y **no bloquea el resto**: se anota y RB-16 queda abierto (decisión D-5, sección 12).
+5. `20261023100100` (RB-16) **NO se ejecuta**. En MAIN se detuvo en su PREFLIGHT, porque `postgres` no pertenece a `supabase_storage_admin`; el ensayo local de 5.2 ya lo predijo. RB-16 está **HECHO A MANO**: el propietario borró las 14 políticas en Storage > Policies el 2026-10-22. Comprobación (F1.2 y F4.4, `RO`): `storage_escritura_admin = 0` en `01_catalog_preflight_readonly.sql`. `apply-main-migration.sh` se niega a ejecutar 100100.
+6. `20261023100000`, `100300`, `100400` y `100500` **ya están en MAIN**. No se re-aplican: sus PREFLIGHT aceptan el estado aplicado y serían un no-op, pero se saltan igualmente. El script se niega a aplicarlas. En F1 solo se comprueba su VERIFY. Registrarlas en el historial es la decisión D-10.
 
 ## 4. Migraciones y orden exacto
 
@@ -96,13 +108,13 @@ Columnas:
 | 13 | `20261022101000_v1_demo_mode` | `3f614032342b` | C | Redefine `app_my_exams_collection` |
 | 14 | `20261022101100_v1_attempt_limiter` | `9101379f10d4` | E | — |
 | 15 | `20261022101150_v1_plan_catalog` | `1db4668a4202` | E | — |
-| 16 | `20261022101200_v1_daily_challenge` | `f2e1dc5a4172` | H | Retira grants de cliente sobre objetos de MAIN |
+| 16 | `20261022101200_v1_daily_challenge` | `f2e1dc5a4172` → `111a2fe76fd8`† | H | Retira grants de cliente sobre objetos de MAIN |
 | 17 | `20261022101300_v1_official_rules` | `4b4b9c18a9b3` | E | — |
 | 18 | `20261022101500_v1_config_bounds` | `1da70fd8733e` | E | — |
-| 19 | `20261022101600_v1_stats` | `30d1abd936c0` | C | Borra la columna `ventana_tiempo_medio_ms` y la vista `ranking_ventanas_rapidas` |
+| 19 | `20261022101600_v1_stats` | `30d1abd936c0` → `d7a5862322f0`† | C | Borra la columna `ventana_tiempo_medio_ms` y la vista `ranking_ventanas_rapidas` |
 | 20 | `20261022101700_v1_ranking` | `55bc11ddf21d` | E | — |
 | 21 | `20261022101800_v1_referral` | `9a4467accee4` | E | Trigger en `auth.users` (sección 8, G-4) |
-| 22 | `20261022101900_v1_foro` | `bdd639676d1d` | H | Publicaciones y comentarios = 0 (2026-10-19) |
+| 22 | `20261022101900_v1_foro` | `bdd639676d1d` → `d054c44b6b26`† | H | Publicaciones y comentarios = 0 (2026-10-19) |
 | 23 | `20261022102000_v1_import_reserves` | `3b25340b7136` | E | Duplicados de staging (solo informa) |
 | 24 | `20261022102100_v1_razonado_markup` | `91e321a19616` | E | — |
 | 25 | `20261022102200_v1_auth_code_binding` | `3358285c2072` | E | Va con PKCE (`AUTH_PKCE_MODE=required`) |
@@ -117,13 +129,19 @@ Columnas:
 | 34 | `20261022103100_v1_store_payments_round4` | `103dc7dde657` | E | — |
 | 35 | `20261022103200_v1_store_payments_round5` | `df9798446385` | E | — |
 | 36 | `20261022103300_v1_store_payments_round6` | `953f8e469b52` | E | — |
-| 37 | `20261023100000_security_content_admin_write_revoke` (SEC-V1-01 / RB-01) | `d96765e28acc` | H | Preflight propio: 70/70 `t` el 2026-10-19. Admins no activos: aprobación. |
-| 38 | `20261023100100_security_storage_admin_write_revoke` (RB-16) | `fcea91b64077` | H | Puede detenerse por la pertenencia a `supabase_storage_admin` (D-5) |
+| 36a | `20261022103400_v1_exam_penalty_official_default` | `95411fe58b1d` | E? | NUEVA. Rama `feature/v1-exam-penalty-scope` `74554ccd` (sin fusionar en develop). Clase por confirmar con Bot. **Pendiente de ensayo** (5.5) |
+| 36b | `20261022103500_v1_daily_challenge_dst` | `6a1c95defc8b` | E? | NUEVA. Rama `fix/v1-daily-challenge-dst` `6904357c` (sin fusionar). Reto diario con cambio de hora (DST). **Pendiente de ensayo** (5.5) |
+| 37 | `20261023100000_security_content_admin_write_revoke` (SEC-V1-01 / RB-01) | `d96765e28acc` | H | **YA APLICADA EN MAIN (2026-10-22, VERIFY 0, fuera del historial). SE SALTA.** F1: `--verify-only` = 0 |
+| 38 | `20261023100100_security_storage_admin_write_revoke` (RB-16) | `fcea91b64077` | H | **NO SE EJECUTA NUNCA.** RB-16 HECHO A MANO el 2026-10-22 (14 políticas borradas en Storage > Policies). Comprobación: `storage_escritura_admin = 0` |
 | 39 | `20261023100200_security_revenue_excludes_sandbox` (PAY-F3, **CAND-04**) | `879bc8f2ecc4` | H | Después de #29 |
-| 40 | `20261023100300_security_moderator_requires_active_account` (RB-18) | `294080b01de0` | H | — |
-| 41 | `20261023100400_security_noticia_trigger_search_path` | `0bb99d024e9c` | H | — |
-| 42 | `20261023100500_security_admin_tables_write_revoke` (RB-17, parte de Control) | `3aba58fecce9` | H | **Fix listo, no aplicado** (en `origin/develop` `ac0e1670`) |
-| 43 | `20261023100600_security_plans_store_client_write_revoke` (SEC-BOT-P3) | `b39f7cc08aff`* | H | *Borrador sin commit de `feature/v1-plans-store-grants-revoke` (worktree `OposiControl-Revoke`). Ensayado con ese borrador. Sobre la forma de MAIN es un **no-op que fija el estado** (5.3). **Re-ensayar si cambia su blob.** |
+| 40 | `20261023100300_security_moderator_requires_active_account` (RB-18) | `294080b01de0` | H | **YA APLICADA EN MAIN (2026-10-22). SE SALTA.** |
+| 41 | `20261023100400_security_noticia_trigger_search_path` | `0bb99d024e9c` | H | **YA APLICADA EN MAIN (2026-10-22). SE SALTA.** |
+| 42 | `20261023100500_security_admin_tables_write_revoke` (RB-17, parte de Control) | `3aba58fecce9` | H | **YA APLICADA EN MAIN (2026-10-22). SE SALTA.** RB-17: fix aplicado (parte de Control); la parte de Bot va en #30 |
+| 43 | `20261023100600_security_plans_store_client_write_revoke` (SEC-BOT-P3) | `f68f2a28f544` | H | Rama `feature/v1-plans-store-grants-revoke` `4b4acf81` (sin fusionar en develop). Sobre la forma de MAIN es un **no-op que fija el estado** (5.3). Ensayada el 2026-10-21 con un borrador anterior (`b39f7cc08aff`); la versión con commit está **pendiente de re-ensayo** (5.5) |
+
+† Blob con `fix/v1-rollback-blocks-main-acl` `0fe19e65`: solo cambian los bloques ROLLBACK (comentados), que ahora restauran el ACL y las políticas exactas de MAIN. El SQL que se aplica no cambia. Se despliega el blob que esté en el SHA aprobado, y `apply-main-migration.sh` lo imprime.
+
+**Pendientes de aplicar en la ventana: hasta 40** (las 2 LEGACY si F1.1 dice que faltan, 34 de PENDING, #36a, #36b, #39 y #43). **Se saltan:** #37, #40, #41 y #42 (ya en MAIN). **Nunca:** #38. #39 (`20261023100200`) sigue pendiente y va después de #29 (CAND-04).
 
 Todas llevan su propio `begin; … commit;` y `lock_timeout` (1-5 s). Un fallo deshace solo esa migración.
 
@@ -195,6 +213,31 @@ Storage:
 
 DESPUÉS: todo `false` salvo `authenticated` INSERT en `invitaciones_referido`, que se mantiene a propósito (`invitaciones_referido_insert_propias`). Además, 0 políticas `*_admin_all` y 0 políticas de escritura de storage con `es_admin` (si RB-16 se aplicó).
 
+### 5.5 Re-ensayo pendiente con el estado de MAIN del 2026-10-22 y las ramas nuevas
+
+El ensayo de 5.2 (2026-10-21) es anterior a cuatro cambios:
+
+- las 4 migraciones de seguridad ya aplicadas en MAIN;
+- RB-16 hecho a mano;
+- `20261022103400` y `20261022103500`;
+- la versión con commit de `20261023100600` y la corrección de los ROLLBACK (`0fe19e65`).
+
+El script ya admite ese punto de partida:
+
+- `PREAPPLIED_ON_MAIN`: las carga como estado inicial, comprueba su VERIFY = 0 y las deja fuera del orden y del ROLLBACK;
+- `NEVER_RUN`: las salta siempre;
+- `MANUAL_STORAGE_DROP=1`: borra las políticas de escritura de admin de `storage.objects`, como hizo el propietario.
+
+El 2026-10-22 **no se pudo ejecutar**: Docker Desktop no respondía (`dockerDesktopLinuxEngine` no encontrado). No se arrancó por iniciativa propia. Comando (C, local), sobre un árbol que contenga el SHA aprobado o las ramas de D-8:
+
+```bash
+PREAPPLIED_ON_MAIN="20261023100000 20261023100300 20261023100400 20261023100500" NEVER_RUN="20261023100100" MANUAL_STORAGE_DROP=1 \
+EXTRA_MIGRATIONS="supabase/migrations/20261022103400_v1_exam_penalty_official_default.sql supabase/migrations/20261022103500_v1_daily_challenge_dst.sql" \
+bash docs/audit-v1/evidence/V1-DEPLOY-REHEARSAL/rehearse-v1-deploy.sh /tmp/v1-rehearsal-2026-10-22
+```
+
+(`EXTRA_MIGRATIONS` solo hace falta mientras 103400 y 103500 no estén en `PENDING_MIGRATIONS.txt`.) Con `0fe19e65` en el árbol, el log debe decir `ROLLBACK inverso de N migraciones: catalogo == estado tras las 2 LEGACY` **sin** usar el fichero de restauración. **Mientras no esté en verde, F0.3 no se da por cumplido.**
+
 ### 5.4 Qué NO puede demostrar este ensayo
 
 - **Datos reales.** La semilla es sintética. Los PREFLIGHT de datos y el relleno `legacy_opening` sobre las filas de MAIN se prueban en F3.4, sobre la restauración del backup fresco, y se aprueban con F1.3.
@@ -238,22 +281,26 @@ Guardar cada salida completa fuera del repo (`~/.oposibots-gate/v1-deploy/<fecha
 
 1. **Historial:** `docs/engineering/v1-deploy/00_history_readonly.sql`.
    - Esperado: 77 versiones (o 79 si ya se aplicaron 20261020/21), la última `20261015100000` (o `20261021100000`) y ninguna versión `>= 20261016` fuera de la sección 4.
+   - #37, #40, #41 y #42 se aplicaron el 2026-10-22 como SQL suelto (100300, 100400 y 100500 con el MCP). Según OposiControl **no** están en el historial. Si F1.1 muestra filas del 2026-10-22 con otra versión o nombre (el MCP puede registrar con su propia marca de tiempo), son esas y **no son deriva**: se anotan, y D-10 decide si además se registra la versión del repo.
    - Si `20261020100000`/`20261021100000` ya están, se quitan las filas 1-2 de la sección 4.
    - Si su huella física existe pero la versión no está registrada, solo se registra con el `insert` de F4.3, sin re-aplicar.
    - Además, leer las columnas del historial: `select column_name from information_schema.columns where table_schema = 'supabase_migrations' and table_name = 'schema_migrations';` (deben existir `version` y `name`).
 2. **Catálogo:** `docs/engineering/v1-deploy/01_catalog_preflight_readonly.sql`. Se compara con 5.3. Se anota:
-   - `puede_cambiar_politicas_storage`: si es `false`, RB-16 se detendrá (D-5);
+   - **RB-16 (hecho a mano):** `storage_escritura_admin` tiene que dar **0** (`storage_lectura_admin` = 3). Si da algo distinto de 0, NO-GO: alguien ha vuelto a crear una política de escritura de admin. `puede_cambiar_politicas_storage` es solo informativo, porque 100100 no se ejecuta;
+   - después de 100500, que ya está en MAIN, las 4 tablas de RB-17 dan `false` en I/U/D, salvo `authenticated` INSERT en `invitaciones_referido`;
    - el número de Edge Functions (panel > Edge Functions; esperado 0).
 3. **Datos (agregados; leen filas, por lo que necesitan su propio GO-1b):** `docs/engineering/v1-deploy/02_data_preflight_readonly.sql`.
    - Toda fila `BLOQUEA` debe dar 0 (`superadmins_activos` debe ser ≥ 1).
    - Las filas `INFORMA + APROBACION` las aprueba el propietario por escrito (D-2).
-4. **SEC-V1-01:**
-   - `supabase/canonical/sec_v1_01_main_intervention/01_preflight_readonly.sql`: todas las filas `ok = t`;
-   - `02_checkpoint_and_compat_readonly.sql`: guardar la salida completa, porque es la foto que restaura el ROLLBACK de #37.
-5. **Comunidad:** `scripts/db-exam-community-audit.sql`. `without_community` debe ser 0.
-6. **VERIFY previo de cada `_security_`** (foto antes de aplicar; valores distintos de 0 son normales aquí):
+4. **Seguridad ya aplicada el 2026-10-22** (#37, #40, #41, #42): su VERIFY de solo lectura tiene que dar 0. El preflight de SEC-V1-01 ya no aplica, porque supone el estado previo. La foto de catálogo anterior es el checkpoint de las 07:13:07 UTC (huella `7c8fbdd6…`, fuera del repo).
    ```bash
-   for v in 20261023100000 20261023100100 20261023100200 20261023100300 20261023100400 20261023100500 20261023100600; do
+   for v in 20261023100000 20261023100300 20261023100400 20261023100500; do bash ops/deploy/v1/apply-main-migration.sh --verify-only supabase/migrations/${v}_*.sql; done 2>&1 | tee verify-seguridad-aplicada.txt
+   grep -c 'VERIFY = 0' verify-seguridad-aplicada.txt     # = 4
+   ```
+5. **Comunidad:** `scripts/db-exam-community-audit.sql`. `without_community` debe ser 0.
+6. **VERIFY previo de las `_security_` todavía pendientes** (#39 y #43; foto antes de aplicar; valores distintos de 0 son normales aquí):
+   ```bash
+   for v in 20261023100200 20261023100600; do
      bash ops/deploy/v1/apply-main-migration.sh --verify-only supabase/migrations/${v}_*.sql
    done 2>&1 | tee verify-antes.txt
    ```
@@ -263,7 +310,7 @@ Guardar cada salida completa fuera del repo (`~/.oposibots-gate/v1-deploy/<fecha
 
 - hay deriva de historial no explicada;
 - alguna fila `BLOQUEA` es distinta de 0;
-- el preflight de SEC-V1-01 tiene alguna fila `f`;
+- alguna de las 4 ya aplicadas no da VERIFY = 0, o `storage_escritura_admin` ≠ 0;
 - hay Edge Functions que escriben tablas de contenido;
 - no hay ningún superadmin activo.
 
@@ -380,16 +427,20 @@ Duración estimada: 45-60 min desde que se paran los Ktor hasta el humo. El tope
 
    El propietario anota la hora de cada una.
 
-   Si una migración ya está aplicada (huella física) pero no registrada, **no se re-aplica**: `insert into supabase_migrations.schema_migrations (version, name) values ('<v>', '<nombre>');` en el editor SQL, después de que C revise su VERIFY (`--verify-only`).
+   Si una migración ya está aplicada (huella física) pero no registrada, **no se re-aplica**. Es el caso de #37, #40, #41 y #42, y quizá de #1 y #2. Si D-10 lo aprueba, se registran sin ejecutarlas:
+   ```bash
+   bash ops/deploy/v1/apply-main-migration.sh --record-only supabase/migrations/20261023100000_security_content_admin_write_revoke.sql   # exige VERIFY = 0 y teclear la version
+   ```
+   El script solo acepta `--record-only` para las 4 versiones de la lista `APPLIED_OUTSIDE_HISTORY`. Para #1 y #2, si F1.1 muestra su huella física pero no la versión, se registran a mano con `insert into supabase_migrations.schema_migrations (version, name) values ('<v>', '<nombre>');` después de comprobar su `--verify-only`. #38 (100100) **no se registra ni se ejecuta**: el script se niega.
 
    Ante un fallo:
    - **PREFLIGHT** (`*_PREFLIGHT`): la migración no cambió nada. No se sigue con las siguientes que dependan de ella. Se decide R-1 o R-2.
    - **`lock_timeout`**: se reintenta una vez pasado 1 minuto. Si vuelve a fallar, NO-GO.
-   - **#38 con `STORAGE_ADMIN_WRITE_PREFLIGHT`**: única excepción. Se anota y se sigue con #39: es independiente (D-5).
+   - #37, #38, #40, #41 y #42 no se ejecutan en esta ventana: el script se niega a aplicarlos.
 4. **Comprobación tras migrar** (`RO`): se repiten F1.1 (deben salir las nuevas versiones) y F1.2 (valores DESPUÉS de 5.3), y todos los VERIFY:
    ```bash
-   for f in $(ls supabase/migrations/2026102[0-3]*.sql); do bash ops/deploy/v1/apply-main-migration.sh --verify-only "$f"; done 2>&1 | tee verify-despues.txt
-   grep -c 'VERIFY = 0' verify-despues.txt     # = numero de migraciones aplicadas
+   for f in $(ls supabase/migrations/2026102[0-3]*.sql | grep -v 20261023100100); do bash ops/deploy/v1/apply-main-migration.sh --verify-only "$f"; done 2>&1 | tee verify-despues.txt
+   grep -c 'VERIFY = 0' verify-despues.txt     # = todas las de la seccion 4 salvo #38 (las ya aplicadas incluidas)
    ```
    Más el estado de la cartera (`RO`, editor SQL):
    ```sql
@@ -397,7 +448,7 @@ Duración estimada: 45-60 min desde que se paran los Ktor hasta el humo. El tope
           (select count(*) from public.transacciones_cartera where referencia_tipo = 'legacy_opening') as aperturas_debe_ser_D2;
    ```
 
-**NO-GO si:** alguna VERIFY ≠ 0 (salvo #38 sin aplicar con D-5), el reconcile no da 0 o las aperturas no coinciden con lo aprobado en D-2. En ese caso, sección 7.
+**NO-GO si:** alguna VERIFY ≠ 0, `storage_escritura_admin` ≠ 0, el reconcile no da 0 o las aperturas no coinciden con lo aprobado en D-2. En ese caso, sección 7.
 
 ### F5 · Entorno e imagen V1 (P, `ESCRITURA`, **GO-5**)
 
@@ -492,7 +543,7 @@ Duración estimada: 45-60 min desde que se paran los Ktor hasta el humo. El tope
 |---|---|---|---|
 | **R-0** | Antes de F4.1 (todo de solo lectura, imagen cargada sin arrancar) | Nada que deshacer. Si se quiere, `docker image rm oposicontrol-backend:<sha12>` en el servidor. | Ninguna |
 | **R-1** | F4.1 hecho y migraciones E/H aplicadas hasta antes de #6 (`20261022100300`) | Bloques ROLLBACK de las aplicadas, en orden inverso (ver el procedimiento debajo), y después arrancar los Ktor viejos: `docker start oposibots-ktor-bot-1-1 oposibots-ktor-bot-2-1 oposibots-ktor-control-1` (imagen `cfa2e14afc8e`). También vale arrancarlos sin deshacer, porque #1-#5 son compatibles con la imagen vieja. | Ninguna (sin tráfico) |
-| **R-2** | Migraciones desde #6 aplicadas, o imagen V1 arrancada, y **sin escrituras de usuarios reales** (antes de GO-6) | 1) Parar la imagen V1. 2) ROLLBACK de las migraciones aplicadas en orden inverso, **más `R2_post_rollback_restore_main_acl.sql` justo después del de #16** (hallazgo de debajo). Las 41 están ensayadas (5.2) y así devuelven el catálogo exacto de MAIN. Las LEGACY #1-#2 se quedan (son compatibles con la imagen vieja). 3) Arrancar la imagen vieja `cfa2e14afc8e` (`docker start …` o `redeploy-rolling.sh oposicontrol-backend:cfa2e14afc8e`). 4) `release.sh verify`. Las filas `legacy_opening` de #6 **quedan** (son filas normales del libro; documentado en la migración). Saldos sin cambios (ensayado). | Solo lo escrito por las cuentas sintéticas de F6 |
+| **R-2** | Migraciones desde #6 aplicadas, o imagen V1 arrancada, y **sin escrituras de usuarios reales** (antes de GO-6) | 1) Parar la imagen V1. 2) ROLLBACK de las migraciones aplicadas en orden inverso, **más `R2_post_rollback_restore_main_acl.sql` justo después del de #16**: obligatorio sin `0fe19e65` y red de seguridad con ella (hallazgo de debajo). No se deshacen #37, #40, #41 ni #42 (ya estaban en MAIN antes de la ventana) ni RB-16. Las 41 están ensayadas (5.2) y así devuelven el catálogo exacto de MAIN. Las LEGACY #1-#2 se quedan (son compatibles con la imagen vieja). 3) Arrancar la imagen vieja `cfa2e14afc8e` (`docker start …` o `redeploy-rolling.sh oposicontrol-backend:cfa2e14afc8e`). 4) `release.sh verify`. Las filas `legacy_opening` de #6 **quedan** (son filas normales del libro; documentado en la migración). Saldos sin cambios (ensayado). | Solo lo escrito por las cuentas sintéticas de F6 |
 | **R-3 · PUNTO DE NO RETORNO** | GO-6 dado: usuarios reales escriben en tablas V1 (pedidos, libro con `seq`, canjes, retos, foro, guardados) | **Solo hacia delante:** corrección en una migración NUEVA y/o una imagen nueva, con este mismo plan reducido (F2.4-F6). No se rearranca la imagen vieja: rompería las escrituras de cartera (C de #6) y "mis exámenes" (#9/#13). Los ROLLBACK de V1 borran tablas nuevas, así que hay pérdida de datos. | — |
 | **R-4 · catástrofe** | Corrupción o pérdida de datos después de R-3 | Restaurar MAIN: PITR al instante previo si D-3 lo contrató, o el volcado de F3.2 / el backup diario. Pierde todo lo escrito desde la hora de F3.5. Decide solo el propietario. | Desde F3.5 |
 
@@ -507,12 +558,15 @@ MSYS_NO_PATHCONV=1 docker run --rm -i -e MAIN_DB_URL public.ecr.aws/supabase/pos
 
 Casos concretos:
 
-- **HALLAZGO DEL ENSAYO (obligatorio en R-2):** los bloques ROLLBACK de `20261022101900`, `20261022101600` y `20261022101200` **no devuelven la forma de MAIN**. Se escribieron contra los stubs del gate, no contra la captura real. Ver `docs/audit-v1/evidence/V1-DEPLOY-REHEARSAL/rollback_diff.txt`.
+- **HALLAZGO DEL ENSAYO DEL 2026-10-21.** Ya está corregido en la rama `fix/v1-rollback-blocks-main-acl` `0fe19e65`.
+  - **Con esa corrección en el SHA desplegado**, `R2_post_rollback_restore_main_acl.sql` pasa a ser una **red de seguridad**: es idempotente, se puede ejecutar igual y no hace daño. Re-ensayo pendiente (5.5).
+  - **Sin la corrección**, sigue siendo **obligatorio** en R-2.
+  - Detalle original: los bloques ROLLBACK de `20261022101900`, `20261022101600` y `20261022101200` **no devuelven la forma de MAIN**. Se escribieron contra los stubs del gate, no contra la captura real. Ver `docs/audit-v1/evidence/V1-DEPLOY-REHEARSAL/rollback_diff.txt`.
   - El más grave es el de **101900**: hace `grant all` a `anon` y `authenticated` en las 4 tablas del foro. `anon` recibiría TRUNCATE, que ignora RLS. **P1**.
   - Por eso, justo después del ROLLBACK de `20261022101200` (el último de los tres en orden inverso), se ejecuta `docs/engineering/v1-deploy/R2_post_rollback_restore_main_acl.sql`: sentencias verbatim de la captura de MAIN. Ensayado: ROLLBACK más este fichero deja el catálogo **idéntico** al de MAIN.
   - La corrección definitiva de los bloques es de Bot (propietario de esas migraciones). También hay que regenerar `main_shape_subset_extra_engagement.sql` desde la captura, para que el gate lo detecte.
-- **#37 (SEC-V1-01):** tras su ROLLBACK, `01_preflight_readonly.sql` tiene que volver a dar todo `t` y coincidir con la salida de F1.4.
-- **#38 (RB-16):** su ROLLBACK necesita la misma pertenencia que su aplicación.
+- **#37, #40, #41 y #42** (aplicadas el 2026-10-22, antes de esta ventana): **R-2 no las deshace**. No dependen del Ktor y la imagen vieja las tolera (`service_role` conserva I/U/D en todas las tablas). Deshacerlas sería un expediente aparte, con GO, usando sus bloques ROLLBACK y el checkpoint de las 07:13 UTC.
+- **RB-16 (#38, hecho a mano):** no tiene ROLLBACK de migración ni tabla de copia. Las definiciones están en el checkpoint de las 07:13 UTC. Recrearlas reabriría el agujero: no forma parte de ningún R-n.
 - **#6:** su ROLLBACK devuelve las escrituras de `service_role` sobre el libro y la cartera. Ensayado: catálogo idéntico.
 
 ## 8. Lo que NUNCA se ha probado contra GoTrue y Storage gestionados (requisito R3)
@@ -527,7 +581,7 @@ Todo el E2E (`ops/local-exam`, `oposi-control-e2e`, `ControlJourneysE2ETest`, `C
 | G-4 | Triggers de la migración #21 sobre el `auth.users` REAL (`trg_auth_user_email_verified`) y el `trg_auth_user_created` de MAIN: GoTrue escribe `email_confirmed_at`, que el ensayo solo emula | En SQL (`RO`): `select tgname, tgenabled from pg_trigger where tgrelid = 'auth.users'::regclass and not tgisinternal;` y, tras G-1, la invitación de la cuenta (si usó un código) pasa a verificada | Los dos triggers presentes y activos; sin errores en los logs de Auth (panel > Logs > Auth) |
 | G-5 | Verificación del JWT del Ktor (`iss`, `aud`, ES256, JWKS de MAIN) con tokens de GoTrue real | Llamadas autenticadas de F6.3; una con un token de otro proyecto o caducado | 200 / 401 |
 | G-6 | Solicitud de acceso al panel con código OTP (#1, "Magic Link" con `{{ .Token }}`) | Una solicitud nueva de prueba desde el panel | Llega el código; la verificación pasa; sin aprobación, sin sesión |
-| S-1 | Políticas de `storage.objects` tras #38 (RB-16) con un JWT de admin real contra la Storage API gestionada | Con el JWT de un admin de prueba: `curl -X POST "$SUPABASE_URL/storage/v1/object/news-images/prueba-rb16.txt" -H "Authorization: Bearer <JWT admin>" -H "apikey: <anon key>" --data 'x'` | 403/400 (antes: 200). Si #38 no se aplicó (D-5): 200, el riesgo sigue abierto y se borra el objeto |
+| S-1 | Políticas de `storage.objects` tras RB-16 (borradas a mano el 2026-10-22) con un JWT de admin real contra la Storage API gestionada | Con el JWT de un admin de prueba: `curl -X POST "$SUPABASE_URL/storage/v1/object/news-images/prueba-rb16.txt" -H "Authorization: Bearer <JWT admin>" -H "apikey: <anon key>" --data 'x'` | 403/400. Si da 200: el riesgo vuelve a estar abierto; se borra el objeto y es NO-GO |
 | S-2 | Subida y lectura por Ktor (`service_role`) de portadas, recursos inmersivos y noticias en los buckets reales | Desde el panel: subir una portada de examen de prueba y un recurso; abrir con «Abrir» (URL firmada) | 200; la URL firmada abre; MIME correcto |
 | S-3 | Lectura pública o firmada desde la app de los recursos de examen | Recorrido de F6.3 con un examen que tenga recurso | Se ve; sin 403 |
 | S-4 | Imágenes del foro (#22: tabla y ruta dedicadas, recodificadas por Ktor) en el Storage real | Publicar un post con imagen desde una cuenta de prueba; retirarlo desde moderación | La imagen se sirve firmada; tras retirarla, URL caducada |
@@ -582,7 +636,7 @@ SHA desplegado:            jar sha256:               imagen: oposicontrol-backen
 F1 salidas guardadas en:   F3 backup (ruta, sha, hora UTC = punto de recuperacion):
 GO-1   GO-1b   GO-3   GO-4 (hora parada Ktor)   GO-5   GO-6 (PNR, hora)
 Migraciones: #n  hora  resultado (OK / PREFLIGHT / omitida)   ...
-#38 RB-16: aplicada / detenida por pertenencia (D-5)
+#37/#40/#41/#42: ya en MAIN (2026-10-22), registradas en el historial si/no (D-10)   #38: nunca (RB-16 a mano)
 Incidencias:
 ```
 
@@ -594,11 +648,12 @@ Incidencias:
 | D-2 | Aprobar los recuentos de F1.3: carteras que reciben `legacy_opening`, OT totales de apertura, admins/moderadores no activos | Aprobar si coinciden con la contabilidad conocida (4 carteras el 2026-10-08) |
 | D-3 | PITR (complemento de pago) y método de la prueba de restauración: (a) local sin coste o (b) proyecto temporal facturado por horas | (a) local + ensayo de F3.4; PITR solo si el propietario quiere bajar R-4 de "desde el volcado" a "minutos" |
 | D-4 | Receptor de Alertmanager (correo) antes de declarar estable | Configurarlo antes de GO-6 |
-| D-5 | RB-16 si el rol de migraciones no pertenece a `supabase_storage_admin`: aceptar el riesgo temporal, o pedir a Supabase o al propietario de la plataforma que aplique #38 con el rol dueño | Seguir sin #38 (independiente), con riesgo P1 abierto y un seguimiento con fecha |
+| D-5 | ~~RB-16~~ **RESUELTA el 2026-10-22**: borrado a mano por el propietario. Queda la comprobación `storage_escritura_admin = 0` en F1.2 y F4.4 | — |
 | D-6 | Hora de la ventana, aviso a testers y admins, y confirmar que no hay builds de la app distribuidos | Hora de poco uso; aviso a los admins del panel |
 | D-7 | Cuentas sintéticas de producción para el humo y el IDOR (A, B y un admin de prueba), y cómo se borran después | Correos propios del propietario con `+alias`; se borran por Ktor tras F7 |
-| D-8 | `20261023100600`: desde qué SHA y ruta se aplica (hoy es un borrador sin commit) | Hacer commit y fusionarla en develop antes de F0 y re-ensayar |
-| D-9 | Aceptación escrita de los RB P1 que siguen abiertos para el servidor (RB-06, RB-10, RB-12, RB-13 parcial, RB-16 si D-5) | Cerrar RB-10 (rotar la service_role de MAIN si estuvo en un `.env` de desarrollo) **antes** de F4 |
+| D-8 | Qué ramas sin fusionar entran en el SHA desplegado: `feature/v1-plans-store-grants-revoke` `4b4acf81` (100600), `feature/v1-exam-penalty-scope` `74554ccd` (103400), `fix/v1-daily-challenge-dst` `6904357c` (103500) y `fix/v1-rollback-blocks-main-acl` `0fe19e65` | Fusionarlas en develop antes de F0, y re-ensayar (5.5) y pasar el gate sobre ese SHA |
+| D-10 | Registrar en `supabase_migrations` las 4 aplicadas como SQL suelto (#37, #40, #41, #42) con `--record-only` | Sí, en F4.3: así el historial es verdad y `release.sh preflight` deja de listarlas. #38 no se registra |
+| D-9 | Aceptación escrita de los RB P1 que siguen abiertos para el servidor (RB-06, RB-10, RB-12, RB-13 parcial, RB-16 resuelto) | Cerrar RB-10 (rotar la service_role de MAIN si estuvo en un `.env` de desarrollo) **antes** de F4 |
 
 ## 13. Dependencia del release del cliente (BLOQUEANTE de la app, NO del servidor)
 
@@ -613,12 +668,12 @@ Incidencias:
 
 ## 14. Bloqueantes abiertos para ejecutar este plan
 
-1. D-1 … D-9 sin decidir.
-2. `20261023100600` es un borrador sin commit (D-8). Ensayado con el blob `b39f7cc08aff`.
+1. D-1 … D-4 y D-6 … D-10 sin decidir.
+2. Las ramas de D-8 no están fusionadas en develop. 103400 y 103500 **no se han ensayado**. 100600 se ensayó con un borrador anterior. La corrección de ROLLBACK de `0fe19e65` se ensayó solo como fichero aparte (`R2_post_rollback_restore_main_acl.sql`). Re-ensayo preparado en 5.5, sin ejecutar porque Docker Desktop no respondía el 2026-10-22.
 3. No se sabe si `20261020100000`/`20261021100000` están en MAIN (F1.1).
-4. Pertenencia del rol de migraciones a `supabase_storage_admin` desconocida (F1.2, D-5).
+4. ~~Pertenencia a `supabase_storage_admin`~~: resuelto. `postgres` no pertenece; RB-16 se hizo a mano y 100100 queda fuera.
 5. No hay receptor de alertas (D-4).
 6. `redeploy-rolling.sh` no está versionado: hay que confirmar cómo se comporta con servicios parados (F2.2).
 7. Pendiente de la sección 13 (solo para la app).
-8. **Hallazgo del ensayo:** los ROLLBACK de `20261022101200`, `101600` y `101900` no restauran MAIN (sección 7). La mitigación ya está en el plan (`R2_post_rollback_restore_main_acl.sql`, ensayada). La corrección de los bloques es de Bot y no bloquea el despliegue, pero **sí** cualquier R-2 hecho sin ese fichero.
+8. **Hallazgo del ensayo:** los ROLLBACK de `20261022101200`, `101600` y `101900` no restauraban MAIN (sección 7). Corregido en `fix/v1-rollback-blocks-main-acl` `0fe19e65`, sin fusionar. Mientras no esté en el SHA desplegado, `R2_post_rollback_restore_main_acl.sql` es obligatorio en R-2; con la corrección queda como red de seguridad.
 9. La forma de MAIN es del 2026-10-14. Si F1.1 o F1.2 muestran deriva, se recaptura el catálogo (`scripts/db-main-catalog-capture.sql`, solo lectura) y se repite el ensayo.

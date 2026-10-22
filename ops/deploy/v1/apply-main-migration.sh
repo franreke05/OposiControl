@@ -13,8 +13,16 @@
 # Ensayo local: REHEARSAL_CONTAINER=<contenedor> usa ese contenedor en vez de MAIN (lo usa rehearse-v1-deploy.sh).
 set -uo pipefail
 PG_IMAGE="public.ecr.aws/supabase/postgres:17.6.1.171"
+# Estado de MAIN (2026-10-22, GO del propietario, VERIFY = 0; docs/brain/CURRENT_STATE.md): aplicadas como SQL suelto, SIN fila en
+# supabase_migrations. NO se re-aplican nunca (sus PREFLIGHT aceptan el estado aplicado, pero se saltan igual): solo --verify-only y,
+# si el propietario lo decide (D-10), --record-only, que anota la version en el historial tras comprobar VERIFY = 0.
+APPLIED_OUTSIDE_HISTORY="20261023100000 20261023100300 20261023100400 20261023100500"
+# RB-16 se hizo A MANO (Storage > Policies) y no existe private.sec_v1_storage_admin_policy_backup: 100100 NO se ejecuta nunca
+# (su PREFLIGHT fallaria cerrado con present=0 y backup=0). Comprobacion: docs/engineering/v1-deploy/01_catalog_preflight_readonly.sql.
+NEVER_RUN="20261023100100"
 mode=apply
 [ "${1:-}" = "--verify-only" ] && { mode=verify; shift; }
+[ "${1:-}" = "--record-only" ] && { mode=record; shift; }
 f="${1:?uso: apply-main-migration.sh [--verify-only] supabase/migrations/<version>_<nombre>.sql}"
 [ -s "$f" ] || { echo "ERROR: $f no existe"; exit 2; }
 base="$(basename "$f" .sql)"; version="${base%%_*}"; name="${base#*_}"
@@ -42,8 +50,24 @@ run_verify() { # imprime el VERIFY; rc 0 solo si hay filas y todas valen 0
 }
 block "$f" VERIFY >/dev/null || { echo "ERROR: $base no tiene bloque VERIFY"; exit 2; }
 
+case " $NEVER_RUN " in *" $version "*)
+  if [ "$mode" != verify ]; then echo "STOP: $version NO se ejecuta nunca (RB-16 hecho a mano en MAIN el 2026-10-22). Comprobar con 01_catalog_preflight_readonly.sql: storage_escritura_admin = 0."; exit 1; fi ;;
+esac
 if [ "$mode" = verify ]; then
   run_verify && echo "VERIFY = 0 ($base)" || echo "VERIFY con valores distintos de 0 ($base): normal ANTES de aplicar; tras aplicar es NO-GO"
+  exit 0
+fi
+case " $APPLIED_OUTSIDE_HISTORY " in *" $version "*)
+  if [ "$mode" = apply ]; then echo "STOP: $version ya esta APLICADA en MAIN fuera del historial (2026-10-22); no se re-aplica. Usar --verify-only (y --record-only si D-10)."; exit 1; fi ;;
+  *) if [ "$mode" = record ]; then echo "STOP: --record-only solo vale para $APPLIED_OUTSIDE_HISTORY"; exit 1; fi ;;
+esac
+if [ "$mode" = record ]; then
+  run_verify || { echo "NO-GO: VERIFY distinto de 0; no se registra $base."; exit 1; }
+  printf 'VERIFY = 0. Teclea la version (%s) para REGISTRARLA (sin ejecutar el fichero): ' "$version" >&2
+  IFS= read -r typed || { echo "sin confirmacion"; exit 1; }
+  [ "$typed" = "$version" ] || { echo "ERROR: version distinta; no se ha tocado nada."; exit 1; }
+  echo "insert into supabase_migrations.schema_migrations (version, name) values ('$version', '$name') on conflict (version) do nothing;" | psql_run \
+    && echo "OK $base: registrada (no re-aplicada)." || exit 1
   exit 0
 fi
 

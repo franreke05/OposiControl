@@ -87,3 +87,14 @@ Ver la sección 5.4 del plan:
 - GoTrue, Storage y PostgREST gestionados;
 - bloqueos con tráfico;
 - carreras de dos conexiones (las cubre `db-pg17-gate.sh`).
+
+## Actualización del 2026-10-22
+
+- **MAIN ya tiene aplicadas** `20261023100000`, `100300`, `100400` y `100500`, fuera del historial y con VERIFY 0. **RB-16 se hizo a mano**, así que `20261023100100` no se ejecuta nunca.
+- **El script admite ese punto de partida:**
+  - `PREAPPLIED_ON_MAIN` las carga como estado inicial, exige VERIFY = 0 y las deja fuera del orden y del ROLLBACK;
+  - `NEVER_RUN` salta las versiones indicadas;
+  - `MANUAL_STORAGE_DROP=1` borra las políticas de escritura de admin de `storage.objects`.
+- **Re-ensayo con el estado de MAIN y las ramas nuevas:** `20261022103400` (`feature/v1-exam-penalty-scope` `74554ccd`), `20261022103500` (`fix/v1-daily-challenge-dst` `6904357c`), `20261023100600` (`feature/v1-plans-store-grants-revoke` `4b4acf81`) y los ROLLBACK corregidos (`fix/v1-rollback-blocks-main-acl` `0fe19e65`).
+  - Estado: **NO EJECUTADO**. Docker Desktop no respondía; ver `run-2026-10-22-docker-down.log`. No se arrancó por iniciativa propia.
+  - El comando está en la sección 5.5 del plan.

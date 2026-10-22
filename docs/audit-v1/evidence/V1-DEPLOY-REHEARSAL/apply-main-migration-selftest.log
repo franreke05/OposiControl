@@ -55,3 +55,15 @@ NO aplicar las siguientes. Anotar el mensaje (PREFLIGHT / lock_timeout / otro) y
 rc=1
 == historial
 20261020100000|security_access_request_email_verified
+
+== 2026-10-22: guardas nuevas (sin base de datos; se detienen antes de conectar)
+$ apply-main-migration.sh supabase/migrations/20261023100100_security_storage_admin_write_revoke.sql
+STOP: 20261023100100 NO se ejecuta nunca (RB-16 hecho a mano en MAIN el 2026-10-22). Comprobar con 01_catalog_preflight_readonly.sql: storage_escritura_admin = 0.
+rc=1
+$ apply-main-migration.sh supabase/migrations/20261023100300_security_moderator_requires_active_account.sql
+STOP: 20261023100300 ya esta APLICADA en MAIN fuera del historial (2026-10-22); no se re-aplica. Usar --verify-only (y --record-only si D-10).
+rc=1
+$ apply-main-migration.sh --record-only supabase/migrations/20261023100200_security_revenue_excludes_sandbox.sql
+STOP: --record-only solo vale para 20261023100000 20261023100300 20261023100400 20261023100500
+rc=1
+(--record-only con una version de APPLIED_OUTSIDE_HISTORY y el camino --verify-only nuevo: pendientes de probar contra un contenedor; Docker Desktop no respondia)
