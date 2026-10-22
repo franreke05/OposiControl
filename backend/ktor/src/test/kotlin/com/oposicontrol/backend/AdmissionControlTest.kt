@@ -21,12 +21,16 @@ import io.ktor.server.routing.routing
 import io.ktor.server.testing.ApplicationTestBuilder
 import io.ktor.server.testing.testApplication
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.yield
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
@@ -40,6 +44,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
 import kotlin.test.assertTrue
+import kotlin.test.fail
 
 /**
  * CERT-LOAD-1000 (AdmissionControl.kt): admision acotada, rechazo inmediato con 503 SERVER_BUSY + Retry-After, salud exenta,
@@ -139,6 +144,31 @@ class AdmissionControlTest {
         assertEquals(AdmissionRejection.QUEUE_TIMEOUT, limiter.acquire())
     }
 
+    @Test
+    fun aRequestCancelledWithThePermitOrInTheQueueGivesEverythingBack() = runBlocking {
+        val limiter = AdmissionLimiter(maxInFlight = 1, maxQueued = 4, queueTimeoutMs = 60_000)
+        val running = CompletableDeferred<Unit>()
+        val holder = launch { limiter.runAdmitted { running.complete(Unit); awaitCancellation() } }
+        running.await()
+        val queuedJobs = List(3) { launch { limiter.runAdmitted { fail("no deberia ejecutarse") } } }
+        while (limiter.queued < 3) yield()
+        assertEquals(1, limiter.inFlight)
+        queuedJobs.forEach { it.cancelAndJoin() } // cancelados en la cola
+        assertEquals(0, limiter.queued)
+        holder.cancelAndJoin() // cancelado con el permiso cogido
+        assertEquals(0, limiter.inFlight)
+        // Carrera cancelacion / permiso que llega: nunca se pierde un permiso.
+        repeat(500) {
+            val first = launch { limiter.runAdmitted { yield() } }
+            val second = launch { limiter.runAdmitted { yield() } }
+            yield()
+            second.cancel()
+            first.join(); second.join()
+        }
+        assertEquals(0, limiter.inFlight)
+        assertEquals(0, limiter.queued)
+    }
+
     // ---------------- plazo en el transporte ----------------
 
     private class Upstream {
@@ -210,6 +240,59 @@ class AdmissionControlTest {
     }
 
     private class AtomicNanos(@Volatile var value: Long)
+
+    @Test
+    fun aWriteWhoseTimeoutNoLongerFitsBeforeTheEdgeDoesNotStartButReadsAndKeyReleaseStillRun() {
+        val upstream = Upstream()
+        val transport = upstream.transport()
+        val nowNanos = AtomicNanos(System.nanoTime())
+        val writeTimeoutNanos = UPSTREAM_REQUEST_TIMEOUT.toNanos()
+        // Plazo todavia vivo (5 s), pero al borde le queda 1 ms menos que el timeout de una escritura.
+        val state = DeadlineState(
+            deadlineNanos = nowNanos.value + TimeUnit.SECONDS.toNanos(5),
+            writeEndNanos = nowNanos.value + writeTimeoutNanos - TimeUnit.MILLISECONDS.toNanos(1),
+        ) { nowNanos.value }
+        RequestDeadline.runWith(state) {
+            transport.get("/rest/v1/examenes?select=id")
+            val write = assertFailsWith<BackendDomainException> { transport.rpc("app_record_attempt_answer", "{}") }
+            assertEquals("SERVER_BUSY", write.errorCode)
+            assertNotNull(write.retryAfterSeconds)
+            val claim = assertFailsWith<BackendDomainException> { transport.rpc("idem_begin", "{}") }
+            assertEquals("SERVER_BUSY", claim.errorCode)
+            transport.rpc("idem_release", "{}")
+            assertEquals(false, state.committed)
+        }
+        assertEquals(listOf("GET /rest/v1/examenes", "POST /rest/v1/rpc/idem_release"), upstream.paths)
+    }
+
+    @Test
+    fun aWriteThatStillFitsBeforeTheEdgeStartsWithItsFullTimeoutAndOnceCommittedTheEdgeNoLongerApplies() {
+        val upstream = Upstream()
+        val transport = upstream.transport()
+        val nowNanos = AtomicNanos(System.nanoTime())
+        val state = DeadlineState(
+            deadlineNanos = nowNanos.value + TimeUnit.SECONDS.toNanos(5),
+            writeEndNanos = nowNanos.value + UPSTREAM_REQUEST_TIMEOUT.toNanos(),
+        ) { nowNanos.value }
+        RequestDeadline.runWith(state) {
+            transport.rpc("app_record_attempt_answer", "{}")
+            assertEquals(true, state.committed)
+            nowNanos.value += TimeUnit.SECONDS.toNanos(30)
+            transport.rpc("app_record_attempt_answer", "{}") // pasado el punto sin retorno se termina la peticion
+        }
+        assertEquals(UPSTREAM_REQUEST_TIMEOUT, upstream.sent[0].timeout().get())
+        assertEquals(2, upstream.sent.size)
+    }
+
+    @Test
+    fun theEdgeBudgetMustLeaveRoomForAWriteOrStartupFails() {
+        assertFailsWith<IllegalArgumentException> { AdmissionSettings(deadlineMs = 15_000, edgeTimeoutMs = 15_000) }
+        assertEquals(24_000L, AdmissionSettings().writeBudgetMs)
+        assertEquals(
+            30_000L,
+            AdmissionSettings.fromEnvironment { if (it == "BOT_EDGE_TIMEOUT_MS") "30000" else null }.edgeTimeoutMs,
+        )
+    }
 
     @Test
     fun theDeadlineFollowsTheRequestOntoIoThreadsAndParallelBranches() = runBlocking {

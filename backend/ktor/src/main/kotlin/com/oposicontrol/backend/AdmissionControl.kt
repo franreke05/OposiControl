@@ -62,6 +62,12 @@ internal data class AdmissionSettings(
     val deadlineMs: Long = DEFAULT_DEADLINE_MS,
     /** Base de `Retry-After`; se envia base..2*base segundos (fluctuacion). */
     val retryAfterSeconds: Int = DEFAULT_RETRY_AFTER_SECONDS,
+    /**
+     * Corte del borde (`response_header_timeout` del pool bot en Caddy, 25 s), contado desde que llega la peticion. Una
+     * escritura de negocio solo EMPIEZA si su timeout completo cabe antes de este corte menos [EDGE_MARGIN_MS]: si no, el
+     * cliente podria recibir 504 de Caddy mientras la escritura se aplica (escritura fantasma).
+     */
+    val edgeTimeoutMs: Long = DEFAULT_EDGE_TIMEOUT_MS,
 ) {
     init {
         require(maxInFlight >= 1) { "BOT_ADMISSION_MAX_IN_FLIGHT >= 1" }
@@ -69,7 +75,11 @@ internal data class AdmissionSettings(
         require(queueTimeoutMs >= 0) { "BOT_ADMISSION_QUEUE_TIMEOUT_MS >= 0" }
         require(deadlineMs >= 1_000) { "BOT_REQUEST_DEADLINE_MS >= 1000" }
         require(retryAfterSeconds in 1..60) { "BOT_ADMISSION_RETRY_AFTER_SECONDS en 1..60" }
+        require(edgeTimeoutMs > deadlineMs) { "BOT_EDGE_TIMEOUT_MS > BOT_REQUEST_DEADLINE_MS" }
     }
+
+    /** Hasta cuando (ms desde la llegada) puede terminar una escritura que empiece ahora. */
+    val writeBudgetMs: Long get() = edgeTimeoutMs - EDGE_MARGIN_MS
 
     companion object {
         const val DEFAULT_MAX_IN_FLIGHT = 32
@@ -77,6 +87,9 @@ internal data class AdmissionSettings(
         const val DEFAULT_QUEUE_TIMEOUT_MS = 2_000L
         const val DEFAULT_DEADLINE_MS = 15_000L
         const val DEFAULT_RETRY_AFTER_SECONDS = 2
+        const val DEFAULT_EDGE_TIMEOUT_MS = 25_000L
+        /** Margen para que la respuesta de Ktor llegue a Caddy antes de su corte. */
+        const val EDGE_MARGIN_MS = 1_000L
 
         /** Un valor ilegible NO cae al defecto en silencio: aborta el arranque (como SERVER_PROFILE). */
         fun fromEnvironment(environment: (String) -> String? = System::getenv): AdmissionSettings {
@@ -92,6 +105,7 @@ internal data class AdmissionSettings(
                 queueTimeoutMs = read("BOT_ADMISSION_QUEUE_TIMEOUT_MS", DEFAULT_QUEUE_TIMEOUT_MS, String::toLongOrNull),
                 deadlineMs = read("BOT_REQUEST_DEADLINE_MS", DEFAULT_DEADLINE_MS, String::toLongOrNull),
                 retryAfterSeconds = read("BOT_ADMISSION_RETRY_AFTER_SECONDS", DEFAULT_RETRY_AFTER_SECONDS, String::toIntOrNull),
+                edgeTimeoutMs = read("BOT_EDGE_TIMEOUT_MS", DEFAULT_EDGE_TIMEOUT_MS, String::toLongOrNull),
             )
         }
     }
@@ -128,6 +142,10 @@ internal class AdmissionLimiter(
                 permits.acquire()
                 acquired = true
             }
+        } catch (e: Throwable) {
+            // Cancelada justo cuando el permiso llegaba: el permiso es nuestro pero nadie lo soltaria.
+            if (acquired) permits.release()
+            throw e
         } finally {
             waiting.decrementAndGet()
         }
@@ -141,7 +159,12 @@ internal class AdmissionLimiter(
  * Plazo de UNA peticion, visible en los hilos IO a traves de [RequestDeadline] (ThreadContextElement: lo heredan los
  * `withContext(Dispatchers.IO)` y las ramas de withUpstreamIoParallel).
  */
-internal class DeadlineState(val deadlineNanos: Long, private val nanoTime: () -> Long = System::nanoTime) {
+internal class DeadlineState(
+    val deadlineNanos: Long,
+    /** Instante limite para TERMINAR una escritura (borde menos margen); `null` = sin limite. */
+    val writeEndNanos: Long? = null,
+    private val nanoTime: () -> Long = System::nanoTime,
+) {
     @Volatile
     var committed: Boolean = false
         private set
@@ -152,6 +175,9 @@ internal class DeadlineState(val deadlineNanos: Long, private val nanoTime: () -
 
     /** Milisegundos que quedan (<= 0 = vencido). */
     fun remainingMillis(): Long = TimeUnit.NANOSECONDS.toMillis(deadlineNanos - nanoTime())
+
+    /** Milisegundos hasta el limite de escritura, o `null` si no hay. */
+    fun writeRemainingMillis(): Long? = writeEndNanos?.let { TimeUnit.NANOSECONDS.toMillis(it - nanoTime()) }
 
     /** Vencido y la peticion todavia no ha aplicado ninguna escritura de negocio. */
     fun expiredBeforeCommit(): Boolean = !committed && remainingMillis() <= 0
@@ -214,7 +240,12 @@ internal object UpstreamDeadlineGuard {
         if (rpcName(path) in ALWAYS_ALLOWED_RPCS || state.committed) return defaultTimeoutMs
         val remaining = state.remainingMillis()
         if (remaining <= 0) throw deadlineExceeded("before_upstream")
-        return if (isRead(operation)) minOf(defaultTimeoutMs, remaining) else defaultTimeoutMs
+        if (isRead(operation)) return minOf(defaultTimeoutMs, remaining)
+        // Escritura antes del punto sin retorno: solo empieza si su timeout entero cabe antes del corte del borde. Si no,
+        // 503 sin haber escrito nada (reintentable con la misma Idempotency-Key) en vez de un 504 con la escritura aplicada.
+        val writeRemaining = state.writeRemainingMillis()
+        if (writeRemaining != null && writeRemaining < defaultTimeoutMs) throw deadlineExceeded("before_write")
+        return defaultTimeoutMs
     }
 
     /** Despues de una llamada correcta: una escritura de negocio marca el punto sin retorno. */
@@ -305,23 +336,40 @@ internal fun Application.installBotAdmissionControl(
     val limiter = AdmissionLimiter(settings.maxInFlight, settings.maxQueued, settings.queueTimeoutMs)
     AdmissionMetrics.bind(registry, limiter, settings.retryAfterSeconds)
     val deadlineNanos = TimeUnit.MILLISECONDS.toNanos(settings.deadlineMs)
+    val writeBudgetNanos = TimeUnit.MILLISECONDS.toNanos(settings.writeBudgetMs)
+    // Con un timeout de escritura que no cabe ni al llegar, toda escritura daria 503: se aborta el arranque.
+    require(ObservabilityConfig.upstreamRequestTimeoutMs < settings.writeBudgetMs) {
+        "UPSTREAM_REQUEST_TIMEOUT_MS (${ObservabilityConfig.upstreamRequestTimeoutMs}) tiene que ser menor que " +
+            "BOT_EDGE_TIMEOUT_MS - ${AdmissionSettings.EDGE_MARGIN_MS} (${settings.writeBudgetMs})"
+    }
     intercept(ApplicationCallPipeline.Plugins) {
         if (isAdmissionExempt(call.request.path())) return@intercept
         val arrived = nanoTime()
-        val rejection = limiter.acquire()
+        val rejection = limiter.runAdmitted {
+            AdmissionMetrics.admitted(nanoTime() - arrived)
+            val state = DeadlineState(arrived + deadlineNanos, writeEndNanos = arrived + writeBudgetNanos, nanoTime = nanoTime)
+            withContext(RequestDeadline(state)) { proceed() }
+        }
         if (rejection != null) {
             AdmissionMetrics.rejected(rejection)
             call.response.header(HttpHeaders.RetryAfter, AdmissionMetrics.retryAfterSeconds().toString())
             call.respondErrorEnvelope(CanonicalErrorCode.SERVER_BUSY)
             finish()
-            return@intercept
-        }
-        try {
-            AdmissionMetrics.admitted(nanoTime() - arrived)
-            withContext(RequestDeadline(DeadlineState(arrived + deadlineNanos, nanoTime))) { proceed() }
-        } finally {
-            limiter.release()
         }
     }
     return limiter
+}
+
+/**
+ * Espera turno y ejecuta [block] con el permiso, que se suelta SIEMPRE (tambien si la peticion se cancela en la cola o
+ * con el permiso cogido). Devuelve el rechazo sin ejecutar [block], o `null` si se ejecuto.
+ */
+internal suspend fun AdmissionLimiter.runAdmitted(block: suspend () -> Unit): AdmissionRejection? {
+    acquire()?.let { return it }
+    try {
+        block()
+    } finally {
+        release()
+    }
+    return null
 }

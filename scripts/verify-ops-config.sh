@@ -137,6 +137,12 @@ caddy_no_status_ejection() { local f
     caddy_bot_block "$f" | grep -Eq '^[[:space:]]*reverse_proxy ' || return 1
     ! caddy_bot_block "$f" | grep -Eq '^[[:space:]]*(max_fails|fail_duration|unhealthy_request_count)[[:space:]]' || return 1
   done; }
+# Revision OposiControl 2026-10-22: el pool bot lee el cuerpo ENTERO en Caddy (`request_buffers` >= 2MB, el tope de body-limit)
+# antes de ir a Ktor; si no, POST lentos sin autenticar retienen los permisos de admision hasta `read_body` (130 s).
+caddy_bot_buffers_body() { local f
+  for f in ops/caddy/Caddyfile.production ops/caddy/Caddyfile.hostcaddy; do
+    caddy_bot_block "$f" | grep -Eq '^[[:space:]]*request_buffers 2MB[[:space:]]*$' || return 1
+  done; }
 # CERT-LOAD-1000: el 503 SERVER_BUSY + Retry-After de Ktor llega tal cual al cliente: sin reintentos por respuesta
 # (`lb_retry_match`), sin reescribirla (`handle_response`, `replace_status`), sin quitar Retry-After, y con un
 # lb_try_duration corto (1..5 s: solo reintentos de CONEXION, nunca una tormenta de reintentos).
@@ -154,7 +160,7 @@ jvm_gc_explicit() { local s o
 # CERT-LOAD-1000: los mandos de admision del perfil bot estan documentados (solo nombres) en el ejemplo de bot.
 admission_knobs_documented() { local v
   for v in BOT_ADMISSION_ENABLED BOT_ADMISSION_MAX_IN_FLIGHT BOT_ADMISSION_MAX_QUEUED BOT_ADMISSION_QUEUE_TIMEOUT_MS \
-      BOT_ADMISSION_RETRY_AFTER_SECONDS BOT_REQUEST_DEADLINE_MS PROFILE_IDENTITY_CACHE_TTL_MS; do
+      BOT_ADMISSION_RETRY_AFTER_SECONDS BOT_REQUEST_DEADLINE_MS BOT_EDGE_TIMEOUT_MS PROFILE_IDENTITY_CACHE_TTL_MS; do
     env_names bot | grep -qx "$v" || return 1; done; }
 # Nombres de metrica que existen de verdad en el codigo (Micrometer/Ktor). Cualquier otro nombre en alertas o paneles es inventado.
 metrics_known() {
@@ -203,6 +209,8 @@ check "Caddyfile.production y .hostcaddy: el pool bot no expulsa replicas por co
   "caddy_no_status_ejection"
 check "Caddyfile.production y .hostcaddy: el pool bot deja pasar el 503 + Retry-After de Ktor (sin reintentos por respuesta, lb_try_duration 1..5 s) (CERT-LOAD-1000)" \
   "caddy_bot_passes_busy"
+check "Caddyfile.production y .hostcaddy: el pool bot recibe el cuerpo entero en Caddy antes de Ktor (request_buffers 2MB, revision 2026-10-22)" \
+  "caddy_bot_buffers_body"
 check "compose.production: GC explicito y log de GC en los tres Ktor (CERT-LOAD-1000)" "jvm_gc_explicit"
 check "backend.bot.env.example: mandos de admision, plazo y cache de perfil documentados (CERT-LOAD-1000)" "admission_knobs_documented"
 check "Caddyfile.production: el log de acceso no registra Authorization ni cookies" \

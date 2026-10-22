@@ -120,6 +120,9 @@ mutate "Caddyfile vuelve a expulsar por latencia (F-07)" $CF 's/^\t\t\t\tlb_try_
 mutate "Caddyfile vuelve a la salud pasiva max_fails en el pool bot (CERT-LOAD-1000)" $CF 's/^\t\t\t\tlb_try_interval 250ms$/&\n\t\t\t\tmax_fails 2/' "no expulsa replicas por codigo de estado"
 mutate "Caddyfile vuelve a la salud pasiva fail_duration en el pool bot (CERT-LOAD-1000)" $CF 's/^\t\t\t\tlb_try_interval 250ms$/&\n\t\t\t\tfail_duration 10s/' "no expulsa replicas por codigo de estado"
 mutate "Caddyfile.hostcaddy vuelve a la salud pasiva en el pool bot (CERT-LOAD-1000)" ops/caddy/Caddyfile.hostcaddy 's/^\t\t\t\tlb_try_interval 250ms$/&\n\t\t\t\tfail_duration 10s\n\t\t\t\tmax_fails 2/' "no expulsa replicas por codigo de estado"
+# Revision 2026-10-22: sin buffer de cuerpo, POST lentos agotan la admision.
+mutate "Caddyfile quita request_buffers del pool bot" $CF '/^\t\t\t\trequest_buffers 2MB$/d' "recibe el cuerpo entero"
+mutate "Caddyfile.hostcaddy quita request_buffers del pool bot" ops/caddy/Caddyfile.hostcaddy '/^\t\t\t\trequest_buffers 2MB$/d' "recibe el cuerpo entero"
 # CERT-LOAD-1000: el 503 SERVER_BUSY + Retry-After de Ktor no se reintenta ni se reescribe en el borde.
 mutate "Caddyfile reintenta respuestas en el pool bot (CERT-LOAD-1000)" $CF 's/^\t\t\t\tlb_try_interval 250ms$/&\n\t\t\t\tlb_retry_match {\n\t\t\t\t\tmethod POST\n\t\t\t\t}/' "deja pasar el 503"
 mutate "Caddyfile con lb_try_duration largo en el pool bot (CERT-LOAD-1000)" $CF 's/^\t\t\t\tlb_try_duration 3s$/\t\t\t\tlb_try_duration 30s/' "deja pasar el 503"
@@ -128,6 +131,7 @@ mutate "Caddyfile.hostcaddy quita Retry-After en el pool bot (CERT-LOAD-1000)" o
 mutate "compose: ktor-bot-2 sin GC explicito (CERT-LOAD-1000)" $CP '0,/^  ktor-bot-2:/!s/ -XX:+UseG1GC -XX:MaxGCPauseMillis=200//' "GC explicito"
 mutate "compose: ktor-control sin log de GC (CERT-LOAD-1000)" $CP 's/\(CONTROL_JAVA_TOOL_OPTIONS:.*\) -Xlog:gc,gc+cpu:stdout:time,uptime,level,tags/\1/' "GC explicito"
 mutate "backend.bot.env.example sin BOT_REQUEST_DEADLINE_MS (CERT-LOAD-1000)" ops/deploy/backend.bot.env.example '/^BOT_REQUEST_DEADLINE_MS=$/d' "mandos de admision"
+mutate "backend.bot.env.example sin BOT_EDGE_TIMEOUT_MS (revision 2026-10-22)" ops/deploy/backend.bot.env.example '/^BOT_EDGE_TIMEOUT_MS=$/d' "mandos de admision"
 mutate "Caddyfile sin bloqueo de /metrics" $CF '/import \/etc\/caddy\/metrics-block.caddy/d' "Caddyfile.production: host por variable"
 mutate "Caddyfile sin 404 por defecto" $CF 's/^\t\thandle {$/\t\thandle @zzz {/' "Caddyfile.production: host por variable"
 mutate "Caddyfile enruta /admin* en bloque" $CF 's# /admin/audit /admin/audit/\* # /admin/* #' "control por rutas explicitas"

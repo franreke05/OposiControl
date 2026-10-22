@@ -108,6 +108,10 @@
 				lb_retries 2
 				lb_try_duration 3s
 				lb_try_interval 250ms
+				# Cuerpo ENTERO en Caddy antes de ir a Ktor (revision OposiControl 2026-10-22): Ktor coge el permiso de admision antes
+				# de leer el cuerpo y `read_body` es 130 s; sin buffer, ~32 POST lentos sin autenticar dejarian a todos en SERVER_BUSY.
+				# 2MB = el tope de body-limit.caddy (el pool bot no tiene rutas multipart).
+				request_buffers 2MB
 				header_up X-Forwarded-For {client_ip}
 				header_up X-Request-Id {http.request.uuid}
 				# Salud ACTIVA: es la UNICA que saca una replica de rotacion (proceso vivo y sirviendo; /health/live esta exenta de

@@ -73,6 +73,8 @@ components:
             $ref: '../common/errors.yaml#/components/responses/Internal'
           '502':
             $ref: '../common/errors.yaml#/components/responses/UpstreamError'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
     AppExam:
       get:
         operationId: getAppExam
@@ -115,6 +117,8 @@ components:
             $ref: '../common/errors.yaml#/components/responses/Internal'
           '502':
             $ref: '../common/errors.yaml#/components/responses/UpstreamError'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
     MyExams:
       get:
         operationId: listMyExams
@@ -190,6 +194,8 @@ components:
           '429':
             $ref: '../common/errors.yaml#/components/responses/RateLimited'
             description: 'RATE_LIMITED (FA20, per-user read limit; Retry-After).'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
     PublicExams:
       get:
         operationId: listPublicExams

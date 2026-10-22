@@ -67,6 +67,7 @@ api.oposibots.es {
 				lb_retries 2
 				lb_try_duration 3s
 				lb_try_interval 250ms
+				request_buffers 2MB
 				header_up X-Forwarded-For {remote_host}
 				header_up X-Request-Id {http.request.uuid}
 				health_uri /health/live

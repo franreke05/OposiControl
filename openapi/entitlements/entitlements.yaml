@@ -190,6 +190,8 @@ components:
             $ref: '../common/errors.yaml#/components/responses/Internal'
           '502':
             $ref: '../common/errors.yaml#/components/responses/UpstreamError'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
   schemas:
     GrantMotivo:
       type: string

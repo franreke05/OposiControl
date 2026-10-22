@@ -132,6 +132,8 @@ components:
             description: 'UNKNOWN_SPECIALTY, LEGAL_VERSION_NOT_ACTIVE, INVALID_REFERRAL_CODE or SELF_REFERRAL.'
           '429':
             $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
     MeProfile:
       patch:
         operationId: updateMyProfile
@@ -187,6 +189,8 @@ components:
             description: 'UNKNOWN_SPECIALTY or UNKNOWN_COMMUNITY.'
           '429':
             $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
     MeAvatar:
       put:
         operationId: replaceMyAvatar
@@ -232,6 +236,8 @@ components:
             $ref: '../common/errors.yaml#/components/responses/UnsupportedMediaType'
           '429':
             $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
       delete:
         operationId: deleteMyAvatar
         summary: 'Delete the avatar'
@@ -256,6 +262,8 @@ components:
             description: 'ACCOUNT_BLOCKED.'
           '429':
             $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
     LegalDocuments:
       get:
         operationId: listActiveLegalDocuments
@@ -332,6 +340,8 @@ components:
             description: 'DOCUMENT_NOT_ACTIVE.'
           '429':
             $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
     MeCredentials:
       post:
         operationId: changeMyCredentials
@@ -381,6 +391,8 @@ components:
             description: 'IDEMPOTENCY_KEY_REUSED.'
           '429':
             $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
     AdminMe:
       get:
         operationId: getAdminMe
