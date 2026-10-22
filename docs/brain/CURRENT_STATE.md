@@ -1,6 +1,28 @@
 # Current State
 
-## Lanzamiento V1 del backend (bot-1, bot-2 y control) — preparación 2026-10-22 — `NOT_DEPLOYED`
+## Lanzamiento V1 del backend — DESPLEGADO 2026-10-22 — `LIVE_VERIFIED` (humo externo y panel), GO-6 pendiente de la app
+
+- **Producción:**
+  - bot-1, bot-2 y control corren `oposicontrol-backend:0bb7efe02086` (revisión `0bb7efe0…`), los tres healthy; desplegado desde el árbol `11d8a2e4`, cuyo código y migraciones son idénticos a la imagen;
+  - `compose.env`: `BACKEND_IMAGE=…0bb7efe02086` y `CONTROL_IMAGE=` vacío;
+  - Caddy del host 2.6.2 con `buffer_requests`, sin `max_fails` y con `/api/v1/public/*` en `@bot`.
+- **MAIN, ventana 18:45-19:20 UTC:**
+  - las 40 migraciones del manifiesto aplicadas con VERIFY = 0 y registradas;
+  - relleno F4.3b: 3 oficiales con penalización racional y 3 filas de auditoría (actor `b69164ad…`);
+  - D-10: #37/#40/#41/#42 registradas;
+  - reconcile 0 y `legacy_opening` 0.
+  - En el F4.4 `--verify-only` final, 102600/102800/102900 dan «el VERIFY no se ejecuta» porque nombran firmas que las rondas posteriores borran (comprobado en MAIN: las firmas nuevas existen y solo las ejecuta service_role). Hay que excluirlas del F4.4 del plan o usar `to_regprocedure` en esos VERIFY.
+  - Volcados en `~/.oposibots-gate/backups/` (RPO 18:46:17Z) y prueba de restauración OK (95 tablas idénticas).
+- **Humo externo OK:** health 200; borde 404; rutas de app y admin 401 sin sesión; `/api/v1/public/especialidades` 200 (antes 404 por Caddy, corregido en `11d8a2e4` con una comprobación nueva en verify-ops-config).
+- **Panel V1** `1.26.29521` (`scripts/publicar-panel-produccion.sh`, ahora por defecto `origin/develop`), probado por el propietario: login, Etiquetas, etiqueta en pregunta, popup de recursos, reglas oficiales con racional e historial, e importación con reservas.
+- **Pendiente:**
+  - F6.3/F6.4 (recorrido de app e IDOR con cuentas sintéticas; no hay app publicada, así que no hay usuarios reales y R-2 sigue disponible hasta GO-6);
+  - métrica `store_payments_enabled = 0`;
+  - borrar la clave secreta `default` de Supabase (RB-10; la nueva `v1_servidor` está en el servidor);
+  - receptor de Alertmanager (D-4);
+  - OK del propietario a los descartes de worktrees.
+
+## Lanzamiento V1 del backend (bot-1, bot-2 y control) — preparación 2026-10-22 — histórico
 
 - **Alcance (propietario):** todo el backend V1 (dos Ktor de bot y el de control) con las 40 migraciones de `ops/deploy/v1/main-migrations.manifest`. La app de alumnos va después; ninguna está publicada.
 - **Decisiones del propietario:** D-1 pagos todo apagado; D-3/D-12 volcado + prueba local; D-9/D-13 acepta los RB P1 abiertos y lanzar sin repetir CERT-LOAD-1000, rotando la service_role antes de F4; D-6 esta noche; D-7 cuentas `+prueba-a/-b/-admin`; D-10 sí; D-4 Sentry + observación manual, receptor de Alertmanager antes de declarar estable.

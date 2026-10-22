@@ -8,13 +8,13 @@
 #   bash scripts/publicar-panel-produccion.sh --instalar      # y actualiza tu instalacion (cierra antes OposiControl)
 #   PANEL_REF=origin/develop bash scripts/publicar-panel-produccion.sh   # otra rama (solo cuando control corra esa)
 #
-# Por defecto construye `origin/hotfix/control-tags-cfa2e14`, que es lo que corre hoy en el Ktor de control
-# (oposicontrol-backend:d922357e84d3). Cuando V1 se lance, PANEL_REF pasa a origin/develop (o al tag de la release).
+# Por defecto construye `origin/develop`: desde el lanzamiento V1 (2026-10-22) es lo que corre en el Ktor de control
+# (oposicontrol-backend:0bb7efe02086). Para otra rama: PANEL_REF=<ref>.
 # La URL y la clave PUBLICA de Supabase se leen del .env del repo y nunca se imprimen; el script falla si el panel
 # empaquetado lleva una clave secreta o no apunta a api.oposibots.es.
 set -euo pipefail
 
-REF="${PANEL_REF:-origin/hotfix/control-tags-cfa2e14}"
+REF="${PANEL_REF:-origin/develop}"
 INSTALAR="${1:-}"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 BUILD_DIR="$(dirname "$REPO")/OposiControl-PanelBuild"
