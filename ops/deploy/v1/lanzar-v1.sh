@@ -192,20 +192,25 @@ ventana)
   need_sha; need_db
   bash scripts/verify-migrations-manifest.sh >/dev/null || { echo "ERROR: el manifiesto no cuadra con este arbol."; exit 1; }
   titulo "F4 ventana de mantenimiento (tope 30 min desde F4.1; a los 15 min se decide seguir o R-2)"
+  if [ "${2:-}" = "--reanudar" ]; then
+    # Ktor ya parados y volcado delta ya hecho en esta misma ventana: se sigue por la primera migracion no registrada.
+    echo "REANUDAR: sin F4.1 ni F4.2 (ya hechos). Ktor: $(r 'docker ps --format "{{.Names}}" | grep -c ktor || true') en marcha (esperado 0)"
+  else
   confirmar PARAR "F4.1 parar los TRES Ktor (Caddy dara 502 en toda la API) y copiar el entorno"
   r 'docker ps --format "{{.Names}} {{.Image}}" | tee ~/v1-deploy-ps-antes.txt; cp -a ~/oposibots-stack/env ~/oposibots-stack/env.bak-$(date +%Y%m%d%H%M)'
   r 'docker stop oposibots-ktor-bot-1-1 oposibots-ktor-bot-2-1 oposibots-ktor-control-1'
   echo "Inicio de la ventana (UTC): $(date -u +%FT%TZ)"; curl -s -o /dev/null -w "health/live -> %{http_code} (esperado 502)\n" "$API/health/live"
   titulo "F4.2 volcado delta OBLIGATORIO (con los Ktor parados)"
   bash "$REPO/ops/deploy/v1/lanzar-v1.sh" backup
+  fi
   titulo "F4.3 migraciones una a una (el script pide teclear cada version; si una falla, se para todo)"
   # El manifiesto se lee por el descriptor 3: la entrada estandar queda para las confirmaciones tecleadas.
   while read -r version _blob _pred clase <&3; do
     case "$clase" in apply|apply-or-record) ;; *) continue ;; esac
     f="$(ls supabase/migrations/${version}_*.sql)"
     echo; echo "---- $f ($clase)"
-    if [ "$clase" = apply-or-record ] && [ "$(echo "select count(*) from supabase_migrations.schema_migrations where version='$version';" | psql_main -At)" = 1 ]; then
-      echo "ya registrada: se salta"; continue; fi
+    if [ "$(echo "select count(*) from supabase_migrations.schema_migrations where version='$version';" | psql_main -At)" = 1 ]; then
+      echo "ya aplicada y registrada: se salta"; continue; fi
     bash ops/deploy/v1/apply-main-migration.sh "$f"
     if [ "$version" = 20261022103400 ]; then
       titulo "F4.3b relleno de la penalizacion racional (D-11 = SI)"
