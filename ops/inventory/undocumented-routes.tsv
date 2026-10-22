@@ -1,4 +1,4 @@
-# max: 168
+# max: 170
 # REVIEWED EXCEPTIONS REGISTER: routes served by Ktor that the frozen openapi/ does not declare. NOT a spec: no semantics are invented here.
 # The list can only shrink: a row that is no longer routed or is now documented fails RouteInventoryTest; a new undocumented route fails until it is
 # reviewed and added here (and then `# max:` goes up on purpose). Legacy routes are enrolled, never deleted (no published-client telemetry yet).
@@ -173,3 +173,5 @@ GET	/v1/examenes	LEGACY_PUBLISHED_CLIENT_TELEMETRY_PENDING	EP-126 -> D2-15	OC	ca
 GET	/v1/examenes/{}	LEGACY_PUBLISHED_CLIENT_TELEMETRY_PENDING	EP-127 -> D2-16	NONE	counter legacy_route_requests_total{endpoint="EP-127"}; no live caller in OC/OB (route matrix audit 2026-10-01); retire only after zero telemetry
 GET	/v1/examenes/{}/preguntas	LEGACY_PUBLISHED_CLIENT_TELEMETRY_PENDING	EP-128 -> D2-08	NONE	counter legacy_route_requests_total{endpoint="EP-128"}; no live caller in OC/OB (only a dead BackendRoutes constant; route matrix audit 2026-10-01); retire only after zero telemetry
 POST	/v1/auth/admin-access-requests	ADMIN_CONTRACT_GAP	ACCESS-REQ-01	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorAccessRequestsRepositoryImpl.kt (submitRequest); public, rate limited, served by the bot pool under the already forwarded /v1/auth/* prefix; not part of the frozen consumer auth contract
+GET	/api/v1/admin/preguntas/{}/etiquetas	ADMIN_CONTRACT_GAP	QUESTION-TAGS	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorQuestionsRepositoryImpl.kt; question tags selector in the question editor (owner decision 2026-10-22); admin JWT + active admin role through the gateway-auth block; writes etiquetas_pregunta with service_role and one audit row pregunta_etiquetas_actualizadas; no OpenAPI entry yet
+PUT	/api/v1/admin/preguntas/{}/etiquetas	ADMIN_CONTRACT_GAP	QUESTION-TAGS	OC	caller OC data/src/commonMain/kotlin/com/oposicontrol/admin/data/repository/KtorQuestionsRepositoryImpl.kt; question tags selector in the question editor (owner decision 2026-10-22); admin JWT + active admin role through the gateway-auth block; writes etiquetas_pregunta with service_role and one audit row pregunta_etiquetas_actualizadas; no OpenAPI entry yet

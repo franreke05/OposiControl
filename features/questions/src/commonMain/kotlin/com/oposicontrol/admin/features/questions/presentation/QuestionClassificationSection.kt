@@ -21,11 +21,9 @@ import com.oposicontrol.admin.core.ui.theme.Spacing
 /**
  * Lo que clasifica a la pregunta — con lo que el contrato tiene.
  *
- * **No hay «Tema» ni «Especialidad».** `QuestionDetail` no los trae y
- * `QuestionsRepository` no los expone. El banco anterior pintaba un desplegable
- * «Tema» con una sola opción y `onSelect = {}`, y esta sección decía «Tema: No
- * disponible»: dos sitios ocupados por un campo que no existe. Se dice una vez y
- * en su sitio ([QUESTION_NO_TOPIC_NOTE]).
+ * **No hay «Especialidad»**: es del examen ([QUESTION_NO_TOPIC_NOTE]). Los temas se
+ * marcan con ETIQUETAS ([QuestionTagsBlock]): varias por pregunta, guardadas por su
+ * propia ruta (`PUT /preguntas/{id}/etiquetas`) y no con el borrador.
  *
  * «Dificultad» se lee y no se edita: es del contrato y se reenvía intacta al
  * guardar, pero esta pantalla no tiene control para ella.
@@ -78,6 +76,7 @@ internal fun QuestionClassificationSection(state: QuestionsState, onIntent: (Que
                     color = tokens.textSecondary,
                 )
             }
+            QuestionTagsBlock(state, onIntent)
         }
     }
 }

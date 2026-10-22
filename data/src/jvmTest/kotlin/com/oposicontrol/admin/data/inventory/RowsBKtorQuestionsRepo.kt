@@ -16,7 +16,7 @@ private fun Env.repo() = KtorQuestionsRepositoryImpl(client, appConfig, session,
 private val DRAFT = QuestionDraft(statement = "s", type = QuestionType.RAFAGA, options = emptyList(), explanation = "e", source = "", active = true, difficulty = "")
 private val RESOURCE = QuestionResourceDraft(kind = QuestionResourceKind.IMAGEN, title = "t")
 
-/** Filas del registrador (R4-REC-B): KtorQuestionsRepositoryImpl (12 sitios, una fila por metodo; la rama de contenido retiro createQuestionResource). */
+/** Filas del registrador (R4-REC-B): KtorQuestionsRepositoryImpl (14 sitios, una fila por metodo; la rama de contenido retiro createQuestionResource). */
 internal val ROWS_B_QUESTIONS_REPO: List<CallRow> = listOf(
     // todos los filtros opcionales activos: cada `parameter("x"` de listQuestions lo graba la fila (R6-HARDEN)
     CallRow(FILE, "listQuestions", get("$Q?activa&examenId&limit&offset&orden&q&tipo")) {
@@ -29,6 +29,8 @@ internal val ROWS_B_QUESTIONS_REPO: List<CallRow> = listOf(
     CallRow(FILE, "listQuestionExams", get("$Q/{}/examenes")) { repo().listQuestionExams("ID0") },
     CallRow(FILE, "linkQuestionToExam", post("$Q/{}/examenes")) { repo().linkQuestionToExam("ID0", "ID1", null) },
     CallRow(FILE, "unlinkQuestionFromExam", delete("$Q/{}/examenes/{}")) { repo().unlinkQuestionFromExam("ID0", "ID1") },
+    CallRow(FILE, "getQuestionTags", get("$Q/{}/etiquetas")) { repo().getQuestionTags("ID0") },
+    CallRow(FILE, "setQuestionTags", put("$Q/{}/etiquetas")) { repo().setQuestionTags("ID0", listOf("ID1")) },
     CallRow(FILE, "listQuestionResources", get("$Q/{}/recursos")) { repo().listQuestionResources("ID0") },
     CallRow(FILE, "uploadQuestionResourceFile", post("$Q/{}/recursos/archivo")) {
         repo().uploadQuestionResourceFile("ID0", "ID1", QuestionResourceDraft(kind = QuestionResourceKind.IMAGEN, title = "t"), QuestionResourceFile("a.pdf", "application/pdf", byteArrayOf(1)))

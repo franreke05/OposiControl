@@ -5,6 +5,8 @@ data class Tag(
     val name: String,
     val slug: String,
     val origin: String,
+    /** `false` = desactivada en el catálogo: no se ofrece al etiquetar preguntas. */
+    val active: Boolean = true,
 )
 
 data class TagSearchQuery(
