@@ -361,7 +361,7 @@ class AdminSystemStatusTest {
         assertEquals(700_000_000, quota?.bytes7d)
         assertEquals(3_000_000_000, quota?.proyeccionMensualBytes)
         assertEquals(SupabaseQuotaWire.BASE_7D, quota?.proyeccionBase)
-        assertEquals(5_000_000_000, quota?.limiteMensualBytes)
+        assertEquals(250_000_000_000, quota?.limiteMensualBytes)
         assertEquals(
             listOf(
                 // Un destino sin lectura en una ventana conserva null en ESA ventana: no es un cero.
@@ -373,7 +373,7 @@ class AdminSystemStatusTest {
         )
         // El límite viaja SIEMPRE: lo decide el servidor y el panel no debe suponerlo.
         val wire = backendJson.encodeToString(AdminSupabaseQuotaDto.serializer(), quota!!)
-        assertTrue("\"limiteMensualBytes\":5000000000" in wire, wire)
+        assertTrue("\"limiteMensualBytes\":250000000000" in wire, wire)
     }
 
     // --- versión desplegada ---
@@ -475,4 +475,16 @@ class AdminSystemStatusTest {
         systemTopology = SystemTopologyProvider { topology },
         supabaseReadiness = readinessProbe,
     ).getSystemStatus()
+
+    /** El cupo de Supabase sale del entorno (plan Pro por defecto); un valor roto nunca deja el cupo sin limite. */
+    @Test
+    fun egressLimitComesFromTheEnvironmentWithTheProPlanAsDefault() {
+        assertEquals(250_000_000_000L, supabaseMonthlyEgressLimitBytes(null))
+        assertEquals(250_000_000_000L, supabaseMonthlyEgressLimitBytes(""))
+        assertEquals(250_000_000_000L, supabaseMonthlyEgressLimitBytes("abc"))
+        assertEquals(250_000_000_000L, supabaseMonthlyEgressLimitBytes("0"))
+        assertEquals(250_000_000_000L, supabaseMonthlyEgressLimitBytes("-5"))
+        assertEquals(5_000_000_000L, supabaseMonthlyEgressLimitBytes(" 5 "))
+        assertEquals(500_000_000_000L, supabaseMonthlyEgressLimitBytes("500"))
+    }
 }

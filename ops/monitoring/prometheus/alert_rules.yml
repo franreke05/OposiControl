@@ -94,25 +94,27 @@ groups:
           summary: "{{ $labels.replica }} dedica mas del 10 % del tiempo a pausas de GC"
           description: "Heap demasiado justo para la carga: revisar -XX:MaxRAMPercentage y el limite de memoria."
 
-      # Incidente 2026-10-10: el plan gratuito de Supabase incluye 5 GB de trafico de salida por ciclo (unos 166 MB al dia).
-      # La metrica cuenta los bytes de respuesta que el backend recibe de Supabase tal como viajan (comprimidos).
+      # Plan Pro de Supabase (desde 2026-10-22): 250 GB de trafico de salida por ciclo (unos 8,3 GB al dia, 347 MB a la hora).
+      # Con el plan gratuito eran 5 GB (incidente 2026-10-10). Si cambia el plan, ajustar estos umbrales y
+      # SUPABASE_MONTHLY_EGRESS_LIMIT_GB del backend. La metrica cuenta los bytes de respuesta que el backend recibe de
+      # Supabase tal como viajan (comprimidos); no incluye lo que los clientes descargan directo con URLs firmadas.
       - alert: SupabaseEgressHigh
-        expr: sum(increase(upstream_response_wire_bytes_total[1h])) > 50e6
+        expr: sum(increase(upstream_response_wire_bytes_total[1h])) > 300e6
         for: 15m
         labels:
           severity: warning
         annotations:
-          summary: "El backend ha recibido mas de 50 MB de Supabase en una hora"
-          description: "A ese ritmo la cuota mensual de trafico de salida se agota en pocos dias. Buscar la llamada repetitiva (sum by (replica, target))."
+          summary: "El backend ha recibido mas de 300 MB de Supabase en una hora"
+          description: "Cerca del presupuesto por hora de la cuota de 250 GB al mes. Buscar la llamada repetitiva (sum by (replica, target))."
 
       - alert: SupabaseEgressDailyBudgetExceeded
-        expr: sum(increase(upstream_response_wire_bytes_total[24h])) > 150e6
+        expr: sum(increase(upstream_response_wire_bytes_total[24h])) > 7.5e9
         for: 30m
         labels:
           severity: critical
         annotations:
-          summary: "Mas de 150 MB recibidos de Supabase en 24 horas"
-          description: "Por encima del presupuesto diario de la cuota de 5 GB al mes: Supabase puede restringir el proyecto."
+          summary: "Mas de 7,5 GB recibidos de Supabase en 24 horas"
+          description: "Por encima del 90 % del presupuesto diario de la cuota de 250 GB al mes: se cobrara el exceso o Supabase puede restringir el proyecto."
 
       # Incidente 2026-10-10: Supabase estuvo 11 horas sin responder sin que nadie lo viera.
       - alert: SupabaseUnreachable

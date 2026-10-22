@@ -979,7 +979,7 @@ class PrometheusMetricsTest {
         assertEquals(0L, decoded.cuotaSupabase?.bytes24h, "un cero medido sobrevive al viaje")
         assertEquals(3_000_000_000L, decoded.cuotaSupabase?.proyeccionMensualBytes)
         assertEquals("7d", decoded.cuotaSupabase?.proyeccionBase)
-        assertEquals(5_000_000_000L, decoded.cuotaSupabase?.limiteMensualBytes)
+        assertEquals(250_000_000_000L, decoded.cuotaSupabase?.limiteMensualBytes)
         assertEquals("rest", decoded.cuotaSupabase?.porDestino?.single()?.destino)
         assertEquals(true, decoded.version?.replicasDifieren)
         assertEquals("886dac044b6e", decoded.version?.sha)

@@ -127,12 +127,21 @@ data class AdminSystemSourceDto(
     val prometheusResponde: Boolean,
 )
 
+/** Variable de entorno con el tráfico de salida mensual incluido en el plan de Supabase, en GB decimales. */
+const val SUPABASE_MONTHLY_EGRESS_LIMIT_GB_ENV = "SUPABASE_MONTHLY_EGRESS_LIMIT_GB"
+
+/** Plan Pro de Supabase (desde 2026-10-22): 250 GB de tráfico de salida al mes. El plan gratuito eran 5 GB. */
+const val SUPABASE_DEFAULT_MONTHLY_EGRESS_LIMIT_GB = 250L
+
+/** GB decimales -> bytes. Vacío, inválido o no positivo -> el valor del plan actual (nunca «sin límite»). */
+internal fun supabaseMonthlyEgressLimitBytes(raw: String?): Long =
+    (raw?.trim()?.toLongOrNull()?.takeIf { it in 1..1_000_000 } ?: SUPABASE_DEFAULT_MONTHLY_EGRESS_LIMIT_GB) * 1_000_000_000L
+
 /**
- * Tráfico de salida mensual incluido en el plan gratuito de Supabase: 5 GB (decimales, igual que están escritos los
- * umbrales de `ops/monitoring/prometheus/alert_rules.yml`). Si el proyecto cambia de plan, este es el único número que
- * hay que tocar.
+ * Tráfico de salida mensual incluido en el plan de Supabase. Se lee de [SUPABASE_MONTHLY_EGRESS_LIMIT_GB_ENV] para
+ * que un cambio de plan no exija recompilar; los umbrales de `ops/monitoring/prometheus/alert_rules.yml` se ajustan a mano.
  */
-const val SUPABASE_MONTHLY_EGRESS_LIMIT_BYTES: Long = 5_000_000_000L
+val SUPABASE_MONTHLY_EGRESS_LIMIT_BYTES: Long = supabaseMonthlyEgressLimitBytes(System.getenv(SUPABASE_MONTHLY_EGRESS_LIMIT_GB_ENV))
 
 object SupabaseQuotaWire {
     const val BASE_7D = "7d"
