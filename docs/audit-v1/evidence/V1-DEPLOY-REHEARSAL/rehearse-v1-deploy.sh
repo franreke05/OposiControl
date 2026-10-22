@@ -27,7 +27,7 @@ OUT="${1:?directorio de salida}"; mkdir -p "$OUT"
 CTR="v1-deploy-rehearsal-pg17"
 IMAGE="public.ecr.aws/supabase/postgres@sha256:658d1c9b09ae4f61b8e95087b6859181b4b7d6940d769cf7b605609c8aad43e9" # 17.6.1.171
 MAIN_BASELINE="${MAIN_BASELINE:-/c/Users/franr/.oposibots-gate/baseline-20261014/baseline_main.sql}"
-MAIN_BASELINE_SHA="07acead5e0598df501aabd83e1e281d8776e653bea846e98932f233021354a46"
+MAIN_BASELINE_SHA="${MAIN_BASELINE_SHA:-07acead5e0598df501aabd83e1e281d8776e653bea846e98932f233021354a46}"   # recaptura (F3.6): pasar su sha256
 MAIN_VIEWS="${MAIN_VIEWS:-/c/Users/franr/.oposibots-gate/baseline/06_views.sql}"
 HERE=docs/audit-v1/evidence/V1-DEPLOY-REHEARSAL
 SQLD=docs/engineering/v1-deploy
@@ -140,6 +140,10 @@ do $$ declare p record; n int := 0; begin
 SQL
   say "ok:   RB-16 a mano (como el propietario en Storage > Policies): $(grep -oE 'borradas: [0-9]+' "$err" || echo '?') politicas de escritura de storage.objects; $NEVER_V no se ejecuta nunca"
 fi
+
+# Huella del punto de partida (comparable con la de una RECAPTURA de MAIN, F3.6: misma funcion de huella).
+fingerprint "$OUT/fingerprint_start.txt"
+say "ok:   huella del punto de partida: fingerprint_start.txt ($(wc -l < "$OUT/fingerprint_start.txt") lineas)"
 
 # ---- 3. PREFLIGHT de solo lectura (los mismos ficheros que el propietario ejecutara en MAIN) ----
 run_sql "$SQLD/01_catalog_preflight_readonly.sql" "$OUT/pre_01_catalog.txt"

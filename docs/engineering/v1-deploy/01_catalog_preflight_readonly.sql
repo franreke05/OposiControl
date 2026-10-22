@@ -2,7 +2,8 @@
 -- Lo ejecuta el PROPIETARIO en el editor SQL de MAIN. Guardar la salida completa.
 -- Tablas: las de 20261023100600 (suscripciones, beneficios_plan, capacidades_especialidad) y las de RB-17 / 20261023100500
 -- (opositeca_items, etiquetas_opositeca, invitaciones_referido, preguntas_parseadas_staging) + lotes_actualizacion_ranking
--- (cerrada por 20261022101200/101700). Por tabla y rol (anon, authenticated): INSERT / UPDATE / DELETE efectivos y RLS.
+-- (cerrada por 20261022101200/101700). Por tabla y rol (anon, authenticated): INSERT / UPDATE / DELETE / TRUNCATE efectivos y RLS.
+-- TRUNCATE ignora RLS: un cliente con TRUNCATE vacia la tabla aunque no tenga politica de escritura (esperado SIEMPRE false).
 -- Valores esperados ANTES del despliegue (forma de MAIN de la captura 2026-10-14, reproducidos en el ensayo local
 -- docs/audit-v1/evidence/V1-DEPLOY-REHEARSAL/): ver tabla 6.2 del plan. Despues: todo false salvo
 -- authenticated INSERT en invitaciones_referido (politica invitaciones_referido_insert_propias, se mantiene a proposito).
@@ -15,6 +16,7 @@ select t.tabla, r.rol,
        case when to_regclass('public.' || t.tabla) is null then null else has_table_privilege(r.rol, 'public.' || t.tabla, 'INSERT') end as ins,
        case when to_regclass('public.' || t.tabla) is null then null else has_table_privilege(r.rol, 'public.' || t.tabla, 'UPDATE') end as upd,
        case when to_regclass('public.' || t.tabla) is null then null else has_table_privilege(r.rol, 'public.' || t.tabla, 'DELETE') end as del,
+       case when to_regclass('public.' || t.tabla) is null then null else has_table_privilege(r.rol, 'public.' || t.tabla, 'TRUNCATE') end as trunc,
        (select c.relrowsecurity from pg_class c where c.oid = to_regclass('public.' || t.tabla)) as rls,
        (select count(*) from pg_policy p where p.polrelid = to_regclass('public.' || t.tabla) and p.polcmd in ('*', 'a', 'w', 'd') and p.polpermissive) as politicas_escritura_permisivas,
        (select string_agg(p.polname, ',' order by p.polname) from pg_policy p where p.polrelid = to_regclass('public.' || t.tabla) and p.polname like '%admin_all') as admin_all
@@ -37,4 +39,9 @@ where p.polrelid = to_regclass('storage.objects')
 
 -- Edge Functions: no se ven desde SQL. El propietario las lista en el panel (Edge Functions) o con `supabase functions list`;
 -- esperado 0 (GO-1 2026-10-19). Si hay alguna que escriba estas tablas con el JWT del usuario: NO-GO hasta revisarla.
+-- TRUNCATE de clientes en CUALQUIER tabla de public/private (esperado: 0 filas; TRUNCATE ignora RLS).
+select n.nspname || '.' || c.relname as tabla, r.rol as rol_con_truncate
+from pg_class c join pg_namespace n on n.oid = c.relnamespace cross join (values ('anon'), ('authenticated')) r(rol)
+where n.nspname in ('public', 'private') and c.relkind in ('r', 'p') and has_table_privilege(r.rol, c.oid, 'TRUNCATE')
+order by 1, 2;
 commit;
