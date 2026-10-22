@@ -12,6 +12,7 @@
 #   caddy       F2.2b      Caddy del host sin expulsion pasiva (copia, diff, sudo, validate, reload)     (escribe, GO-2b)
 #   imagen      F2.4-F2.5  construir la imagen del SHA, comprobarla y cargarla en el servidor SIN arrancar
 #   backup      F3.2       volcado logico de MAIN a ~/.oposibots-gate/backups/ con SHA256SUMS          (lee MAIN)
+#   restaurar-prueba F3.3  restaura el ultimo volcado en un PG17 temporal local y compara filas por tabla con MAIN
 #   ventana     F4         parar los 3 Ktor, volcado delta, migraciones una a una, relleno, VERIFY       (escribe MAIN, GO-4)
 #   arrancar    F5         compose del SHA en el servidor, BACKEND_IMAGE, CONTROL_IMAGE vacia, 3 Ktor uno a uno
 #   humo        F6.1       salud, borde y versiones                                                      (solo lectura)
@@ -42,7 +43,17 @@ need_sha() {
   : "${V1_SHA:?define V1_SHA=<sha12 aprobado en F0.3>}"
   [ "$(git rev-parse --short=12 HEAD)" = "$V1_SHA" ] || { echo "ERROR: este arbol esta en $(git rev-parse --short=12 HEAD), no en V1_SHA=$V1_SHA."; exit 1; }
   [ -z "$(git status --porcelain --untracked-files=no)" ] || { echo "ERROR: el arbol tiene cambios; se despliega solo desde un checkout limpio."; exit 1; }
-  IMG="oposicontrol-backend:$V1_SHA"
+  # V1_IMAGE_SHA: la imagen ya construida y cargada puede ser de un SHA anterior SOLO si desde entonces no ha cambiado nada
+  # de lo que entra en la imagen ni de las migraciones (cambios de ops/docs/scripts no obligan a reconstruir).
+  IMG_SHA="${V1_IMAGE_SHA:-$V1_SHA}"
+  if [ "$IMG_SHA" != "$V1_SHA" ]; then
+    git merge-base --is-ancestor "$IMG_SHA" HEAD || { echo "ERROR: V1_IMAGE_SHA=$IMG_SHA no es antecesor de este arbol."; exit 1; }
+    git diff --quiet "$IMG_SHA" HEAD -- backend core domain data features composeApp supabase gradle build-logic \
+      settings.gradle.kts build.gradle.kts gradle.properties ops/deploy/Dockerfile.backend .dockerignore \
+      || { echo "ERROR: entre $IMG_SHA y este arbol cambia codigo, migraciones o la imagen: reconstruye (fase imagen)."; exit 1; }
+    echo "imagen de $IMG_SHA: entre ese SHA y este arbol solo cambian ops/docs/scripts"
+  fi
+  IMG="oposicontrol-backend:$IMG_SHA"
 }
 need_db() { : "${MAIN_DB_URL:?define MAIN_DB_URL (session pooler de MAIN) en esta terminal}"; }
 compose_cmd() { # imprime la orden compose del servidor a partir de las etiquetas del contenedor de control
@@ -98,6 +109,7 @@ caddy)
 
 imagen)
   need_sha
+  [ "$IMG_SHA" = "$V1_SHA" ] || { echo "ERROR: la fase imagen construye el arbol actual; no definas V1_IMAGE_SHA aqui."; exit 1; }
   titulo "F2.4 construir oposicontrol-backend:$V1_SHA con el script oficial"
   bash scripts/build-backend-image.sh | tail -2
   local_jar="$(sha256sum backend/ktor/build/install/ktor/lib/ktor.jar | cut -c1-64)"
@@ -118,15 +130,47 @@ backup)
   need_sha; need_db
   BK="$HOME/.oposibots-gate/backups/main-ndiooyyqtaeysnedywer-$(date -u +%Y%m%dT%H%M%SZ)"; mkdir -p "$BK"
   titulo "F3.2 volcado logico de MAIN en $BK"
-  echo "Si el CLI pide sesion: npx supabase@2.120.0 login (una vez) y link --project-ref ndiooyyqtaeysnedywer."
-  ( cd "$BK" && npx --yes supabase@2.120.0 db dump --linked --role-only -f roles.sql \
-      && npx --yes supabase@2.120.0 db dump --linked -f schema.sql \
-      && npx --yes supabase@2.120.0 db dump --linked --data-only --use-copy -f data.sql )
+  # --db-url (y no --linked): sin login ni link del CLI; la URL tiene que ir con la contrasena codificada para URL.
+  ( cd "$BK" && npx --yes supabase@2.120.0 db dump --db-url "$MAIN_DB_URL" --role-only -f roles.sql \
+      && npx --yes supabase@2.120.0 db dump --db-url "$MAIN_DB_URL" -f schema.sql \
+      && npx --yes supabase@2.120.0 db dump --db-url "$MAIN_DB_URL" --data-only --use-copy -f data.sql )
   MSYS_NO_PATHCONV=1 docker run --rm -e MAIN_DB_URL -v "$BK:/bk" "$PG_IMAGE" sh -c 'pg_dump "$MAIN_DB_URL" -Fc --schema=supabase_migrations -f /bk/migrations_history.dump'
   psql_main -At < docs/engineering/v1-deploy/03_backup_auth_triggers_readonly.sql > "$BK/auth_triggers.sql"
   psql_main -A -F '|' < docs/engineering/v1-deploy/04_backup_storage_policies_readonly.sql > "$BK/storage_policies.txt"
   ( cd "$BK" && sha256sum * > SHA256SUMS && ls -l )
   echo "Hora UTC del volcado (RPO de R-4): $(date -u +%FT%TZ)  ruta: $BK"
+  echo "Siguiente: bash $REPO/ops/deploy/v1/lanzar-v1.sh restaurar-prueba"
+  ;;
+
+restaurar-prueba)
+  need_db
+  # F3.3 (a): restaura el ULTIMO volcado en un PostgreSQL 17 de Supabase TEMPORAL en este equipo y compara las filas por tabla
+  # con MAIN. Solo imprime recuentos, nunca filas. El contenedor se borra al terminar.
+  BK="${2:-$(ls -d "$HOME"/.oposibots-gate/backups/main-ndiooyyqtaeysnedywer-* 2>/dev/null | sort | tail -1)}"
+  [ -f "$BK/schema.sql" ] && [ -f "$BK/data.sql" ] || { echo "ERROR: no hay volcado completo en '$BK' (ejecuta antes: backup)."; exit 1; }
+  ( cd "$BK" && sha256sum -c --quiet SHA256SUMS ) || { echo "ERROR: el volcado no cuadra con su SHA256SUMS."; exit 1; }
+  titulo "F3.3 prueba de restauracion de $BK"
+  ct=v1-restore-test; pw="r$(date +%s)$RANDOM"
+  docker rm -f "$ct" >/dev/null 2>&1 || true
+  docker run -d --name "$ct" -e POSTGRES_PASSWORD="$pw" "$PG_IMAGE" >/dev/null
+  trap 'docker rm -f v1-restore-test >/dev/null 2>&1 || true' EXIT
+  for i in $(seq 1 60); do docker exec "$ct" pg_isready -U postgres -h localhost >/dev/null 2>&1 && break; sleep 2; done
+  local_psql() { docker exec -i -e PGPASSWORD="$pw" "$ct" psql -U postgres -h localhost -d postgres -X -q "$@"; }
+  for f in roles schema data; do
+    errs="$(local_psql -v ON_ERROR_STOP=0 < "$BK/$f.sql" 2>&1 | grep -c 'ERROR' || true)"
+    echo "  $f.sql: $errs errores"
+  done
+  echo "  (en roles.sql son normales los 'already exists' de los roles de Supabase; en schema.sql tiene que dar 0 o casi 0)"
+  conteo='select table_name || '"'"'='"'"' || (xpath('"'"'/row/c/text()'"'"', query_to_xml(format('"'"'select count(*) as c from public.%I'"'"', table_name), false, true, '"'"''"'"')))[1]::text from information_schema.tables where table_schema = '"'"'public'"'"' and table_type = '"'"'BASE TABLE'"'"' order by 1;'
+  echo "$conteo" | psql_main -At > "$BK/conteo-main.txt"
+  echo "$conteo" | local_psql -At > "$BK/conteo-restaurado.txt"
+  echo "  tablas publicas: MAIN $(wc -l < "$BK/conteo-main.txt"), restaurado $(wc -l < "$BK/conteo-restaurado.txt") (esperado >= 90)"
+  if diff "$BK/conteo-main.txt" "$BK/conteo-restaurado.txt" > "$BK/conteo-diff.txt"; then
+    echo "ok: PRUEBA DE RESTAURACION OK: mismas filas en todas las tablas publicas"
+  else
+    echo "DIFERENCIAS (tabla=filas; < MAIN, > restaurado):"; cat "$BK/conteo-diff.txt"
+    echo "NO-GO si alguna tabla con datos no cuadra (salvo filas escritas en MAIN despues del volcado)."
+  fi
   ;;
 
 ventana)
