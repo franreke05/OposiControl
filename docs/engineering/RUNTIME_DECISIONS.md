@@ -99,3 +99,49 @@ Mientras tanto queda el marcador comentado `worker:` en `compose.production.yaml
 5. Las consultas de `PrometheusMetrics.kt:417-421` agregan `ktor_http_server_requests_seconds_*` sin filtrar por perfil: con tres contenedores suman bot+control. Aceptable; documentarlo si el panel de estado se interpreta por separado.
 6. `ops/monitoring/compose.yaml` (stack historico de un Ktor, red externa `oposicontrol-deploy_default`) y el stack nuevo **no deben ejecutarse a la vez** (dos Prometheus). El nuevo no incluye node-exporter/cAdvisor: si se quieren metricas de host, reutilizar esos servicios adaptando la red.
 7. El filesystem raiz de los Ktor es `read_only` con `tmpfs /tmp`: si la JVM o Sentry necesitan otro directorio escribible, el arranque lo revelara en el preflight; no se pudo probar sin construir la imagen.
+
+## 6. Sobrecarga: admision, plazo, borde, limitador, cache y GC (CERT-LOAD-1000, 2026-10-21)
+
+Origen: `OposiBot/docs/ledger/2026/10/CERT-LOAD-1000-2026-10-21.md` (1000 usuarios simultaneos en local: unas colas sin tope
+convertidas en 504 a los 25 s, Caddy apartando las dos replicas y escrituras "fantasma"). Rama `fix/v1-overload-admission-control`.
+Todos los valores por defecto salen de la medicion LOCAL y hay que re-medirlos en el VPS (`NOT_VERIFIED` en produccion).
+
+| Mando (perfil bot, `backend.bot.env`) | Defecto | Que hace |
+|---|---|---|
+| `BOT_ADMISSION_ENABLED` | `true` | Admision acotada por replica (`AdmissionControl.kt`). |
+| `BOT_ADMISSION_MAX_IN_FLIGHT` | 32 | Peticiones ejecutandose a la vez. Codo local ~42 req/s por replica con ~0.3 s de servicio (~13-17 en vuelo); el pool IO (64) se lleno a partir de ahi. |
+| `BOT_ADMISSION_MAX_QUEUED` | 64 | Peticiones esperando turno (FIFO). Mas alla: 503 `SERVER_BUSY` al instante. |
+| `BOT_ADMISSION_QUEUE_TIMEOUT_MS` | 2000 | Espera maxima en cola; despues 503 `SERVER_BUSY`. |
+| `BOT_ADMISSION_RETRY_AFTER_SECONDS` | 2 | `Retry-After` enviado: base..2*base (fluctuacion contra reintentos sincronizados). |
+| `BOT_REQUEST_DEADLINE_MS` | 15000 | Plazo total por peticion (cola incluida), menor que `response_header_timeout 25s` del borde. |
+| `PROFILE_IDENTITY_CACHE_TTL_MS` | 30000 (0 = off, max 120000) | Cache del estado de cuenta (`CachingCanonicalProfileDirectory`). |
+
+* **Admision**: semaforo justo + cola acotada, en la fase `Plugins` (despues de la correlacion y de StatusPages). Exentas `/health*` y
+  `/metrics`. Un 503 `SERVER_BUSY` de admision no ha ejecutado nada. Metricas: `admission_in_flight`, `admission_queued`,
+  `admission_admitted_total`, `admission_rejected_total{reason=queue_full|queue_timeout}`, `admission_queue_wait_seconds`.
+  Limitacion conocida: una subida multipart lenta ocupa su permiso mientras dura (en bot solo imagenes del foro).
+* **Plazo cooperativo**: el transporte de Supabase no EMPIEZA una llamada con el plazo vencido y acorta el timeout de las LECTURAS al
+  tiempo que queda; nunca corta una escritura en curso. **Punto sin retorno**: tras la primera escritura de negocio correcta
+  (cualquier POST/PATCH/DELETE o RPC salvo `app_server_now` e `idem_begin`; tambien una subida/borrado de Storage) el plazo deja de
+  aplicarse y la peticion termina. `idem_complete`/`idem_release` corren siempre. Asi un 503 `SERVER_BUSY` por plazo significa
+  "no se aplico ninguna escritura de negocio" y la clave de idempotencia queda liberada (el reintento con la misma clave ejecuta una
+  vez). Metrica `request_deadline_exceeded_total{stage=before_upstream|upstream_read}`. No interrumpe hilos bloqueados (ver
+  `withUpstreamIoParallel`); el trabajo abandonado se acota porque no arranca trabajo nuevo.
+* **Borde (Caddy, pool bot)**: sin salud pasiva (`max_fails`/`fail_duration`): Caddy cuenta como fallo pasivo tambien el
+  `response_header_timeout` y no se puede limitar a fallos de conexion. Solo salud activa en `/health/live` cada 5 s (timeout 4 s).
+  El 503 de Ktor es una respuesta y pasa tal cual (sin `lb_retry_match`, `handle_response` ni reescritura de `Retry-After`);
+  `lb_retries 2` / `lb_try_duration 3s` solo reintentan fallos de CONEXION (`dial_timeout 1s`). **Coste aceptado**: una replica
+  que muere sin drenar recibe trafico hasta la siguiente sonda (<= 5 s; con `least_conn` la replica caida, con 0 conexiones, es la
+  preferida, asi que en esa ventana la mayoria de peticiones nuevas fallan con 502). Mitigacion pendiente: drenaje en el apagado
+  (fallar `/health/live` antes de cerrar el puerto) o desplegar replica a replica esperando la sonda. Lo vigila `verify-ops-config.sh`.
+* **Limitador Valkey**: API asincrona de Lettuce, sin hilo de `Dispatchers.IO` mientras espera; tope propio (`commandTimeout`, 2 s) y
+  el de Lettuce. Sigue fallando CERRADO (503 `UPSTREAM_UNAVAILABLE`) si Valkey no contesta; `memory` solo en desarrollo.
+* **Cache de estado de cuenta**: clave = `sub` verificado; solo cuentas `activa` + onboarding completo; cualquier otro estado se
+  relee siempre. Revocacion acotada: un bloqueo hecho en `control` (otro proceso) o en la otra replica se ve como mucho en el TTL
+  (30 s); las escrituras de perfil y la solicitud de borrado invalidan la cache de la replica que las atiende. Metrica
+  `profile_identity_cache_requests_total{result=hit|miss|bypass}`. El login/refresh (puerta de cuenta del plano de auth) NO usa esta cache.
+* **Lecturas en paralelo**: en D2-01/D2-02/D2-03 los hechos de acceso del usuario (suscripcion+plan, concesiones, capacidades,
+  especialidad) se leen a la vez; D2-01 lee la especialidad una vez (antes dos); D2-02 lee portadas, nombres e intentos a la vez tras
+  el veredicto. Mismas lecturas y misma politica (`decide`); si fallan varias se publica la primera que falle.
+* **JVM**: `-XX:+UseG1GC -XX:MaxGCPauseMillis=200 -Xlog:gc,gc+cpu:stdout:...` en bot y control (con 1 cpu la ergonomia elegia Serial).
+  Las lineas de GC salen en texto plano en stdout junto al log de la aplicacion; Docker las rota (5 x 20 MB).

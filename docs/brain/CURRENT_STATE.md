@@ -1,5 +1,17 @@
 # Current State
 
+## Sobrecarga del perfil bot (CERT-LOAD-1000) — 2026-10-21 (rama `fix/v1-overload-admission-control` desde `develop` ac0e1670, sin push)
+
+`CURRENT_IMPLEMENTATION`, `LIVE_VERIFIED: NO` (pendiente de repetir la prueba de 1000 usuarios). Detalle y mandos: `docs/engineering/RUNTIME_DECISIONS.md` §6.
+
+* Admision acotada por replica (32 en vuelo, cola 64, espera 2 s) con 503 `SERVER_BUSY` + `Retry-After` inmediato; plazo de 15 s por
+  peticion con punto sin retorno tras la primera escritura de negocio; `/health*` y `/metrics` exentas (`AdmissionControl.kt`).
+* Caddy (produccion y host): el pool bot ya no tiene salud pasiva (`max_fails`/`fail_duration`); salud activa `/health/live` cada 5 s.
+  `verify-ops-config.sh` lo vigila (y el 503 sin reintentos, el GC explicito y los mandos documentados).
+* Limitador Valkey asincrono (sin hilo IO), sigue fallando cerrado. Cache de estado de cuenta 30 s (solo cuentas activas, revocacion
+  acotada). Lecturas de acceso en paralelo en D2-01/D2-02/D2-03. G1 + log de GC en bot y control.
+* Contrato: `SERVER_BUSY` anadido a `GenericErrorCode` (FA40, aditivo); registro en `CONTRACT_FREEZE.md` (repo OposiBot) PENDIENTE.
+
 ## Control panel E2E, interfaz — 2026-10-21 (panel `d277992`, rama `feature/december-v1-control-panel`, sin push)
 
 - **Interfaz contra el backend real: 15/15** (`ControlPanelUiE2ETest`). Cubre los recorridos 1, 2, 3, 4 (anular con motivo y rechazo sin reservas), 5, 6 (PDF real, vinculación de duplicados y publicación), 7, 8, 10, 11 y 12. Los E2E de datos siguen en 12/12. El recorrido 9 (reembolsos) solo se prueba en la capa de datos: el reembolso es automático, lo hace Bot, y el panel solo lo muestra. Evidencia: `docs/audit-v1/evidence/CONTROL-E2E/` (sección del 2026-10-21).
