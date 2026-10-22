@@ -460,6 +460,7 @@ Guardar cada salida completa fuera del repo (`~/.oposibots-gate/v1-deploy/<fecha
       bash docs/audit-v1/evidence/V1-DEPLOY-REHEARSAL/rehearse-v1-deploy.sh /tmp/v1-rehearsal-recapture
       diff docs/audit-v1/evidence/V1-DEPLOY-REHEARSAL/run-2026-10-22b/fingerprint_start.txt /tmp/v1-rehearsal-recapture/fingerprint_start.txt
       ```
+      En un paso (equivalente, y además exige VERIFY = 0 de las 4 sobre la captura, con lo que prueba que están en MAIN): `bash docs/audit-v1/evidence/V1-DEPLOY-REHEARSAL/recapture-rehearse.sh ~/.oposibots-gate/baseline-<fecha>`. La referencia `run-2026-10-22b/fingerprint_start.txt` es la huella de partida del ensayo 5.5 sobre `fbb5aa83` (mismas migraciones que `0bb7efe0`).
    3. Criterio:
       - el ensayo sobre la recaptura sale `OK`;
       - el `diff` del punto de partida está **vacío** o tiene cada línea explicada y aceptada por escrito (por ejemplo, 20261020/21 si ya estaban aplicadas: en ese caso también van en `NEVER_RUN`).

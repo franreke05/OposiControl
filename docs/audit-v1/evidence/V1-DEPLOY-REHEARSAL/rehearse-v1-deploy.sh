@@ -124,7 +124,14 @@ run_sql() { # $1 = fichero; $2 = salida
 
 # ---- 2b. Punto de partida = MAIN de hoy: lo ya aplicado fuera del historial y el borrado manual de RB-16 ----
 : > "$OUT/preapplied.txt"
+# RECAPTURA (F3.6): con PREAPPLIED_IN_BASELINE=1 la captura nueva de MAIN YA trae esas versiones: siguen fuera del orden y del
+# ROLLBACK, pero no se vuelven a cargar (solo se comprueba su VERIFY = 0 sobre la captura).
 for m in $PRE_ORDER; do
+  if [ "${PREAPPLIED_IN_BASELINE:-0}" = 1 ]; then
+    out="$(block "${PATHOF[$m]}" VERIFY | psqlc -At -F "|" 2>&1)"; echo "$out" | sed "s/^/  in-baseline $m | /" >> "$OUT/preapplied.txt"
+    echo "$out" | awk -F"|" '$2 != "0" {bad=1} END {exit bad}' || fail "$m: VERIFY sobre la captura distinto de 0 (no esta aplicada en MAIN)"
+    continue
+  fi
   psqlc < "${PATHOF[$m]}" > /dev/null 2>"$err" || { cat "$err" | tee -a "$LOG"; fail "$m (ya aplicada en MAIN) no carga en el punto de partida"; }
   out="$(block "${PATHOF[$m]}" VERIFY | psqlc -At -F '|' 2>&1)"; echo "$out" | sed "s/^/  preapplied $m | /" >> "$OUT/preapplied.txt"
   echo "$out" | awk -F'|' '$2 != "0" {bad=1} END {exit bad}' || fail "$m: VERIFY del punto de partida distinto de 0"
