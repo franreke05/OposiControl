@@ -86,6 +86,7 @@ GET /api/v1/admin/planes
 GET /api/v1/admin/planes/{}/beneficios
 GET /api/v1/admin/preguntas
 GET /api/v1/admin/preguntas/{}
+GET /api/v1/admin/preguntas/{}/etiquetas
 GET /api/v1/admin/preguntas/{}/examenes
 GET /api/v1/admin/preguntas/{}/recursos
 GET /api/v1/admin/rankings/global
@@ -272,6 +273,7 @@ PUT /api/v1/admin/comercial/productos/{}
 PUT /api/v1/admin/comercial/productos/{}/tarifas/{}/{}
 PUT /api/v1/admin/especialidades/{}/capacidades
 PUT /api/v1/admin/planes/{}
+PUT /api/v1/admin/preguntas/{}/etiquetas
 PUT /api/v1/admin/tipos-noticia/{}
 PUT /api/v1/app/intentos/{}/respuestas/{}
 PUT /content/comunidades

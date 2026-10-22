@@ -159,6 +159,28 @@ internal const val INVALID_SEPARATOR_DETAIL = "Separador no válido: usa exactam
 /** El aviso de pie/número de página, literal. */
 internal const val PAGE_MARKER_WARNING = "Posible pie o número de página dentro del texto: revisa la fila"
 
+/** Regla de etiquetas: el separador es la coma. */
+internal const val ETIQUETA_SEPARATOR_WARNING = "ETIQUETA: separa los temas con comas, no con punto y coma"
+internal const val MAX_ETIQUETAS_POR_PREGUNTA = PREGUNTA_ETIQUETAS_MAX
+
+/**
+ * `--- BLOQUE: PRINCIPAL ---` / `--- BLOQUE: RESERVA ---` (exacto, en mayúsculas). Esta versión no importa reservas
+ * (llegan con V1): el marcador se reconoce para que NUNCA se pegue como continuación del campo anterior, y todo lo que
+ * va detrás de RESERVA sale como bloque con error, que no se publica.
+ */
+private val BLOQUE_MARKER = Regex("^---\\s*BLOQUE\\s*:\\s*(PRINCIPAL|RESERVA)\\s*---$")
+
+/** Parece un marcador de bloque pero no es el exacto (`-- bloque reserva --`, `--- BLOQUE: RESERVAS ---`). */
+private val SUSPECT_BLOQUE = Regex("^(?:[-–—_=*#]{2,}\\s*BLOQUE\\b.*|[–—]\\s*BLOQUE\\b.*[–—])$", RegexOption.IGNORE_CASE)
+
+internal const val INVALID_BLOQUE_DETAIL =
+    "Marcador de bloque no válido: usa exactamente --- BLOQUE: PRINCIPAL --- o --- BLOQUE: RESERVA ---"
+internal const val RESERVA_NOT_SUPPORTED_DETAIL =
+    "Las preguntas de reserva todavía no se pueden importar: se activarán con la versión V1. " +
+        "Quítalas de este PDF o súbelas más adelante."
+internal const val BLOQUE_UNCERTAIN_DETAIL =
+    "Hay un marcador de bloque no válido antes de esta pregunta: no se sabe si es principal o reserva"
+
 /** Sólo una línea que es EXACTAMENTE un marcador de página (o 1–4 dígitos). Sin heurística. */
 private val PAGE_MARKER_LINE = Regex(
     "^(?:(?:P[aá]gina|P[aá]g\\.?|Page)\\s*\\d+(?:\\s*(?:de|/|of)\\s*\\d+)?|\\d{1,4})$",
@@ -212,7 +234,17 @@ internal fun extractTextFromPdf(bytes: ByteArray): String =
 internal fun parseRafagaText(text: String): RafagaParseResult = parseQuestionBlocks(text, "rafaga")
 
 /** Un bloque ya recortado del texto: sus líneas y si lo abrió un separador sospechoso. */
-private class RawBlock(val separatorLine: String?, val invalidSeparator: Boolean, val lines: List<String>)
+private class RawBlock(
+    val separatorLine: String?,
+    val invalidSeparator: Boolean,
+    val lines: List<String>,
+    /** Va detrás de `--- BLOQUE: RESERVA ---`: en esta versión es un error (no se importan reservas). */
+    val reserva: Boolean = false,
+    /** Lo abrió un marcador de bloque mal escrito (no un separador de pregunta). */
+    val invalidBloqueMarker: Boolean = false,
+    /** Va detrás de un marcador de bloque mal escrito: no se sabe si es principal o reserva. */
+    val bloqueIncierto: Boolean = false,
+)
 
 /**
  * Corta el texto POR LÍNEAS (no con un `split` global):
@@ -240,25 +272,44 @@ private fun splitBlocks(text: String): SplitResult {
     var invalid = false
     var lines = mutableListOf<String>()
     var open = false
+    var seenAny = false
+    var reserva = false
+    var invalidMarker = false
+    var incierto = false
 
     fun close() {
         if (!open) return
-        if (invalid || lines.any { it.isNotBlank() }) blocks += RawBlock(separator, invalid, lines.toList())
+        if (invalid || lines.any { it.isNotBlank() }) {
+            blocks += RawBlock(separator, invalid, lines.toList(), reserva, invalidMarker, incierto && !invalidMarker)
+        }
     }
 
     for (line in text.lines()) {
         val trimmed = line.trim()
+        val marker = BLOQUE_MARKER.matchEntire(trimmed)
         val oficial = OFFICIAL_SEPARATOR.matches(trimmed)
-        val sospechoso = !oficial && SUSPECT_SEPARATOR.matches(trimmed)
-        if (oficial || sospechoso) {
+        val sospechoso = !oficial && marker == null && SUSPECT_SEPARATOR.matches(trimmed)
+        val bloqueSospechoso = marker == null && !oficial && !sospechoso && SUSPECT_BLOQUE.matches(trimmed)
+        if (marker != null) {
+            // El marcador cierra la pregunta en curso y no abre ninguna: lo que venga hasta el
+            // siguiente separador no es de nadie (ni preámbulo ni continuación).
+            close()
+            open = false
+            seenAny = true
+            reserva = marker.groupValues[1] == "RESERVA"
+            incierto = false
+        } else if (oficial || sospechoso || bloqueSospechoso) {
             close()
             open = true
+            seenAny = true
             separator = trimmed
-            invalid = sospechoso
+            invalid = sospechoso || bloqueSospechoso
+            invalidMarker = bloqueSospechoso
+            if (bloqueSospechoso) incierto = true
             lines = mutableListOf()
         } else if (open) {
             lines += line
-        } else {
+        } else if (!seenAny) {
             preamble += trimmed
         }
     }
@@ -326,7 +377,9 @@ internal fun parseQuestionBlocks(text: String, tipoPregunta: String): RafagaPars
             erroresDelBloque += RafagaParseError(numero, campo, detalle)
         }
 
-        if (raw.invalidSeparator) error("SEPARADOR", INVALID_SEPARATOR_DETAIL)
+        if (raw.reserva) error("BLOQUE", RESERVA_NOT_SUPPORTED_DETAIL)
+        if (raw.bloqueIncierto) error("BLOQUE", BLOQUE_UNCERTAIN_DETAIL)
+        if (raw.invalidSeparator) error("SEPARADOR", if (raw.invalidBloqueMarker) INVALID_BLOQUE_DETAIL else INVALID_SEPARATOR_DETAIL)
         scan.clavesDesconocidas.forEach { clave -> error(clave, "Campo no admitido en el PDF") }
         scan.clavesMalEscritas.forEach { (escrita, correcta) ->
             error(escrita, "Clave mal escrita: usa $correcta")
@@ -385,11 +438,19 @@ internal fun parseQuestionBlocks(text: String, tipoPregunta: String): RafagaPars
             }
         }
 
-        val etiquetas = fields["ETIQUETA"]
-            ?.split(",")
-            ?.map { it.trim() }
-            ?.filter { it.isNotBlank() }
-            ?: emptyList()
+        // Regla de etiquetas (propietario 2026-10-22): se separan por comas; un «;» se acepta como coma pero se
+        // avisa; las repetidas se quitan; más de MAX_ETIQUETAS_POR_PREGUNTA es un aviso (sólo se enlazan las primeras).
+        val etiquetaCruda = fields["ETIQUETA"].orEmpty()
+        val etiquetas = etiquetaCruda
+            .split(",", ";")
+            .map { it.trim().replace(Regex("\\s+"), " ") }
+            .filter { it.isNotBlank() }
+            .distinctBy { normalizarNombreEtiqueta(it) }
+        val avisoEtiquetas = listOfNotNull(
+            ETIQUETA_SEPARATOR_WARNING.takeIf { ';' in etiquetaCruda },
+            "ETIQUETA: tiene ${etiquetas.size} temas; solo se enlazan los $MAX_ETIQUETAS_POR_PREGUNTA primeros."
+                .takeIf { etiquetas.size > MAX_ETIQUETAS_POR_PREGUNTA },
+        )
 
         val respuestaValida = respuesta
         if (erroresDelBloque.isEmpty() && titulo != null && respuestaValida != null) {
@@ -398,7 +459,7 @@ internal fun parseQuestionBlocks(text: String, tipoPregunta: String): RafagaPars
                     .takeIf { !exigeRazonamiento && (razonamiento.isNotBlank() || fuente.isNotBlank()) },
                 PAGE_MARKER_WARNING.takeIf { scan.posiblePaginaEnTexto },
                 PREAMBLE_LOOKS_LIKE_QUESTION_WARNING.takeIf { i == 0 && split.preambleLooksLikeQuestion },
-            )
+            ) + avisoEtiquetas
             preguntas += ParsedPregunta(
                 numero = numero,
                 titulo = titulo,

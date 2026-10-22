@@ -789,6 +789,25 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway) {
                 }
                 call.respond(AdminPreguntaExamenesResponse(vinculos))
             }
+            // Etiquetas (temas) de la pregunta: `etiquetas_pregunta` sólo se escribe por
+            // aquí, con service_role (la RLS de MAIN no deja escribir a los clientes).
+            // El PUT fija el CONJUNTO entero y responde la lista ya releída, igual que
+            // los vínculos con exámenes: quien guarda quiere pintar el resultado real.
+            get("/{id}/etiquetas") {
+                val id = call.requiredPath("id").validatedUuid("id")
+                call.respond(AdminPreguntaEtiquetasResponse(withUpstreamIo { gateway.listEtiquetasDePregunta(id) }))
+            }
+            put("/{id}/etiquetas") {
+                val id = call.requiredPath("id").validatedUuid("id")
+                val body = call.receive<AdminPreguntaEtiquetasRequest>()
+                // Todo se valida ANTES de la primera petición: un id que no es UUID
+                // acabaría dentro de un filtro `in.(…)` de PostgREST.
+                val etiquetaIds = body.etiquetaIds.map { it.validatedUuid("etiquetaIds") }.distinct()
+                require(etiquetaIds.size <= PREGUNTA_ETIQUETAS_MAX) {
+                    "Una pregunta admite como máximo $PREGUNTA_ETIQUETAS_MAX etiquetas."
+                }
+                call.respond(AdminPreguntaEtiquetasResponse(withUpstreamIo { gateway.setEtiquetasDePregunta(id, etiquetaIds) }))
+            }
             // Aquí entraban TRES identificadores de cliente que acababan en un
             // filtro de PostgREST; desde KQ0-8 y D-03 queda UNO, el del path:
             // `recursos[]` se ignora entero y `examenId` ya no vincula. Los del
@@ -2827,6 +2846,12 @@ data class AdminImportarLoteRequest(val confirmarExamenPublicado: Boolean = fals
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class AdminImportResultadoDto(
+    /** Enlaces pregunta↔etiqueta creados al publicar a partir de `ETIQUETA:` del PDF. */
+    @EncodeDefault val etiquetasEnlazadas: Int = 0,
+    /** Nombres de `ETIQUETA:` que no existen (activos) en el catálogo: no se crean, se avisan. */
+    @EncodeDefault val etiquetasNoEncontradas: List<String> = emptyList(),
+    /** Avisos que no deshacen la publicación (p. ej. `IMPORT_TAGS_NOT_LINKED`). */
+    @EncodeDefault val avisos: List<String> = emptyList(),
     val ejecutado: Boolean,
     val nuevas: Int,
     val vinculadas: Int,
@@ -3490,6 +3515,21 @@ data class AdminEtiquetaDto(
 @Serializable data class AdminEtiquetasResponse(val data: List<AdminEtiquetaDto>)
 @Serializable data class AdminEtiquetaResponse(val data: AdminEtiquetaDto)
 
+/** Máximo de etiquetas por pregunta que admite `PUT /preguntas/{id}/etiquetas`. */
+internal const val PREGUNTA_ETIQUETAS_MAX = 20
+
+/** Una etiqueta asignada a una pregunta (`etiquetas_pregunta` ⨝ `etiquetas`). */
+@Serializable
+data class AdminPreguntaEtiquetaDto(
+    val id: String,
+    val nombre: String,
+    val colorHex: String? = null,
+    val activa: Boolean = true,
+)
+@Serializable data class AdminPreguntaEtiquetasResponse(val data: List<AdminPreguntaEtiquetaDto>)
+/** El conjunto COMPLETO de etiquetas que debe quedar en la pregunta; `[]` las quita todas. */
+@Serializable data class AdminPreguntaEtiquetasRequest(val etiquetaIds: List<String>)
+
 // Comunidades autónomas
 @Serializable
 data class AdminComunidadDto(
@@ -3775,6 +3815,25 @@ private data class V1EtiquetaRow(
     @SerialName("color_hex") val colorHex: String? = null,
     val activa: Boolean = true,
 )
+
+/** Fila de `etiquetas_pregunta`, con la etiqueta embebida cuando se pide (`etiquetas(...)`). */
+@Serializable
+private data class V1EtiquetaPreguntaRow(
+    @SerialName("pregunta_id") val preguntaId: String? = null,
+    @SerialName("etiqueta_id") val etiquetaId: String,
+    val etiquetas: V1EtiquetaEmbebidaRow? = null,
+)
+
+@Serializable
+private data class V1EtiquetaEmbebidaRow(
+    val id: String,
+    val nombre: String,
+    @SerialName("color_hex") val colorHex: String? = null,
+    val activa: Boolean = true,
+)
+
+@Serializable
+private data class V1EtiquetaEstadoRow(val id: String, val activa: Boolean = true)
 
 @Serializable
 private data class V1ComunidadRow(
@@ -5448,6 +5507,13 @@ class AdminV1Gateway private constructor(
                 "El PDF no contiene ningun bloque de pregunta reconocible. Revisa el separador de preguntas.",
             )
         }
+        // Regla de etiquetas (propietario 2026-10-22): cada tema de ETIQUETA: se comprueba contra el catálogo AL CREAR el
+        // lote, para que la revisión avise en su fila antes de publicar. Un tema desconocido no bloquea: se avisa.
+        val catalogoEtiquetas: Map<String, String>? = if (parsed.preguntas.any { it.etiquetas.isNotEmpty() }) {
+            runCatching { catalogoEtiquetasActivas() }.getOrNull()
+        } else {
+            emptyMap()
+        }
         val filas = (
             parsed.preguntas.map { p ->
                 AdminStagingItemDto(
@@ -5467,8 +5533,8 @@ class AdminV1Gateway private constructor(
                     // Una advertencia NO bloquea la publicación, pero la fila tiene que
                     // verse distinta de una limpia: es lo único que avisa de que la
                     // explicación de una Ráfaga no se va a publicar.
-                    estadoParseo = if (p.advertencia != null) "advertencia" else "ok",
-                    errorParseo = p.advertencia,
+                    estadoParseo = if (advertenciaConEtiquetas(p, catalogoEtiquetas) != null) "advertencia" else "ok",
+                    errorParseo = advertenciaConEtiquetas(p, catalogoEtiquetas),
                     // La anulacion es ortogonal al estado de parseo: una anulada valida es `ok`.
                     anulada = p.anulada,
                     motivoAnulacion = p.motivoAnulacion,
@@ -5628,6 +5694,13 @@ class AdminV1Gateway private constructor(
         )
         val resultado = json.decodeFromString<AdminImportLoteResultRow>(body)
         if (resultado.ejecutado) registrarAuditoria("lote_importado", "lotes_importacion_preguntas", loteId)
+        // `ETIQUETA:` del PDF → etiquetas del catálogo de Control enlazadas a cada pregunta publicada (también a la existente
+        // en las filas vinculadas). Un fallo aquí no deshace la publicación: se dice como aviso.
+        val etiquetas = if (resultado.ejecutado) {
+            runCatching { enlazarEtiquetasDelLote(loteId) }.getOrElse { EtiquetasDelLote(0, emptyList(), fallo = true) }
+        } else {
+            EtiquetasDelLote(0, emptyList())
+        }
         val lote = getLote(loteId) ?: throw domainError("IMPORT_LOTE_NOT_FOUND")
         return AdminLoteImportResponse(
             data = lote,
@@ -5638,9 +5711,73 @@ class AdminV1Gateway private constructor(
                 omitidas = resultado.omitidas,
                 totalImportadas = resultado.totalImportadas,
                 anuladas = resultado.anuladas,
+                avisos = listOfNotNull("IMPORT_TAGS_NOT_LINKED".takeIf { etiquetas.fallo }),
+                etiquetasEnlazadas = etiquetas.enlazadas,
+                etiquetasNoEncontradas = etiquetas.noEncontradas,
             ),
         )
     }
+
+    private data class EtiquetasDelLote(val enlazadas: Int, val noEncontradas: List<String>, val fallo: Boolean = false)
+
+    /**
+     * Enlaza a cada pregunta publicada del lote las etiquetas de su `ETIQUETA:` que existan (activas) en el catálogo. Se casan
+     * por nombre sin distinguir mayúsculas, acentos ni espacios. Las que no existen NO se crean: se devuelven para avisar.
+     * Idempotente (`ignore-duplicates`): republicar o volver a vincular no duplica enlaces.
+     */
+    private fun enlazarEtiquetasDelLote(loteId: String): EtiquetasDelLote {
+        val filas = request(
+            "GET",
+            "/rest/v1/preguntas_parseadas_staging?select=pregunta_id,vincular_pregunta_id,etiqueta_texto&lote_id=eq.$loteId" +
+                "&estado_parseo=neq.omitida&etiqueta_texto=neq.",
+            null,
+        ).decodeList<JsonObject>()
+        if (filas.isEmpty()) return EtiquetasDelLote(0, emptyList())
+        val catalogo = catalogoEtiquetasActivas()
+        val noEncontradas = linkedSetOf<String>()
+        val enlaces = linkedSetOf<Pair<String, String>>()
+        for (fila in filas) {
+            val pregunta = fila.textoONulo("pregunta_id") ?: fila.textoONulo("vincular_pregunta_id") ?: continue
+            fila.textoONulo("etiqueta_texto").orEmpty().split(",").map { it.trim() }.filter { it.isNotEmpty() }
+                .take(PREGUNTA_ETIQUETAS_MAX).forEach { nombre ->
+                    val id = catalogo[normalizarNombreEtiqueta(nombre)]
+                    if (id == null) noEncontradas += nombre else enlaces += pregunta to id
+                }
+        }
+        if (enlaces.isNotEmpty()) {
+            request(
+                "POST",
+                "/rest/v1/etiquetas_pregunta",
+                sbJson.encodeToString(enlaces.map { (p, e) -> V1EtiquetaPreguntaRow(preguntaId = p, etiquetaId = e) }),
+                prefer = "resolution=ignore-duplicates,return=minimal",
+            )
+            registrarAuditoriaResultado(
+                accion = "lote_etiquetas_enlazadas",
+                tabla = "lotes_importacion_preguntas",
+                registroId = loteId,
+                antes = null,
+                despues = buildJsonObject {
+                    put("enlaces", JsonPrimitive(enlaces.size))
+                    put("noEncontradas", JsonArray(noEncontradas.map { JsonPrimitive(it) }))
+                },
+            )
+        }
+        return EtiquetasDelLote(enlaces.size, noEncontradas.toList())
+    }
+
+    /** Valor de texto de una columna; `null` si falta, es `null` JSON o no es un primitivo. */
+    private fun JsonObject.textoONulo(columna: String): String? = (this[columna] as? JsonPrimitive)?.contentOrNull
+
+    /** Catálogo de etiquetas activas: nombre normalizado → id. */
+    private fun catalogoEtiquetasActivas(): Map<String, String> =
+        request("GET", "/rest/v1/etiquetas?select=id,nombre&activa=is.true", null)
+            .decodeList<JsonObject>()
+            .mapNotNull { e ->
+                val nombre = e.textoONulo("nombre") ?: return@mapNotNull null
+                val id = e.textoONulo("id") ?: return@mapNotNull null
+                normalizarNombreEtiqueta(nombre) to id
+            }
+            .toMap()
 
     private fun canonicalExamType(value: String): String = when (value.lowercase()) {
         "razonado", "guiado" -> "razonado"
@@ -7353,6 +7490,71 @@ class AdminV1Gateway private constructor(
         registrarAuditoria("etiqueta_eliminada", "etiquetas", id)
     }
 
+    // ETIQUETAS DE UNA PREGUNTA (etiquetas_pregunta)
+    // Los ids llegan YA validados como UUID por la ruta: van dentro de `eq.`/`in.(…)`.
+
+    /** Una sola lectura embebida; ordenadas por nombre. Una pregunta sin etiquetas (o inexistente) es `[]`. */
+    fun listEtiquetasDePregunta(preguntaId: String): List<AdminPreguntaEtiquetaDto> =
+        request(
+            "GET",
+            "/rest/v1/etiquetas_pregunta?select=etiqueta_id,etiquetas(id,nombre,color_hex,activa)&pregunta_id=eq.$preguntaId",
+            null,
+        ).decodeList<V1EtiquetaPreguntaRow>()
+            .mapNotNull { row -> row.etiquetas?.let { AdminPreguntaEtiquetaDto(it.id, it.nombre, it.colorHex, it.activa) } }
+            .sortedBy { it.nombre.lowercase() }
+
+    /**
+     * Fija el conjunto de etiquetas de la pregunta: borra las quitadas, inserta las nuevas y deja UNA fila de
+     * auditoría con los ids de antes y de después. Sin cambios no escribe nada (ni audita).
+     *
+     * Las que se AÑADEN tienen que existir y estar activas; una que ya estaba y se conserva puede estar desactivada
+     * (desactivar una etiqueta no obliga a quitarla de cada pregunta para poder guardar otra).
+     *
+     * No es atómico: son dos sentencias PostgREST (DELETE + INSERT). Si la segunda falla, la respuesta es el error
+     * y el estado real se ve releyendo con [listEtiquetasDePregunta].
+     */
+    fun setEtiquetasDePregunta(preguntaId: String, etiquetaIds: List<String>): List<AdminPreguntaEtiquetaDto> {
+        request("GET", "/rest/v1/preguntas?select=id&id=eq.$preguntaId&limit=1", null)
+            .decodeList<JsonObject>().firstOrNull()
+            ?: throw CanonicalErrorCode.NOT_FOUND.exception("Pregunta no encontrada.")
+        val antes = request("GET", "/rest/v1/etiquetas_pregunta?select=etiqueta_id&pregunta_id=eq.$preguntaId", null)
+            .decodeList<V1EtiquetaPreguntaRow>().map { it.etiquetaId.lowercase() }.distinct()
+        val quitar = antes.filter { it !in etiquetaIds }
+        val anadir = etiquetaIds.filter { it !in antes }
+        if (anadir.isNotEmpty()) {
+            val activas = request("GET", "/rest/v1/etiquetas?select=id,activa&id=in.(${anadir.joinToString(",")})", null)
+                .decodeList<V1EtiquetaEstadoRow>().filter { it.activa }.map { it.id.lowercase() }.toSet()
+            val invalidas = anadir.filter { it !in activas }
+            require(invalidas.isEmpty()) { "Estas etiquetas no existen o están desactivadas: ${invalidas.joinToString(", ")}." }
+        }
+        if (quitar.isEmpty() && anadir.isEmpty()) return listEtiquetasDePregunta(preguntaId)
+        if (quitar.isNotEmpty()) {
+            request(
+                "DELETE",
+                "/rest/v1/etiquetas_pregunta?pregunta_id=eq.$preguntaId&etiqueta_id=in.(${quitar.joinToString(",")})",
+                null,
+            )
+        }
+        if (anadir.isNotEmpty()) {
+            request(
+                "POST",
+                "/rest/v1/etiquetas_pregunta",
+                sbJson.encodeToString(anadir.map { V1EtiquetaPreguntaRow(preguntaId = preguntaId, etiquetaId = it) }),
+                // Una doble pulsación concurrente no convierte la PK en un 409: la fila ya está, que es lo pedido.
+                prefer = "resolution=ignore-duplicates,return=minimal",
+            )
+        }
+        val despues = antes.filter { it !in quitar } + anadir
+        registrarAuditoriaResultado(
+            accion = "pregunta_etiquetas_actualizadas",
+            tabla = "etiquetas_pregunta",
+            registroId = preguntaId,
+            antes = buildJsonObject { put("etiquetaIds", JsonArray(antes.sorted().map { JsonPrimitive(it) })) },
+            despues = buildJsonObject { put("etiquetaIds", JsonArray(despues.sorted().map { JsonPrimitive(it) })) },
+        )
+        return listEtiquetasDePregunta(preguntaId)
+    }
+
     // COMUNIDADES AUTÓNOMAS
     fun listComunidades(): List<AdminComunidadDto> =
         request("GET", "/rest/v1/comunidades_autonomas?select=*&order=posicion.asc,nombre.asc", null)
@@ -9042,4 +9244,26 @@ class AdminV1Gateway private constructor(
         ): AdminV1Gateway =
             AdminV1Gateway(supabaseUrl, serviceRoleKey, json, client, systemMetrics, supabaseDisk, systemTopology, supabaseReadiness)
     }
+}
+
+/** Nombre de etiqueta comparable: sin mayúsculas, sin acentos y con los espacios colapsados («  Constitución » = «constitucion»). */
+internal fun normalizarNombreEtiqueta(nombre: String): String =
+    java.text.Normalizer.normalize(nombre.trim(), java.text.Normalizer.Form.NFD)
+        .replace(Regex("\\p{Mn}+"), "")
+        .lowercase()
+        .replace(Regex("\\s+"), " ")
+
+/**
+ * Aviso de la fila con la regla de etiquetas añadida: los temas de `ETIQUETA:` que no están en el catálogo activo
+ * (`catalogo` nulo = no se pudo leer). `null` si la fila queda limpia.
+ */
+internal fun advertenciaConEtiquetas(p: ParsedPregunta, catalogo: Map<String, String>?): String? {
+    val avisoCatalogo = when {
+        p.etiquetas.isEmpty() -> null
+        catalogo == null -> "ETIQUETA: no se ha podido comprobar el catálogo de etiquetas; se comprobará al publicar."
+        else -> p.etiquetas.filter { normalizarNombreEtiqueta(it) !in catalogo }.takeIf { it.isNotEmpty() }?.let { faltan ->
+            "ETIQUETA: no existen en el catálogo (no se enlazarán): ${faltan.joinToString(", ")}. Créalas en Etiquetas o corrige el PDF."
+        }
+    }
+    return listOfNotNull(p.advertencia, avisoCatalogo).joinToString(" ").ifBlank { null }
 }
