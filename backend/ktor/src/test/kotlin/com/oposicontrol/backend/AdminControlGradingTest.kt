@@ -154,36 +154,6 @@ class AdminControlGradingTest {
         assertTrue(audit.body.contains("Cambio de criterio"), audit.body)
     }
 
-    /**
-     * 20261022103400 (propietario 2026-10-17): la penalizacion solo existe en examenes OFICIALES. La base la rechaza por las DOS
-     * puertas: la RPC (`P0001`) y el trigger de la tabla para el PATCH directo del respaldo DEBT-159 (`23514`). Las dos llegan como
-     * el mismo 422 con su codigo, y nada se audita.
-     */
-    @Test
-    fun aPenaltyOnANonOfficialExamIsRefusedThroughTheRpcAndThroughTheDirectPatchFallback() {
-        val refusal = """{"code":"P0001","message":"GRADING_PENALTY_REQUIRES_OFFICIAL_EXAM","details":null,"hint":null}"""
-        val triggerRefusal = """{"code":"23514","message":"GRADING_PENALTY_REQUIRES_OFFICIAL_EXAM","details":null,"hint":"the penalty (rational or a fixed fraction) applies only to official exams"}"""
-        for (viaRpc in listOf(true, false)) {
-            val f = ControlFake { method, uri, _ ->
-                when {
-                    uri.contains("/rpc/admin_set_exam_grading_rules") ->
-                        if (viaRpc) V1StubResponse(400, refusal) else V1StubResponse(404, """{"code":"PGRST202","message":"not found"}""")
-                    uri.contains("/rpc/") -> V1StubResponse(404, """{"code":"PGRST202"}""")
-                    uri.contains("/rest/v1/preguntas_examen") -> V1StubResponse(200, "[]")
-                    uri.contains("/rest/v1/examenes") && method == "PATCH" -> V1StubResponse(400, triggerRefusal)
-                    uri.contains("/rest/v1/examenes") -> V1StubResponse(200, examJson().replace("\"es_oficial\":true", "\"es_oficial\":false"))
-                    else -> V1StubResponse(200, "[]")
-                }
-            }
-            val error = assertFailsWith<BackendDomainException> {
-                f.gateway().putGradingRules(ControlFake.EXAM, GradingRules.Input(null, true, 0, 1, null))
-            }
-            assertEquals("GRADING_PENALTY_REQUIRES_OFFICIAL_EXAM", error.errorCode, "viaRpc=$viaRpc")
-            assertEquals(HttpStatusCode.UnprocessableEntity, error.status, "viaRpc=$viaRpc")
-            assertTrue(f.writes().none { it.pathAndQuery.contains("auditoria_log") }, "viaRpc=$viaRpc " + f.describe())
-        }
-    }
-
     @Test
     fun aPublishedExamNeedsAReasonAndNothingIsWrittenWithoutIt() {
         val f = fake(published = true)

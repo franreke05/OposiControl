@@ -564,14 +564,14 @@ class CatalogRoutesTest {
             return JsonObjectOf(body)["examen"]!!.jsonObject["penalizacion"] as? JsonObject
         }
         assertNull(penalty(exam(e1)), "no penalty: the field does not travel")
-        assertEquals("RACIONAL", penalty(exam(e1, penalty = """"penalizacion_num":0,"penalizacion_den":1,"penalizacion_racional":true,"es_oficial":true,"""))!!["tipo"]!!.jsonPrimitive.content)
-        val fixed = penalty(exam(e1, penalty = """"penalizacion_num":1,"penalizacion_den":3,"penalizacion_racional":false,"es_oficial":true,"""))!!
+        assertEquals("RACIONAL", penalty(exam(e1, penalty = """"penalizacion_num":0,"penalizacion_den":1,"penalizacion_racional":true,"""))!!["tipo"]!!.jsonPrimitive.content)
+        val fixed = penalty(exam(e1, penalty = """"penalizacion_num":1,"penalizacion_den":3,"penalizacion_racional":false,"""))!!
         assertEquals("FIJA", fixed["tipo"]!!.jsonPrimitive.content); assertEquals("1", fixed["numerador"]!!.jsonPrimitive.content); assertEquals("3", fixed["denominador"]!!.jsonPrimitive.content)
     }
 
-    /** 20261022103400 (propietario 2026-10-17): la penalizacion es solo de examenes OFICIALES. Una fila no oficial con la marca no la anuncia. */
+    /** Propietario 2026-10-22: la penalizacion se aplica tambien a examenes NO oficiales; la portada la anuncia igual. */
     @Test
-    fun aNonOfficialExamNeverAnnouncesAPenalty() = testApplication {
+    fun aNonOfficialExamAnnouncesItsPenaltyToo() = testApplication {
         application { catalogModule() }
         suspend fun penalty(row: String): JsonObject? {
             upstream.examById = { "[$row]" }
@@ -579,9 +579,8 @@ class CatalogRoutesTest {
             assertConforms("D2-02", body)
             return JsonObjectOf(body)["examen"]!!.jsonObject["penalizacion"] as? JsonObject
         }
-        assertNull(penalty(exam(e1, penalty = """"penalizacion_num":0,"penalizacion_den":1,"penalizacion_racional":true,"es_oficial":false,""")), "non-official: rational never travels")
-        assertNull(penalty(exam(e1, penalty = """"penalizacion_num":1,"penalizacion_den":3,"penalizacion_racional":false,""")), "es_oficial missing = not official: fraction never travels")
-        assertTrue(upstream.urls.any { it.contains("/rest/v1/examenes?") && it.contains("es_oficial") }, "the cover reads es_oficial")
+        assertEquals("RACIONAL", penalty(exam(e1, penalty = """"penalizacion_num":0,"penalizacion_den":1,"penalizacion_racional":true,"es_oficial":false,"""))!!["tipo"]!!.jsonPrimitive.content)
+        assertEquals("FIJA", penalty(exam(e1, penalty = """"penalizacion_num":1,"penalizacion_den":3,"penalizacion_racional":false,"es_oficial":false,"""))!!["tipo"]!!.jsonPrimitive.content)
     }
 
     @Test

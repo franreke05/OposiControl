@@ -2,21 +2,19 @@ package com.oposicontrol.dbtest.v1
 
 import com.oposicontrol.dbtest.ejecutar
 import com.oposicontrol.dbtest.slice0.filas
-import com.oposicontrol.dbtest.slice0.sqlStateDe
 import com.oposicontrol.dbtest.unico
 import java.sql.Connection
 import java.sql.SQLException
 import kotlin.test.Test
 import kotlin.test.assertEquals
-import kotlin.test.assertTrue
 
 /**
- * `20261022103400_v1_exam_penalty_official_scope` (propietario 2026-10-17; CERT-EXAMS-2026-10-21 B-03): la penalizacion
- * (PD = A - E/(n-1), o una fraccion fija) existe SOLO en examenes OFICIALES, es un dato por examen y se CONGELA por intento.
- * Sobre el esquema V1 completo (todas las pendientes) con el motor real; control negativo: sin esta migracion, el defecto vuelve.
+ * `20261022103400_v1_exam_penalty_official_default` (CERT-EXAMS-2026-10-21 B-03 (b); propietario 2026-10-22: la penalizacion se aplica
+ * tambien a examenes NO oficiales). Un examen creado o pasado a oficial nace con la racional activada EN LA BASE, sin pisar nunca un
+ * ajuste explicito; la regla sigue siendo un dato por examen congelado por intento. Esquema V1 completo; control negativo sin la migracion.
  */
-class V1PenaltyOfficialScopeMigrationTest {
-    private val migration = "20261022103400_v1_exam_penalty_official_scope"
+class V1PenaltyOfficialDefaultMigrationTest {
+    private val migration = "20261022103400_v1_exam_penalty_official_default"
     private val user = "a0000000-0000-0000-0000-0000000005b1"
     private val admin = "a0000000-0000-0000-0000-0000000005b2"
     private val esp = "e1000000-0000-0000-0000-0000000005b1"
@@ -80,86 +78,69 @@ class V1PenaltyOfficialScopeMigrationTest {
     }
 
     @Test
-    fun anOfficialExamIsPenalisedAndANonOfficialOneNever() = V1Db.escenario { c ->
+    fun officialAndNonOfficialExamsAreBothPenalisedWithTheirOwnRule() = V1Db.escenario { c ->
         c.ejecutar(seed)
+        c.ejecutar("update public.examenes set penalizacion_racional = true where id = '$plain'")
         val a = c.start(1)
         c.playAndFinish(1, a)
         assertEquals("true|1.11|0.67", c.attempt(a), "official: the rational penalty applies")
         val b = c.start(2)
         c.playAndFinish(2, b)
-        assertEquals("false|3.33|null", c.attempt(b), "non-official: never penalised")
+        assertEquals("true|1.11|0.67", c.attempt(b), "non-official (owner 2026-10-22): the rational penalty applies too")
+        // and the admin RPC accepts a penalty on a non-official exam (no restriction): the panel behaviour is unchanged
+        assertEquals("true", c.unico("select (public.admin_set_exam_grading_rules('$admin', '$plain', 'NO_PUNTUA', 1, 3, false, 'regla del tribunal') ->> 'changed')"))
+        assertEquals("false|false|1|3", c.examRule(plain))
+        assertEquals(null, c.errorOf("update public.examenes set penalizacion_racional = false, penalizacion_num = 0, penalizacion_den = 1 where id = '$plain'"), "a direct PATCH still works")
     }
 
     @Test
-    fun aPenaltyCannotBeWrittenOnANonOfficialExamThroughAnyDoor() = V1Db.escenario { c ->
+    fun becomingOfficialSwitchesTheDefaultOnWithoutEverOverridingAnExplicitSetting() = V1Db.escenario { c ->
         c.ejecutar(seed)
-        assertEquals("GRADING_PENALTY_REQUIRES_OFFICIAL_EXAM", c.errorOf("update public.examenes set penalizacion_racional = true where id = '$plain'"), "direct PATCH (DEBT-159 fallback)")
-        assertEquals("GRADING_PENALTY_REQUIRES_OFFICIAL_EXAM", c.errorOf("update public.examenes set penalizacion_num = 1, penalizacion_den = 3 where id = '$plain'"), "a fixed fraction too")
-        assertEquals(
-            "GRADING_PENALTY_REQUIRES_OFFICIAL_EXAM",
-            c.errorOf("select public.admin_set_exam_grading_rules('$admin', '$plain', null, 0, 1, true, 'regla del tribunal')"),
-            "the admin RPC answers with its own code",
-        )
-        // the CHECK holds even with triggers off
-        assertEquals(
-            "23514",
-            c.sqlStateDe("begin; set local session_replication_role = replica; update public.examenes set penalizacion_racional = true where id = '$plain'; commit;")
-                .also { c.ejecutar("rollback") },
-        )
-        assertEquals("false|false|0|1", c.examRule(plain), "nothing was stored")
-        // an official exam keeps accepting both kinds of rule through the RPC
-        assertEquals("true", c.unico("select (public.admin_set_exam_grading_rules('$admin', '$official', 'NO_PUNTUA', 1, 3, false, 'regla del tribunal') ->> 'changed')"))
-        assertEquals("true|false|1|3", c.examRule(official))
-    }
-
-    @Test
-    fun becomingOfficialSwitchesTheDefaultOnAndLeavingItClearsItWhileFrozenAttemptsKeepTheirRule() = V1Db.escenario { c ->
-        c.ejecutar(seed)
-        // created official -> ON; created non-official -> off (no replica: the real INSERT path of Control)
+        // created official -> ON in the same INSERT (the real create path of Control, triggers on)
         c.ejecutar(
             """insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, titulo, tipo_examen, tipo_acceso, activo, es_oficial)
                values ('e5b00000-0000-0000-0000-000000000003', 'V1P-3', '$esp', '$com', 'Nuevo oficial', 'rafaga', 'gratuito', false, true)""",
         )
-        assertEquals("true|true|0|1", c.examRule("e5b00000-0000-0000-0000-000000000003"), "created official: default ON in the same INSERT")
+        assertEquals("true|true|0|1", c.examRule("e5b00000-0000-0000-0000-000000000003"), "created official: default ON")
+        // switched to official -> ON and audited; switched back -> the penalty is kept
         c.ejecutar("update public.examenes set es_oficial = true where id = '$plain'")
         assertEquals("true|true|0|1", c.examRule(plain), "switched to official: default ON")
+        assertEquals("1", c.unico("select count(*) from public.auditoria_log where accion = 'examen_reglas_puntuacion_modificadas' and registro_id = '$plain'"), "audited")
         c.ejecutar("update public.examenes set es_oficial = false where id = '$plain'")
-        assertEquals("false|false|0|1", c.examRule(plain), "switched back: cleared")
-        assertEquals(
-            "2",
-            c.unico("select count(*) from public.auditoria_log where accion = 'examen_reglas_puntuacion_modificadas' and registro_id = '$plain'"),
-            "both implicit changes are audited",
-        )
-
-        // frozen per attempt: started while official, the exam is un-officialised mid-attempt
-        val a = c.start(1)
-        assertEquals("true|null|null", c.attempt(a))
-        c.ejecutar("update public.examenes set es_oficial = false where id = '$official'")
-        assertEquals("false|false|0|1", c.examRule(official))
-        c.playAndFinish(1, a)
-        assertEquals("true|1.11|0.67", c.attempt(a), "the frozen penalty still applies to the attempt started while official")
-        val b = c.start(1)
-        c.playAndFinish(1, b)
-        assertEquals("false|3.33|null", c.attempt(b), "a new attempt on the now non-official exam is never penalised")
-        // whoever writes the snapshot of a non-official exam, no penalty is frozen (an open attempt, its snapshot reset and written again)
-        val open = c.start(1)
-        c.ejecutar("update public.intentos_examen set penalizacion_racional = null, penalizacion_num = null, penalizacion_den = null where id = '$open'")
-        c.ejecutar("update public.intentos_examen set penalizacion_racional = true, penalizacion_num = 1, penalizacion_den = 3 where id = '$open'")
-        assertEquals(
-            "false|0|1",
-            c.filas("select penalizacion_racional::text, penalizacion_num::text, penalizacion_den::text from public.intentos_examen where id = '$open'").single().joinToString("|"),
-            "a first freeze on a non-official exam stores no penalty",
-        )
-        assertEquals("true", c.unico("select penalizacion_racional::text from public.intentos_examen where id = '$a'"), "the attempt frozen while official never changes")
+        assertEquals("false|true|0|1", c.examRule(plain), "leaving official changes nothing")
+        // an explicit setting in the same statement always wins
+        c.ejecutar("update public.examenes set penalizacion_racional = false where id = '$plain'")
+        c.ejecutar("update public.examenes set es_oficial = true, penalizacion_num = 1, penalizacion_den = 3 where id = '$plain'")
+        assertEquals("true|false|1|3", c.examRule(plain), "explicit fraction kept, no default on top")
+        c.ejecutar("update public.examenes set es_oficial = false where id = '$plain'")
+        c.ejecutar("update public.examenes set es_oficial = true, penalizacion_num = 0, penalizacion_den = 1 where id = '$plain'")
+        assertEquals("true|false|0|1", c.examRule(plain), "explicit change to 0/1 kept, no default on top")
     }
 
     @Test
-    fun negativeControlWithoutTheMigrationANonOfficialExamIsPenalised() = V1Db.escenario(sin = setOf(migration)) { c ->
+    fun theRuleIsFrozenPerAttemptWhateverHappensToTheExamAfterTheStart() = V1Db.escenario { c ->
         c.ejecutar(seed)
-        c.ejecutar("update public.examenes set penalizacion_racional = true where id = '$plain'")
-        val b = c.start(2)
-        c.playAndFinish(2, b)
-        assertEquals("true|1.11|0.67", c.attempt(b), "the defect the migration closes: a non-official rafaga is penalised")
-        assertTrue(c.errorOf("select public.admin_set_exam_grading_rules('$admin', '$plain', null, 0, 1, true, 'regla del tribunal')") == null, "and the RPC accepted it")
+        val a = c.start(1)
+        assertEquals("true|null|null", c.attempt(a))
+        c.ejecutar("update public.examenes set es_oficial = false, penalizacion_racional = false where id = '$official'")
+        c.playAndFinish(1, a)
+        assertEquals("true|1.11|0.67", c.attempt(a), "frozen at the first freeze: the attempt keeps the penalty")
+        val b = c.start(1)
+        c.playAndFinish(1, b)
+        assertEquals("false|3.33|null", c.attempt(b), "a new attempt freezes the new (off) rule")
+        c.ejecutar("update public.examenes set penalizacion_racional = true where id = '$official'")
+        assertEquals("false|3.33|null", c.attempt(b), "a finished attempt never moves")
+    }
+
+    @Test
+    fun negativeControlWithoutTheMigrationAnOfficialExamIsCreatedWithoutPenalty() = V1Db.escenario(sin = setOf(migration)) { c ->
+        c.ejecutar(seed)
+        c.ejecutar(
+            """insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, titulo, tipo_examen, tipo_acceso, activo, es_oficial)
+               values ('e5b00000-0000-0000-0000-000000000003', 'V1P-3', '$esp', '$com', 'Nuevo oficial', 'rafaga', 'gratuito', false, true)""",
+        )
+        assertEquals("true|false|0|1", c.examRule("e5b00000-0000-0000-0000-000000000003"), "the gap B-03 (b) closes: only a best-effort PATCH would turn it on")
+        c.ejecutar("update public.examenes set es_oficial = true where id = '$plain'")
+        assertEquals("true|false|0|1", c.examRule(plain), "and nothing happened on a later switch to official")
     }
 }

@@ -1167,9 +1167,9 @@ class AttemptRoutesTest {
     }
 
     /**
-     * 20261022103400: la penalizacion se CONGELA por intento. Si el examen deja de ser oficial despues de empezar, el intento ya
+     * FA36 (20261022101300): la penalizacion se CONGELA por intento. Si la regla del examen cambia despues de empezar, el intento ya
      * congelado la conserva (y su nota de la base); uno congelado sin ella nunca la gana. El resultado lee SOLO la fila del intento:
-     * no se consulta el estado vivo del examen (es_oficial / penalizacion_*) para decidir la regla.
+     * no se consulta la regla viva del examen (penalizacion_*, es_oficial) para decidir.
      */
     @Test
     fun theResultUsesOnlyThePenaltyFrozenInTheAttemptNeverTheLiveExam() = testApplication {
@@ -1178,11 +1178,11 @@ class AttemptRoutesTest {
         upstream.resultQuestions = "[]"
         upstream.attemptRow = ruledAttemptRow("finalizado", "1.11", regla = "NO_PUNTUA", num = 0, den = 1).dropLast(1) + ""","penalizacion_racional":true,"penalizacion_descuento":0.67}"""
         val frozenOn = obj(client.call(HttpMethod.Get, "$base/resultado").bodyAsText())["resumen"]!!.jsonObject
-        assertEquals("RACIONAL", frozenOn["penalizacion"]!!.jsonObject["tipo"]!!.jsonPrimitive.content, "frozen while official: kept")
+        assertEquals("RACIONAL", frozenOn["penalizacion"]!!.jsonObject["tipo"]!!.jsonPrimitive.content, "frozen at start: kept")
         assertEquals("1.11", frozenOn["nota"]!!.jsonPrimitive.content)
         upstream.attemptRow = ruledAttemptRow("finalizado", "3.33", regla = "NO_PUNTUA", num = 0, den = 1).dropLast(1) + ""","penalizacion_racional":false,"penalizacion_descuento":null}"""
         val frozenOff = obj(client.call(HttpMethod.Get, "$base/resultado").bodyAsText())["resumen"]!!.jsonObject
-        assertTrue(frozenOff["penalizacion"] == null, "frozen without penalty (non-official exam): none")
+        assertTrue(frozenOff["penalizacion"] == null, "frozen without penalty: none")
         assertEquals("3.33", frozenOff["nota"]!!.jsonPrimitive.content)
         assertTrue(upstream.urls.none { "es_oficial" in it || ("/rest/v1/examenes?" in it && "penalizacion" in it) }, "the live exam rule is never read: ${upstream.urls}")
     }

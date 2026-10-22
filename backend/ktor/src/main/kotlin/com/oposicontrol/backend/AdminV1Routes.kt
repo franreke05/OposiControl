@@ -434,7 +434,7 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway, idempotency: IdempotencyStore? 
                 withUpstreamIo { gateway.requireActiveCommunity(community) }
                 val saved = withUpstreamIo { gateway.createExamen(body) }
                 // V1: un examen OFICIAL nace con la penalización racional activada (E1-V1-PENALTY-CONTRACT). Lo hace la BASE en la
-                // misma sentencia del INSERT (trigger trg_examenes_penalty_scope, 20261022103400), también al pasar a oficial
+                // misma sentencia del INSERT (trigger trg_examenes_penalty_official_default, 20261022103400), también al pasar a oficial
                 // después o por cualquier otro escritor. Antes era un PATCH de mejor esfuerzo tras crear: si fallaba, el examen
                 // quedaba oficial y SIN penalización y solo se registraba en el log (CERT-EXAMS-2026-10-21 B-03).
                 call.respond(HttpStatusCode.Created, AdminExamenResponse(saved))
