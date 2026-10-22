@@ -569,6 +569,20 @@ class CatalogRoutesTest {
         assertEquals("FIJA", fixed["tipo"]!!.jsonPrimitive.content); assertEquals("1", fixed["numerador"]!!.jsonPrimitive.content); assertEquals("3", fixed["denominador"]!!.jsonPrimitive.content)
     }
 
+    /** Propietario 2026-10-22: la penalizacion se aplica tambien a examenes NO oficiales; la portada la anuncia igual. */
+    @Test
+    fun aNonOfficialExamAnnouncesItsPenaltyToo() = testApplication {
+        application { catalogModule() }
+        suspend fun penalty(row: String): JsonObject? {
+            upstream.examById = { "[$row]" }
+            val body = client.getAs("/api/v1/app/examenes/$e1").bodyAsText()
+            assertConforms("D2-02", body)
+            return JsonObjectOf(body)["examen"]!!.jsonObject["penalizacion"] as? JsonObject
+        }
+        assertEquals("RACIONAL", penalty(exam(e1, penalty = """"penalizacion_num":0,"penalizacion_den":1,"penalizacion_racional":true,"es_oficial":false,"""))!!["tipo"]!!.jsonPrimitive.content)
+        assertEquals("FIJA", penalty(exam(e1, penalty = """"penalizacion_num":1,"penalizacion_den":3,"penalizacion_racional":false,"es_oficial":false,"""))!!["tipo"]!!.jsonPrimitive.content)
+    }
+
     @Test
     fun detailCarriesTheLastFinishedAttemptInTheSameBoundedReadPerf01() = testApplication {
         application { catalogModule() }

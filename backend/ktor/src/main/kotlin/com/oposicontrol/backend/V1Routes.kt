@@ -32,20 +32,10 @@ internal fun Route.v1Routes(gateway: SupabaseV1Gateway, cache: PublicReadCache) 
                 call.respond(V1ExamenResponse(data = examen))
             }
         }
-        get("/examenes/{examenId}/preguntas") {
-            val examenId = call.requiredPath("examenId").validatedUuid("examenId")
-            when (val result = cache.get("preguntas:" + examenId) { gateway.getPreguntasExamenRafaga(examenId) }) {
-                V1PreguntasExamenResult.Forbidden -> call.respond(
-                    HttpStatusCode.Forbidden,
-                    ErrorDto(error = "forbidden", message = "Examen no disponible."),
-                )
-                V1PreguntasExamenResult.NotFound -> call.respond(
-                    HttpStatusCode.NotFound,
-                    ErrorDto(error = "not_found", message = "Examen no encontrado."),
-                )
-                is V1PreguntasExamenResult.Success -> call.respond(V1PreguntasExamenResponse(data = result.data))
-            }
-        }
+        // EP-128 RETIRADA (CERT-EXAMS-2026-10-21 B-07, ver [LegacyEndpoints.EP_128]): 410 sin leer nada ni tocar upstream, el mismo
+        // cuerpo para cualquier id (no confirma si un examen existe). Las preguntas se leen solo dentro de un intento (D2-08), con
+        // sesion, acceso, limite diario y sin reservas no usadas.
+        get("/examenes/{examenId}/preguntas") { rejectRetiredPublicExamQuestions() }.legacyRoute(LegacyEndpoints.EP_128)
     }
 }
 
@@ -64,10 +54,16 @@ data class V1ExamenResponse(
     val data: V1ExamenDto,
 )
 
-@Serializable
-data class V1PreguntasExamenResponse(
-    val data: V1PreguntasExamenDto,
-)
+internal const val PUBLIC_EXAM_QUESTIONS_RETIRED = "PUBLIC_EXAM_QUESTIONS_RETIRED"
+
+internal fun rejectRetiredPublicExamQuestions(): Nothing {
+    throw BackendDomainException(
+        PUBLIC_EXAM_QUESTIONS_RETIRED,
+        HttpStatusCode.Gone,
+        "Esta ruta publica de preguntas esta retirada. Las preguntas de un examen se leen dentro de un intento: " +
+            "POST /api/v1/app/examenes/{examId}/intentos y GET /api/v1/app/intentos/{attemptId}/preguntas.",
+    )
+}
 
 private fun io.ktor.server.application.ApplicationCall.toV1ExamenesFilter(): V1ExamenesFilter {
     val query = request.queryParameters

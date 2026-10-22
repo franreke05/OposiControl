@@ -2426,6 +2426,71 @@ begin
             from (select * from public.auditoria_log where accion = 'examen_reglas_puntuacion_modificadas' and registro_id = pg_temp.ex(15) order by creado_en desc, id limit 1) l), 'with the actor and old/new values';
   raise notice 'OK V1 rational penalty';
 end $$;
+
+-- ---- 20261022103400 (owner 2026-10-22: the penalty applies to official AND non-official exams): official default ON in the database, never over an
+-- explicit setting; the rule stays a per-exam datum frozen per attempt.
+set local session_replication_role = replica;
+insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en, regla_anuladas, penalizacion_racional, es_oficial) values
+  (pg_temp.ex(16), 'OR-16', 'e1000000-0000-0000-0000-0000000000f1', 'c1000000-0000-0000-0000-0000000000f1', 'Defecto 16', 'rafaga', 'gratuito', true, now() - interval '1 day', 'NO_PUNTUA', true, false);
+select pg_temp.mkq(16, 1, 4), pg_temp.mkq(16, 2, 4), pg_temp.mkq(16, 3, 4);
+set local session_replication_role = origin;
+do $$
+declare
+  ua constant uuid := 'a0000000-0000-0000-0000-0000000000f1';
+  r jsonb; a uuid; b uuid; n0 bigint;
+begin
+  -- created official -> rational ON in the same INSERT; created non-official -> stays off
+  insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, titulo, tipo_examen, tipo_acceso, activo, es_oficial) values
+    (pg_temp.ex(18), 'OR-18', 'e1000000-0000-0000-0000-0000000000f1', 'c1000000-0000-0000-0000-0000000000f1', 'Defecto 18', 'rafaga', 'gratuito', false, true),
+    (pg_temp.ex(19), 'OR-19', 'e1000000-0000-0000-0000-0000000000f1', 'c1000000-0000-0000-0000-0000000000f1', 'Defecto 19', 'rafaga', 'gratuito', false, false);
+  assert (select penalizacion_racional from public.examenes where id = pg_temp.ex(18)), 'created official: rational penalty ON by default';
+  assert (select not penalizacion_racional and penalizacion_num = 0 from public.examenes where id = pg_temp.ex(19)), 'created non-official: no default';
+  -- a non-official exam may carry a penalty (owner 2026-10-22)
+  update public.examenes set penalizacion_num = 1, penalizacion_den = 3 where id = pg_temp.ex(19);
+  update public.examenes set penalizacion_num = 0, penalizacion_den = 1 where id = pg_temp.ex(19);
+  -- switched to official -> ON (audited); switched back -> unchanged (no clearing); an explicit setting in the same statement wins
+  n0 := (select count(*) from public.auditoria_log where accion = 'examen_reglas_puntuacion_modificadas' and registro_id = pg_temp.ex(19));
+  update public.examenes set es_oficial = true where id = pg_temp.ex(19);
+  assert (select penalizacion_racional from public.examenes where id = pg_temp.ex(19)), 'switched to official: rational penalty ON';
+  assert (select count(*) from public.auditoria_log where accion = 'examen_reglas_puntuacion_modificadas' and registro_id = pg_temp.ex(19)) = n0 + 1, 'the implicit change is audited';
+  update public.examenes set es_oficial = false where id = pg_temp.ex(19);
+  assert (select penalizacion_racional from public.examenes where id = pg_temp.ex(19)), 'switched back to non-official: the penalty is kept';
+  update public.examenes set penalizacion_racional = false where id = pg_temp.ex(19);
+  update public.examenes set es_oficial = true, penalizacion_num = 1, penalizacion_den = 3 where id = pg_temp.ex(19);
+  assert (select not penalizacion_racional and penalizacion_num = 1 and penalizacion_den = 3 from public.examenes where id = pg_temp.ex(19)), 'an explicit fraction in the same statement: no default on top';
+  update public.examenes set es_oficial = false where id = pg_temp.ex(19);
+  update public.examenes set es_oficial = true, penalizacion_num = 0, penalizacion_den = 1 where id = pg_temp.ex(19);
+  assert (select not penalizacion_racional and penalizacion_num = 0 from public.examenes where id = pg_temp.ex(19)), 'an explicit change to 0/1 in the same statement: no default on top';
+  -- an explicit SET to the SAME value (false, already false) is still an explicit setting (column trigger on the SET list, not a value comparison)
+  update public.examenes set es_oficial = false where id = pg_temp.ex(19);
+  update public.examenes set es_oficial = true, penalizacion_racional = false where id = pg_temp.ex(19);
+  assert (select not penalizacion_racional and penalizacion_num = 0 from public.examenes where id = pg_temp.ex(19)), 'explicit SET penalizacion_racional = false (unchanged value): no default on top';
+  -- the explicit mark of one statement never leaks into a later statement of the same transaction
+  update public.examenes set es_oficial = false where id = pg_temp.ex(19);
+  update public.examenes set penalizacion_num = 0 where id = pg_temp.ex(19);
+  update public.examenes set es_oficial = true where id = pg_temp.ex(19);
+  assert (select penalizacion_racional from public.examenes where id = pg_temp.ex(19)), 'a later plain switch to official still gets the default';
+  assert coalesce(current_setting('app.penalty_explicit', true), '') = '', 'the transaction-local mark is cleared';
+  update public.examenes set es_oficial = false where id = pg_temp.ex(18);
+  update public.examenes set es_oficial = true where id = pg_temp.ex(18);
+  assert (select penalizacion_racional from public.examenes where id = pg_temp.ex(18)), 'an exam that already has the penalty keeps it';
+
+  -- a NON-official exam with the rational penalty penalises; the rule is frozen at start: switched off mid-attempt, the attempt keeps it
+  r := public.app_start_exam_attempt(ua, pg_temp.ex(16));
+  a := (r ->> 'intento_id')::uuid;
+  assert (select penalizacion_racional is true from public.intentos_examen where id = a), 'non-official exam: the attempt freezes the penalty';
+  update public.examenes set penalizacion_racional = false where id = pg_temp.ex(16);
+  perform pg_temp.ans(ua, a, pg_temp.q(16, 1), true); perform pg_temp.ans(ua, a, pg_temp.q(16, 2), false); perform pg_temp.ans(ua, a, pg_temp.q(16, 3), false);
+  perform public.app_finish_exam_attempt(ua, a);
+  -- c=1, two wrong with 4 options: PD = 1 - 2/3 = 1/3 over 3 -> 1.11
+  assert (select penalizacion_racional is true and nota = 1.11 and penalizacion_descuento = 0.67 from public.intentos_examen where id = a), 'frozen penalty on a non-official exam: 1.11';
+  r := public.app_start_exam_attempt(ua, pg_temp.ex(16));
+  b := (r ->> 'intento_id')::uuid;
+  perform pg_temp.ans(ua, b, pg_temp.q(16, 1), true); perform pg_temp.ans(ua, b, pg_temp.q(16, 2), false); perform pg_temp.ans(ua, b, pg_temp.q(16, 3), false);
+  perform public.app_finish_exam_attempt(ua, b);
+  assert (select penalizacion_racional is false and nota = 3.33 and penalizacion_descuento is null from public.intentos_examen where id = b), 'a new attempt freezes the new value (off): 3.33';
+  raise notice 'OK V1 penalty official default';
+end $$;
 rollback;
 
 -- 20261022101500: configuracion_v1 bounds + audit (E2-V1-P02); a `premium` gift can never be quota (E2-V1-A01).

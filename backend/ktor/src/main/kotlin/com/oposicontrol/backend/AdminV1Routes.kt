@@ -433,18 +433,10 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway, idempotency: IdempotencyStore? 
                 community.validatedUuid("comunidadId")
                 withUpstreamIo { gateway.requireActiveCommunity(community) }
                 val saved = withUpstreamIo { gateway.createExamen(body) }
-                // V1: un examen OFICIAL nace con la penalización racional activada (E1-V1-PENALTY-CONTRACT); el administrador
-                // puede apagarla en Reglas de puntuación. Mejor esfuerzo: si el servidor aún no tiene la columna, el examen
-                // se crea igual y el panel de reglas enseña el estado real.
-                if (saved.esOficial) {
-                    try {
-                        withUpstreamIo { gateway.controlV1.applyOfficialExamDefaults(saved.id) }
-                    } catch (cancellation: kotlin.coroutines.cancellation.CancellationException) {
-                        throw cancellation
-                    } catch (failure: Exception) {
-                        AuditLogger.error("official exam default (rational penalty) not applied examId={} error={}", saved.id, failure::class.simpleName)
-                    }
-                }
+                // V1: un examen OFICIAL nace con la penalización racional activada (E1-V1-PENALTY-CONTRACT). Lo hace la BASE en la
+                // misma sentencia del INSERT (trigger trg_examenes_penalty_official_default, 20261022103400), también al pasar a oficial
+                // después o por cualquier otro escritor. Antes era un PATCH de mejor esfuerzo tras crear: si fallaba, el examen
+                // quedaba oficial y SIN penalización y solo se registraba en el log (CERT-EXAMS-2026-10-21 B-03).
                 call.respond(HttpStatusCode.Created, AdminExamenResponse(saved))
             }
             // Todas las rutas `/{id}` de esta vertical validan el identificador.
@@ -465,8 +457,8 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway, idempotency: IdempotencyStore? 
             get("/{id}/preguntas") {
                 // Esta ruta es ADMIN y NO filtra publicación: ver los borradores
                 // es el caso de uso central del editor de exámenes. Su gemela
-                // pública `GET /v1/examenes/{id}/preguntas` sí los descarta
-                // (EXAM-009). Las dos no se mezclan a propósito.
+                // pública `GET /v1/examenes/{id}/preguntas` (EP-128) está retirada: 410
+                // (CERT-EXAMS-2026-10-21 B-07). Las dos no se mezclan a propósito.
                 val id = call.requiredPath("id").validatedUuid("id")
                 call.respond(AdminPreguntasResponse(withUpstreamIo { gateway.listPreguntasExamen(id) }))
             }
@@ -4682,7 +4674,7 @@ class AdminV1Gateway private constructor(
      * recursos): un examen de 120 preguntas costaba 1 + 4×120 = **481**
      * peticiones, 120 de ellas sólo de recursos. Ahora son **5 como máximo**,
      * sea cual sea el número de preguntas, agrupando por `id=in.(...)` — el
-     * mismo patrón que ya usaba [SupabaseV1Gateway.getPreguntasExamenRafaga].
+     * mismo patrón que usaba la lectura pública de preguntas (EP-128, hoy retirada).
      *
      * El filtro `activa=eq.true` sustituye al `takeIf { it.activa }` posterior:
      * una pregunta archivada que conserve su fila en `preguntas_examen` no debe
