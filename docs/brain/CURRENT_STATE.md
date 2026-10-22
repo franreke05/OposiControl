@@ -18,7 +18,7 @@
 - **Pendiente:**
   - F6.3/F6.4 (recorrido de app e IDOR con cuentas sintéticas; no hay app publicada, así que no hay usuarios reales y R-2 sigue disponible hasta GO-6);
   - métrica `store_payments_enabled = 0`;
-  - borrar la clave secreta `default` de Supabase (RB-10; la nueva `v1_servidor` está en el servidor);
+  - ~~borrar la clave secreta `default`~~ HECHO 2026-10-22: borrada por el propietario; el servidor sigue sano con `v1_servidor` (RB-10 cerrado para la clave secreta; el `.env` local de desarrollo ya no tiene una clave válida de MAIN);
   - receptor de Alertmanager (D-4);
   - OK del propietario a los descartes de worktrees.
 
