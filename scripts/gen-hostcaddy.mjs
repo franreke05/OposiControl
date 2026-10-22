@@ -53,8 +53,11 @@ site = site
   .replace(/ktor-control:8080/g, '127.0.0.1:18083')
   .replace(/ktor-bot-1:8080 ktor-bot-2:8080/g, '127.0.0.1:18081 127.0.0.1:18082')
   .replace(/\{client_ip\}/g, '{remote_host}') // {client_ip} exists from Caddy 2.7; there is no proxy in front today
+  // `request_buffers <size>` exists from Caddy 2.7 (the host runs 2.6.2 and rejects it). 2.6 has `buffer_requests`: it reads the
+  // WHOLE body before proxying, bounded here by the unconditional `request_body { max_size 3MB }` of the same pool.
+  .replace(/^(\t+)request_buffers 3MB$/gm, '$1buffer_requests')
 
-const leftovers = site.match(/ktor-|\{client_ip\}|\bimport |origin\.pem/g)
+const leftovers = site.match(/ktor-|\{client_ip\}|\bimport |origin\.pem|request_buffers/g)
 if (leftovers) throw new Error('not adapted: ' + leftovers.join(','))
 
 const head = [

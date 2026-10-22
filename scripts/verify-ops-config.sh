@@ -141,9 +141,12 @@ caddy_no_status_ejection() { local f
 bot_upstream_timeout() { [ "$(grep -c 'UPSTREAM_REQUEST_TIMEOUT_MS: ${BOT_UPSTREAM_REQUEST_TIMEOUT_MS:-10000}' ops/deploy/compose.production.yaml)" = 2 ]; }
 # Revision OposiControl 2026-10-22: el pool bot lee el cuerpo ENTERO en Caddy (`request_buffers 3MB` y tope incondicional `request_body max_size 3MB`)
 # antes de ir a Ktor; si no, POST lentos sin autenticar retienen los permisos de admision hasta `read_body` (130 s).
+# El host corre Caddy 2.6.2, sin `request_buffers` (2.7+): alli es `buffer_requests` (cuerpo entero, con el mismo tope de 3MB).
 caddy_bot_buffers_body() { local f
+  caddy_bot_block ops/caddy/Caddyfile.production | grep -Eq '^[[:space:]]*request_buffers 3MB[[:space:]]*$' || return 1
+  caddy_bot_block ops/caddy/Caddyfile.hostcaddy | grep -Eq '^[[:space:]]*buffer_requests[[:space:]]*$' || return 1
+  ! grep -q 'request_buffers' ops/caddy/Caddyfile.hostcaddy || return 1
   for f in ops/caddy/Caddyfile.production ops/caddy/Caddyfile.hostcaddy; do
-    caddy_bot_block "$f" | grep -Eq '^[[:space:]]*request_buffers 3MB[[:space:]]*$' || return 1
     caddy_bot_block "$f" | grep -Eq '^[[:space:]]*max_size 3MB[[:space:]]*$' || return 1
   done; }
 # CERT-LOAD-1000: el 503 SERVER_BUSY + Retry-After de Ktor llega tal cual al cliente: sin reintentos por respuesta
