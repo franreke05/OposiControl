@@ -142,6 +142,21 @@ backup)
   echo "Siguiente: bash $REPO/ops/deploy/v1/lanzar-v1.sh restaurar-prueba"
   ;;
 
+recaptura)
+  need_db
+  # F3.6: foto READ-ONLY del catalogo de MAIN (forma, sin filas ni secretos) para re-ensayar sobre la forma real de hoy.
+  D="$HOME/.oposibots-gate/baseline-$(date +%Y%m%d)"; mkdir -p "$D"
+  titulo "F3.6 recaptura del catalogo de MAIN en $D/capture.json"
+  q="$(sed -n '/^set search_path/,$p' scripts/db-main-catalog-capture.sql | grep -v '^set search_path' | sed -e 's/--.*$//' | sed -e '$!b' -e 's/;[[:space:]]*$//')"
+  { echo 'begin transaction read only;'; echo 'set search_path = pg_catalog;';
+    echo "select json_agg(x order by x.seccion) from ($(printf '%s' "$q" | sed -e ':a;N;$!ba;s/;[[:space:]]*$//')) x;"; echo 'rollback;'; } \
+    | psql_main -qAt > "$D/capture.json"
+  node -e 'const r=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));console.log("secciones:",r.map(x=>x.seccion).join(","),"| sentencias:",r.reduce((a,x)=>a+Number(x.sentencias),0))' "$D/capture.json"
+  echo "select version || ' ' || coalesce(name, '') from supabase_migrations.schema_migrations order by version;" | psql_main -At > "$D/MAIN_MIGRATION_HISTORY.txt"
+  echo "historial: $(wc -l < "$D/MAIN_MIGRATION_HISTORY.txt") versiones -> $D/MAIN_MIGRATION_HISTORY.txt"
+  echo "Pasale a OposiBot la ruta $D para el re-ensayo de F3.6 (rehearse-v1-deploy.sh con MAIN_BASELINE)."
+  ;;
+
 restaurar-prueba)
   need_db
   # F3.3 (a): restaura el ULTIMO volcado en un PostgreSQL 17 de Supabase TEMPORAL en este equipo y compara las filas por tabla
