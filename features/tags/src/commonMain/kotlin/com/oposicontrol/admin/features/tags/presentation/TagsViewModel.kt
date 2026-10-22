@@ -94,7 +94,11 @@ class TagsViewModel(
                 item.slug.lowercase().contains(query)
         }
         updateState {
-            it.copy(items = if (filtered.isEmpty()) UiAsync.Empty else UiAsync.Success(filtered))
+            it.copy(
+                items = if (filtered.isEmpty()) UiAsync.Empty else UiAsync.Success(filtered),
+                totalCount = allItems.size,
+                activeCount = allItems.count { tag -> tag.active },
+            )
         }
     }
 

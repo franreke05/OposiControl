@@ -11,4 +11,7 @@ data class TagsState(
     val editorSlug: String = "",
     val editorOrigin: String = "manual",
     val actionState: UiAsync<Unit> = UiAsync.Idle,
+    /** Recuento del catálogo entero (sin el filtro de búsqueda), para las cifras de cabecera. */
+    val totalCount: Int = 0,
+    val activeCount: Int = 0,
 )

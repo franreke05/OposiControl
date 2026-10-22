@@ -2907,6 +2907,10 @@ data class AdminImportarLoteRequest(val confirmarExamenPublicado: Boolean = fals
 @OptIn(ExperimentalSerializationApi::class)
 @Serializable
 data class AdminImportResultadoDto(
+    /** Enlaces pregunta↔etiqueta creados al publicar a partir de `ETIQUETA:` del PDF. */
+    @EncodeDefault val etiquetasEnlazadas: Int = 0,
+    /** Nombres de `ETIQUETA:` que no existen (activos) en el catálogo: no se crean, se avisan. */
+    @EncodeDefault val etiquetasNoEncontradas: List<String> = emptyList(),
     val ejecutado: Boolean,
     val nuevas: Int,
     val vinculadas: Int,
@@ -5721,6 +5725,13 @@ class AdminV1Gateway private constructor(
                 "El PDF no contiene ningun bloque de pregunta reconocible. Revisa el separador de preguntas.",
             )
         }
+        // Regla de etiquetas (propietario 2026-10-22): cada tema de ETIQUETA: se comprueba contra el catálogo AL CREAR el
+        // lote, para que la revisión avise en su fila antes de publicar. Un tema desconocido no bloquea: se avisa.
+        val catalogoEtiquetas: Map<String, String>? = if (parsed.preguntas.any { it.etiquetas.isNotEmpty() }) {
+            runCatching { catalogoEtiquetasActivas() }.getOrNull()
+        } else {
+            emptyMap()
+        }
         val filas = (
             parsed.preguntas.map { p ->
                 AdminStagingItemDto(
@@ -5740,8 +5751,8 @@ class AdminV1Gateway private constructor(
                     // Una advertencia NO bloquea la publicación, pero la fila tiene que
                     // verse distinta de una limpia: es lo único que avisa de que la
                     // explicación de una Ráfaga no se va a publicar.
-                    estadoParseo = if (p.advertencia != null) "advertencia" else "ok",
-                    errorParseo = p.advertencia,
+                    estadoParseo = if (advertenciaConEtiquetas(p, catalogoEtiquetas) != null) "advertencia" else "ok",
+                    errorParseo = advertenciaConEtiquetas(p, catalogoEtiquetas),
                     // La anulacion es ortogonal al estado de parseo: una anulada valida es `ok`.
                     anulada = p.anulada,
                     motivoAnulacion = p.motivoAnulacion,
@@ -5953,6 +5964,13 @@ class AdminV1Gateway private constructor(
         )
         val resultado = json.decodeFromString<AdminImportLoteResultRow>(body)
         if (resultado.ejecutado) registrarAuditoria("lote_importado", "lotes_importacion_preguntas", loteId)
+        // `ETIQUETA:` del PDF → etiquetas del catálogo de Control enlazadas a cada pregunta publicada (también a la existente
+        // en las filas vinculadas). Un fallo aquí no deshace la publicación: se dice como aviso.
+        val etiquetas = if (resultado.ejecutado) {
+            runCatching { enlazarEtiquetasDelLote(loteId) }.getOrElse { EtiquetasDelLote(0, emptyList(), fallo = true) }
+        } else {
+            EtiquetasDelLote(0, emptyList())
+        }
         val lote = getLote(loteId) ?: throw domainError("IMPORT_LOTE_NOT_FOUND")
         return AdminLoteImportResponse(
             data = lote,
@@ -5966,10 +5984,65 @@ class AdminV1Gateway private constructor(
                 reservas = resultado.reservas,
                 huella = resultado.huella,
                 problema = resultado.problema,
-                avisos = resultado.avisos,
+                avisos = resultado.avisos + listOfNotNull("IMPORT_TAGS_NOT_LINKED".takeIf { etiquetas.fallo }),
+                etiquetasEnlazadas = etiquetas.enlazadas,
+                etiquetasNoEncontradas = etiquetas.noEncontradas,
             ),
         )
     }
+
+    private data class EtiquetasDelLote(val enlazadas: Int, val noEncontradas: List<String>, val fallo: Boolean = false)
+
+    /**
+     * Enlaza a cada pregunta publicada del lote las etiquetas de su `ETIQUETA:` que existan (activas) en el catálogo. Se casan
+     * por nombre sin distinguir mayúsculas, acentos ni espacios. Las que no existen NO se crean: se devuelven para avisar.
+     * Idempotente (`ignore-duplicates`): republicar o volver a vincular no duplica enlaces.
+     */
+    private fun enlazarEtiquetasDelLote(loteId: String): EtiquetasDelLote {
+        val filas = request(
+            "GET",
+            "/rest/v1/preguntas_parseadas_staging?select=pregunta_id,vincular_pregunta_id,etiqueta_texto&lote_id=eq.$loteId" +
+                "&estado_parseo=neq.omitida&etiqueta_texto=neq.",
+            null,
+        ).decodeList<JsonObject>()
+        if (filas.isEmpty()) return EtiquetasDelLote(0, emptyList())
+        val catalogo = catalogoEtiquetasActivas()
+        val noEncontradas = linkedSetOf<String>()
+        val enlaces = linkedSetOf<Pair<String, String>>()
+        for (fila in filas) {
+            val pregunta = fila["pregunta_id"]?.jsonPrimitive?.contentOrNull ?: fila["vincular_pregunta_id"]?.jsonPrimitive?.contentOrNull ?: continue
+            fila["etiqueta_texto"]?.jsonPrimitive?.contentOrNull.orEmpty().split(",").map { it.trim() }.filter { it.isNotEmpty() }.take(PREGUNTA_ETIQUETAS_MAX).forEach { nombre ->
+                val id = catalogo[normalizarNombreEtiqueta(nombre)]
+                if (id == null) noEncontradas += nombre else enlaces += pregunta to id
+            }
+        }
+        if (enlaces.isNotEmpty()) {
+            request(
+                "POST",
+                "/rest/v1/etiquetas_pregunta",
+                sbJson.encodeToString(enlaces.map { (p, e) -> V1EtiquetaPreguntaRow(preguntaId = p, etiquetaId = e) }),
+                prefer = "resolution=ignore-duplicates,return=minimal",
+            )
+            registrarAuditoriaResultado(
+                accion = "lote_etiquetas_enlazadas",
+                tabla = "lotes_importacion_preguntas",
+                registroId = loteId,
+                antes = null,
+                despues = buildJsonObject {
+                    put("enlaces", JsonPrimitive(enlaces.size))
+                    put("noEncontradas", JsonArray(noEncontradas.map { JsonPrimitive(it) }))
+                },
+            )
+        }
+        return EtiquetasDelLote(enlaces.size, noEncontradas.toList())
+    }
+
+    /** Catálogo de etiquetas activas: nombre normalizado → id. */
+    private fun catalogoEtiquetasActivas(): Map<String, String> =
+        request("GET", "/rest/v1/etiquetas?select=id,nombre&activa=is.true", null)
+            .decodeList<JsonObject>()
+            .mapNotNull { e -> e["nombre"]?.jsonPrimitive?.contentOrNull?.let { normalizarNombreEtiqueta(it) to e["id"]!!.jsonPrimitive.content } }
+            .toMap()
 
     /** FA37: huella del lote y lote ya importado con el mismo contenido; `null` si la RPC no existe todavia (sin la migracion). */
     private fun huellaDeLote(loteId: String): AdminLoteHuellaDto? = try {
@@ -9407,4 +9480,26 @@ class AdminV1Gateway private constructor(
         ): AdminV1Gateway =
             AdminV1Gateway(supabaseUrl, serviceRoleKey, json, client, systemMetrics, supabaseDisk, systemTopology, supabaseReadiness)
     }
+}
+
+/** Nombre de etiqueta comparable: sin mayúsculas, sin acentos y con los espacios colapsados («  Constitución » = «constitucion»). */
+internal fun normalizarNombreEtiqueta(nombre: String): String =
+    java.text.Normalizer.normalize(nombre.trim(), java.text.Normalizer.Form.NFD)
+        .replace(Regex("\\p{Mn}+"), "")
+        .lowercase()
+        .replace(Regex("\\s+"), " ")
+
+/**
+ * Aviso de la fila con la regla de etiquetas añadida: los temas de `ETIQUETA:` que no están en el catálogo activo
+ * (`catalogo` nulo = no se pudo leer). `null` si la fila queda limpia.
+ */
+internal fun advertenciaConEtiquetas(p: ParsedPregunta, catalogo: Map<String, String>?): String? {
+    val avisoCatalogo = when {
+        p.etiquetas.isEmpty() -> null
+        catalogo == null -> "ETIQUETA: no se ha podido comprobar el catálogo de etiquetas; se comprobará al publicar."
+        else -> p.etiquetas.filter { normalizarNombreEtiqueta(it) !in catalogo }.takeIf { it.isNotEmpty() }?.let { faltan ->
+            "ETIQUETA: no existen en el catálogo (no se enlazarán): ${faltan.joinToString(", ")}. Créalas en Etiquetas o corrige el PDF."
+        }
+    }
+    return listOfNotNull(p.advertencia, avisoCatalogo).joinToString(" ").ifBlank { null }
 }

@@ -178,6 +178,10 @@ internal const val INVALID_SEPARATOR_DETAIL = "Separador no válido: usa exactam
 /** El aviso de pie/número de página, literal. */
 internal const val PAGE_MARKER_WARNING = "Posible pie o número de página dentro del texto: revisa la fila"
 
+/** Regla de etiquetas: el separador es la coma. */
+internal const val ETIQUETA_SEPARATOR_WARNING = "ETIQUETA: separa los temas con comas, no con punto y coma"
+internal const val MAX_ETIQUETAS_POR_PREGUNTA = PREGUNTA_ETIQUETAS_MAX
+
 /** Sólo una línea que es EXACTAMENTE un marcador de página (o 1–4 dígitos). Sin heurística. */
 private val PAGE_MARKER_LINE = Regex(
     "^(?:(?:P[aá]gina|P[aá]g\\.?|Page)\\s*\\d+(?:\\s*(?:de|/|of)\\s*\\d+)?|\\d{1,4})$",
@@ -421,11 +425,19 @@ internal fun parseQuestionBlocks(text: String, tipoPregunta: String): RafagaPars
             }
         }
 
-        val etiquetas = fields["ETIQUETA"]
-            ?.split(",")
-            ?.map { it.trim() }
-            ?.filter { it.isNotBlank() }
-            ?: emptyList()
+        // Regla de etiquetas (propietario 2026-10-22): se separan por comas; un «;» se acepta como coma pero se
+        // avisa; las repetidas se quitan; más de MAX_ETIQUETAS_POR_PREGUNTA es un aviso (sólo se enlazan las primeras).
+        val etiquetaCruda = fields["ETIQUETA"].orEmpty()
+        val etiquetas = etiquetaCruda
+            .split(",", ";")
+            .map { it.trim().replace(Regex("\\s+"), " ") }
+            .filter { it.isNotBlank() }
+            .distinctBy { normalizarNombreEtiqueta(it) }
+        val avisoEtiquetas = listOfNotNull(
+            ETIQUETA_SEPARATOR_WARNING.takeIf { ';' in etiquetaCruda },
+            "ETIQUETA: tiene ${etiquetas.size} temas; solo se enlazan los $MAX_ETIQUETAS_POR_PREGUNTA primeros."
+                .takeIf { etiquetas.size > MAX_ETIQUETAS_POR_PREGUNTA },
+        )
 
         val respuestaValida = respuesta
         if (erroresDelBloque.isEmpty() && titulo != null && respuestaValida != null) {
@@ -434,7 +446,7 @@ internal fun parseQuestionBlocks(text: String, tipoPregunta: String): RafagaPars
                     .takeIf { !exigeRazonamiento && (razonamiento.isNotBlank() || fuente.isNotBlank()) },
                 PAGE_MARKER_WARNING.takeIf { scan.posiblePaginaEnTexto },
                 PREAMBLE_LOOKS_LIKE_QUESTION_WARNING.takeIf { i == 0 && split.preambleLooksLikeQuestion },
-            )
+            ) + avisoEtiquetas
             preguntas += ParsedPregunta(
                 numero = numero,
                 titulo = titulo,

@@ -1,5 +1,12 @@
 # Current State
 
+## Etiquetas: pantalla, selector e importación — 2026-10-22 (develop sobre `a9fbe337`) — `CURRENT_IMPLEMENTATION`, `LIVE_VERIFIED: NO`
+
+- Decisión del propietario (revoca la de abajo sobre el menú): «Etiquetas» vuelve a Contenido (solo escritorio), con diseño de dashboard (contadores Etiquetas/Activas/Desactivadas, catálogo con buscador y editor Nombre/Slug con confirmación al borrar).
+- Editor de preguntas: las etiquetas se eligen con un desplegable (como la comunidad en Exámenes); «Crear etiqueta» sigue en línea.
+- Importación PDF: `ETIQUETA:` se separa por comas (`;` se acepta con aviso), se quitan repetidas ignorando mayúsculas, acentos y espacios, y con más de 20 solo cuentan las 20 primeras (aviso). Al subir, cada fila con un tema que no está en el catálogo activo sale como `advertencia` diciendo cuál. Al publicar el lote, los temas que existen se enlazan en `etiquetas_pregunta` (`ignore-duplicates`, también en filas vinculadas a una pregunta existente) y se audita `lote_etiquetas_enlazadas`; los que no existen NO se crean. El resultado del lote trae `etiquetasEnlazadas` y `etiquetasNoEncontradas` (el panel todavía no los muestra).
+- Guía para Arturo: `docs/import/FORMATO_PDF_IMPORTACION.md`.
+
 ## Examen V1: penalización por defecto en oficiales + EP-128 retirada — 2026-10-22 (rama local `feature/v1-exam-penalty-scope` sobre develop `ac0e1670`, sin push)
 
 - Origen: certificación `CERT-EXAMS-2026-10-21` (OposiBot `docs/ledger/2026/10/`), bloqueos B-03 (P1), B-07 y la carrera answer‖answer de B-06.

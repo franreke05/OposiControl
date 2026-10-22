@@ -25,6 +25,8 @@ Versión 2026-10-22. Para quien prepara los PDF (Arturo). El panel lee el texto 
 ### Etiquetas (temas)
 
 - Escribe el **nombre del tema tal como está en el catálogo** de etiquetas de Control (no distingue mayúsculas, acentos ni espacios de más: `constitucion` = `Constitución`).
+- Sepáralos **con comas**. Si pones `;` se acepta como coma pero la fila sale con aviso; los temas repetidos se quitan solos; con más de 20 solo se enlazan los 20 primeros (aviso).
+- **Al subir el PDF**, la revisión ya marca en amarillo (advertencia) cada fila con un tema que no está en el catálogo, diciendo cuál.
 - Al **publicar el lote**, cada tema que exista en el catálogo se **enlaza** a la pregunta y aparece en el editor de preguntas, en «Etiquetas (temas)».
 - Un tema que **no exista** NO se crea: la revisión del lote lo avisa en esa fila, y la pregunta se publica sin ese tema. Si es un tema nuevo de verdad, créalo antes en el editor de preguntas («Crear etiqueta») o pide que lo creen, y vuelve a subir el PDF; si es una errata, corrígela en el PDF.
 

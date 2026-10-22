@@ -32,6 +32,7 @@ import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.ui.components.AppIcon
 import com.oposicontrol.admin.core.ui.components.AppIconImage
 import com.oposicontrol.admin.core.ui.components.ButtonSize
+import com.oposicontrol.admin.core.ui.components.DropdownField
 import com.oposicontrol.admin.core.ui.components.PrimaryButton
 import com.oposicontrol.admin.core.ui.components.SecondaryButton
 import com.oposicontrol.admin.core.ui.components.humanMessage
@@ -115,25 +116,6 @@ private fun QuestionTagsEditor(state: QuestionsState, onIntent: (QuestionsIntent
         }
     }
 
-    Row(
-        modifier = Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
-    ) {
-        QuestionTextField(
-            value = state.tagSearch,
-            onValueChange = { onIntent(QuestionsIntent.UpdateTagSearch(it)) },
-            placeholder = "Buscar etiqueta para añadir",
-            modifier = Modifier.width(QuestionTagsSizing.searchWidth),
-        )
-        SecondaryButton(
-            text = "Crear etiqueta",
-            size = ButtonSize.COMPACT,
-            onClick = { onIntent(QuestionsIntent.RequestCreateTag) },
-            icon = { AppIconImage(AppIcon.ADD, size = 13.dp) },
-        )
-    }
-
     when (state.tagCatalog) {
         UiAsync.Idle, UiAsync.Loading -> Text(
             text = "Cargando el catálogo de etiquetas…",
@@ -156,24 +138,30 @@ private fun QuestionTagsEditor(state: QuestionsState, onIntent: (QuestionsIntent
                 onClick = { onIntent(QuestionsIntent.ReloadQuestionTags) },
             )
         }
-        UiAsync.Empty, is UiAsync.Success -> {
+        // Desplegable como el de Comunidad en Exámenes (petición del propietario 2026-10-22): se elige del
+        // catálogo y la etiqueta pasa a los chips de arriba. «Crear etiqueta» al lado para un tema nuevo.
+        UiAsync.Empty, is UiAsync.Success -> Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.spacedBy(Spacing.xs),
+        ) {
             val addable = state.addableTags()
-            if (addable.isEmpty()) {
-                Text(
-                    text = if (state.tagSearch.isBlank()) QUESTION_TAGS_NOTHING_TO_ADD_NOTE else QUESTION_TAGS_NO_MATCH_NOTE,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = tokens.textSecondary,
-                )
-            } else {
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(QuestionTagsSizing.chipGap),
-                    verticalArrangement = Arrangement.spacedBy(QuestionTagsSizing.chipGap),
-                ) {
-                    addable.take(QUESTION_TAG_SUGGESTIONS_MAX).forEach { tag ->
-                        QuestionSuggestedTagChip(name = tag.name, onAdd = { onIntent(QuestionsIntent.AddQuestionTag(tag.id)) })
-                    }
-                }
-            }
+            DropdownField(
+                label = "Añadir etiqueta",
+                selectedLabel = "",
+                placeholder = if (addable.isEmpty()) "No quedan etiquetas por añadir" else "Elige una etiqueta",
+                options = addable.map { it.id to it.name },
+                onSelect = { id -> if (id != null) onIntent(QuestionsIntent.AddQuestionTag(id)) },
+                enabled = addable.isNotEmpty(),
+                modifier = Modifier.width(QuestionTagsSizing.pickerWidth),
+                maxWidth = QuestionTagsSizing.pickerWidth,
+            )
+            SecondaryButton(
+                text = "Crear etiqueta",
+                size = ButtonSize.COMPACT,
+                onClick = { onIntent(QuestionsIntent.RequestCreateTag) },
+                icon = { AppIconImage(AppIcon.ADD, size = 13.dp) },
+            )
         }
     }
 
@@ -237,45 +225,14 @@ private fun QuestionSelectedTagChip(chip: QuestionTagChip, onRemove: () -> Unit)
     }
 }
 
-/** Una etiqueta del catálogo que se puede añadir con un clic. */
-@Composable
-private fun QuestionSuggestedTagChip(name: String, onAdd: () -> Unit) {
-    val tokens = GlassTheme.tokens
-    Row(
-        modifier = Modifier
-            .height(QuestionTagsSizing.chipHeight)
-            .widthIn(max = QuestionTagsSizing.chipMaxWidth)
-            .clip(Radius.pill)
-            .background(tokens.surfaceMuted)
-            .border(1.dp, tokens.border, Radius.pill)
-            .pointerHoverIcon(PointerIcon.Hand)
-            .clickable(onClick = onAdd)
-            .semantics { contentDescription = "Añadir etiqueta $name" }
-            .padding(horizontal = 10.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        AppIconImage(AppIcon.ADD, size = 10.dp, tint = tokens.textSecondary)
-        Text(
-            text = name,
-            style = MaterialTheme.typography.bodySmall,
-            color = tokens.textPrimary,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-        )
-    }
-}
-
 private object QuestionTagsSizing {
     val chipHeight = 28.dp
     val chipMaxWidth = 240.dp
     val chipGap = 6.dp
     val removeTarget = 20.dp
-    val searchWidth = 280.dp
+    val pickerWidth = 320.dp
 }
 
-/** Cuántas sugerencias del catálogo se enseñan a la vez; el buscador acota el resto. */
-const val QUESTION_TAG_SUGGESTIONS_MAX: Int = 12
 
 const val QUESTION_TAGS_NEED_SAVED_NOTE: String = "Guarda la pregunta para poder etiquetarla."
 const val QUESTION_TAGS_EMPTY_NOTE: String = "Esta pregunta no tiene etiquetas."
@@ -283,8 +240,6 @@ const val QUESTION_TAGS_UNAVAILABLE_NOTE: String =
     "No se han podido consultar las etiquetas de esta pregunta. Vuelve a intentarlo."
 const val QUESTION_TAG_CATALOG_UNAVAILABLE_NOTE: String =
     "No se ha podido cargar el catálogo de etiquetas."
-const val QUESTION_TAGS_NOTHING_TO_ADD_NOTE: String = "No quedan etiquetas activas por añadir. Puedes crear una."
-const val QUESTION_TAGS_NO_MATCH_NOTE: String = "Ninguna etiqueta coincide. Puedes crearla con «Crear etiqueta»."
 
 /** El texto junto a «Guardar etiquetas» y si es un error. */
 fun questionTagsSaveMessage(state: QuestionsState): Pair<String, Boolean> = when (val save = state.tagsSaveState) {

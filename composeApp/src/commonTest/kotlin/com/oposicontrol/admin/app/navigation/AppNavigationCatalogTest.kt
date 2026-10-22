@@ -3,7 +3,6 @@ package com.oposicontrol.admin.app.navigation
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
-import kotlin.test.assertTrue
 
 class AppNavigationCatalogTest {
     // Reports y OposiTester dejaron de ser grupos propios de escritorio y pasaron
@@ -34,17 +33,18 @@ class AppNavigationCatalogTest {
     }
 
     @Test
-    fun communitiesAndTagsKeepTheirOwnRouteWithoutASidebarEntry() {
+    fun communitiesAndTagsHaveTheirOwnRouteAndSidebarEntry() {
         // Antes `toLegacySection` nunca devolvía estas secciones y `openSection` las mandaba a Especialidades.
         assertEquals(AdminSection.COMMUNITIES, AppRoute.Content.Communities.toLegacySection())
         assertEquals(AdminSection.TAGS, AppRoute.Content.Tags.toLegacySection())
         assertEquals(AppRoute.Content.Communities, AdminSection.COMMUNITIES.toAppRoute())
         assertEquals(AppRoute.Content.Tags, AdminSection.TAGS.toAppRoute())
-        // Las dos salieron del menú el 2026-10-22: Comunidades se elige en cada examen y
-        // las Etiquetas se asignan y crean en el editor de cada pregunta.
-        val sidebarRoutes = appNavigationGroups.flatMap { it.sidebarItems }.map { it.route }
-        assertTrue(AppRoute.Content.Communities !in sidebarRoutes)
-        assertTrue(AppRoute.Content.Tags !in sidebarRoutes)
+        listOf(AppRoute.Content.Tags).forEach { route ->
+            val item = itemFor(route)
+            assertEquals(NavigationGroupId.CONTENT, item.metadata.group)
+            assertEquals(true, item.metadata.showInSidebar)
+            assertEquals(NavigationVisibility.DESKTOP_ONLY, item.metadata.visibility)
+        }
     }
 
     @Test

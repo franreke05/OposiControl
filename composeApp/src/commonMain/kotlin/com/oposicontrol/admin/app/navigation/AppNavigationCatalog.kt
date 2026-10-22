@@ -122,7 +122,7 @@ val appNavigationGroups: List<AppRouteMenuGroup> = listOf(
             // (`/api/v1/admin/comunidades-autonomas`, `/api/v1/admin/etiquetas`) que llevaban compiladas sin ninguna puerta:
             // `toLegacySection` nunca devolvía su sección. Sólo escritorio: en la vista estrecha no hay menú lateral.
             // Comunidades fuera del menú (decisión del propietario, 2026-10-22): el catálogo es fijo y se elige en cada examen.
-            // Etiquetas fuera del menú (decisión del propietario, 2026-10-22): se asignan y se crean en el editor de cada pregunta.
+            item(AppRoute.Content.Tags, "content.tags", "Etiquetas", "Etiquetas que clasifican preguntas y contenido.", NavigationGroupId.CONTENT, AppIcon.FILTER.key, NavigationVisibility.DESKTOP_ONLY),
             item(AppRoute.Content.Questions, "content.questions", "Preguntas", "Revisión y edición de preguntas y sus recursos.", NavigationGroupId.CONTENT, AppIcon.QUESTIONS.key),
             item(AppRoute.Content.Imports, "content.imports", "Importación", "Importa preguntas desde PDF, revisa el resultado y publícalo cuando esté listo.", NavigationGroupId.CONTENT, AppIcon.IMPORT.key),
             // Recursos ya vivía dentro de la misma pantalla que Preguntas
