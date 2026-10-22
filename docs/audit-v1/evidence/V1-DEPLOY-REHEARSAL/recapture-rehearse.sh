@@ -10,7 +10,7 @@
 # Salida: RECAPTURE-REHEARSAL OK y FINGERPRINT IDENTICO, o el diff (< referencia, > recaptura) para explicar linea a linea antes de GO-4.
 set -uo pipefail
 D="${1:?directorio de la recaptura (con capture.json)}"
-cd "$(dirname "$0")/../../.." || exit 2
+cd "$(dirname "$0")/../../../.." || exit 2
 HERE=docs/audit-v1/evidence/V1-DEPLOY-REHEARSAL
 [ -s "$D/capture.json" ] || { echo "FAIL: falta $D/capture.json"; exit 1; }
 node scripts/db-main-catalog-assemble.mjs "$D/capture.json" > "$D/baseline_main.sql" || { echo "FAIL: assemble"; exit 1; }
@@ -22,7 +22,7 @@ PREAPPLIED_ON_MAIN="20261023100000 20261023100300 20261023100400 20261023100500"
 NEVER_RUN="20261023100100" MANUAL_STORAGE_DROP=1 \
   bash "$HERE/rehearse-v1-deploy.sh" "$OUT" || { echo "FAIL: re-ensayo sobre la recaptura (ver $OUT/rehearsal.log)"; exit 1; }
 echo "RECAPTURE-REHEARSAL OK"
-if diff "$HERE/run-2026-10-22b/fingerprint_start.txt" "$OUT/fingerprint_start.txt" > "$OUT/fingerprint_diff.txt"; then
+if diff --strip-trailing-cr "$HERE/run-2026-10-22b/fingerprint_start.txt" "$OUT/fingerprint_start.txt" > "$OUT/fingerprint_diff.txt"; then
   echo "FINGERPRINT IDENTICO a la referencia ensayada"
 else
   echo "FINGERPRINT DIFIERE ($(grep -c '^[<>]' "$OUT/fingerprint_diff.txt") lineas, < referencia, > recaptura): $OUT/fingerprint_diff.txt"
