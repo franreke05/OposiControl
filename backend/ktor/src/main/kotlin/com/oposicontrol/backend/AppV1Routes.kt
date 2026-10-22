@@ -41,7 +41,6 @@ import java.security.spec.ECParameterSpec
 import java.security.spec.ECPoint
 import java.security.spec.ECPublicKeySpec
 import java.time.Instant
-import java.time.LocalDate
 import java.util.Base64
 
 class AppUnauthorized(message: String) : RuntimeException(message)
@@ -123,9 +122,10 @@ internal fun Route.appV1Routes(
         get("/commercial/subscriptions") {
             call.respond(gateway.commercialSubscriptions(call.usuarioId(verifier, allowDevUser, identityResolver)))
         }.legacyRoute(LegacyEndpoints.APP_COMMERCIAL_SUBSCRIPTIONS)
+        // D2-05, DEPRECATED (FA29: superseded by D3-16 `GET /retos/hoy`; no live caller in OposiBot or OC). Kept for an installed old build: the row is the
+        // caller's row of TODAY in the server zone (configuracion_v1.zona_horaria) and segment, read by the database (app_legacy_daily_challenge), never the JVM date.
         get("/reto-diario") {
-            call.usuarioId(verifier, allowDevUser, identityResolver)
-            call.respond(AppRetoResponse(gateway.retoDiario()))
+            call.respond(AppRetoResponse(gateway.retoDiario(call.usuarioId(verifier, allowDevUser, identityResolver))))
         }
         // V1 (E3, Reportar): una repeticion tras un resultado desconocido NO crea un segundo reporte. Con `Idempotency-Key` (UUID, opcional para no romper a los clientes
         // sin ella): misma clave + mismo cuerpo = el mismo resultado (el mismo id, `Idempotent-Replayed: true`); misma clave + otro cuerpo = 422 IDEMPOTENCY_KEY_REUSED.
@@ -851,7 +851,7 @@ class AppV1Gateway private constructor(
         usuarioId.validatedUuid("usuarioId")
         return AppHomeResponse(
             perfil = perfil(usuarioId),
-            retoDiario = retoDiario(),
+            retoDiario = retoDiario(usuarioId),
             examenes = listExamenes().take(5),
         )
     }
@@ -1123,8 +1123,13 @@ class AppV1Gateway private constructor(
         }
     }
 
-    fun retoDiario(): AppRetoDto? =
-        get("/rest/v1/retos_diarios?select=*&activo=eq.true&fecha=lte.${LocalDate.now()}&order=fecha.desc&limit=1")
+    /**
+     * Legacy reto of TODAY for [usuarioId] (D2-05 and `/home.retoDiario`). The database decides the day in the configured zone and the segment (the
+     * row frozen at the first open, or the most specific eligible one) and creates nothing; `null` when the user has no row today. It used to read
+     * the latest row of ANY segment with the JVM date (CERT-STREAKS-QUESTIONS-2026-10-21, migration 20261022103500).
+     */
+    fun retoDiario(usuarioId: String): AppRetoDto? =
+        rpc("app_legacy_daily_challenge", buildJsonObject { put("p_usuario", usuarioId.validatedUuid("usuarioId")) })
             .firstOrNull()?.let {
                 AppRetoDto(
                     id = it.str("id")!!,
