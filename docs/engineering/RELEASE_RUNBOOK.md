@@ -14,6 +14,14 @@ Arquitectura (sin cambios): una imagen `oposicontrol-backend:<sha12>`, tres cont
 
 Quien: `P` = propietario, `C` = Claude (solo trabaja en local, sobre el repo).
 
+## Estado actual y control con imagen propia (2026-10-22)
+
+- En el VPS: bot-1 y bot-2 corren `oposicontrol-backend:cfa2e14afc8e` (`origin/main`); control corre `oposicontrol-backend:d922357e84d3` (rama `hotfix/control-tags-cfa2e14`, sin migraciones V1). V1 NO esta lanzado.
+- `compose.production.yaml`: `ktor-control` usa `${CONTROL_IMAGE:-${BACKEND_IMAGE}}`. En `compose.env` del servidor va `CONTROL_IMAGE=oposicontrol-backend:d922357e84d3`; asi un `compose up` del stack no devuelve control a la imagen de los bot.
+- Cambiar SOLO control: `bash ops/deploy/ship-control-only.sh <imagen>` (plan) y `... --go` (ejecuta). Rollback de control: la misma orden con la imagen anterior de control.
+- Panel a juego con el control que corre: `bash scripts/publicar-panel-produccion.sh [--instalar]` (por defecto construye `origin/hotfix/control-tags-cfa2e14`; con V1, `PANEL_REF=origin/develop`).
+- Lanzamiento V1 (este checklist con `release.sh` + rolling de los tres): fijar o vaciar `CONTROL_IMAGE` en el paso 5; el rollback de control vuelve a `d922357e84d3`, no a `cfa2e14afc8e`. Los scripts del Escritorio `desplegar-oposicontrol.sh` / `publicar-oposicontrol.sh` estan DESACTIVADOS hasta V1 (construian develop y hacian el rolling de los tres).
+
 ## Variables de la sesion (Git Bash, propietario)
 
 ```bash

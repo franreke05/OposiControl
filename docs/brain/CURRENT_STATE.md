@@ -1,5 +1,22 @@
 # Current State
 
+## Lanzamiento V1 del backend (bot-1, bot-2 y control) — preparación 2026-10-22 — `NOT_DEPLOYED`
+
+- **Alcance (propietario):** todo el backend V1 (dos Ktor de bot y el de control) con las 40 migraciones de `ops/deploy/v1/main-migrations.manifest`. La app de alumnos va después; ninguna está publicada.
+- **Decisiones del propietario:** D-1 pagos todo apagado; D-3/D-12 volcado + prueba local; D-9/D-13 acepta los RB P1 abiertos y lanzar sin repetir CERT-LOAD-1000, rotando la service_role antes de F4; D-6 esta noche; D-7 cuentas `+prueba-a/-b/-admin`; D-10 sí; D-4 Sentry + observación manual, receptor de Alertmanager antes de declarar estable.
+- **F1 en MAIN** (solo lectura, agregados): 77 versiones, la última `20261015100000`; todas las filas BLOQUEA a 0; `storage_escritura_admin` = 0; 4 perfiles activos (1 superadmin); 4 carteras con 0 OT de apertura; 3 exámenes oficiales, todos con comunidad.
+- **Herramientas:**
+  - `ops/deploy/v1/lanzar-v1.sh` (fases `comprobar`, `caddy`, `imagen`, `backup`, `ventana`, `arrancar`, `humo` e `imagenes-anteriores`, con confirmación tecleada);
+  - `ops/deploy/ship-control-only.sh`;
+  - `scripts/publicar-panel-produccion.sh`;
+  - `ktor-control` con `${CONTROL_IMAGE:-${BACKEND_IMAGE}}`; `verify-ops-config.test` OK con 104 mutaciones.
+- **Scripts del Escritorio:** `desplegar-oposicontrol.sh` y `publicar-oposicontrol.sh` DESACTIVADOS hasta V1.
+- **Pendiente:**
+  - commit de Bot (revoke de `auditoria_log_append_only` para anon/authenticated, ROLLBACK de 20261020/21, ambas en el gate);
+  - gate, ensayo y window-selftest sobre el SHA final;
+  - rotación de la service_role y variables V1 en el servidor (propietario);
+  - OK del propietario a los descartes de worktrees que propone Bot.
+
 ## Hotfix de Control sobre producción — 2026-10-22 (rama `hotfix/control-tags-cfa2e14`, imagen `oposicontrol-backend:d922357e84d3`) — `DEPLOYED` (solo control)
 
 - Producción corre `cfa2e14afc8e` en los tres Ktor (bot-1, bot-2, control) de un solo servidor. Desplegar develop NO es viable sin el lanzamiento V1: el control de develop necesita `102000`/`102100`/`101300` y su cierre (`100300..101200`) rompe el bot `cfa2e14` (verificado en MAIN: ninguna de las 36 pendientes aplicada).

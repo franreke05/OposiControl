@@ -41,7 +41,9 @@ Si el examen tiene preguntas de reserva, sepáralas con estas líneas exactas:
 (preguntas de reserva)
 ```
 
-Sin marcador, todas son principales.
+Sin marcador, todas son principales. Basta con una sola línea `--- BLOQUE: RESERVA ---` justo antes de la primera reserva: todo lo anterior cuenta como principal.
+
+> **Hoy (octubre 2026) las reservas todavía no se importan.** El panel reconoce el marcador, pero las preguntas que van detrás salen en rojo («Las preguntas de reserva todavía no se pueden importar: se activarán con la versión V1») y no se publican. Puedes dejar el marcador puesto en tus PDF: no estropea nada y, cuando se active V1, se importarán como reservas.
 
 ## Ejemplo completo
 

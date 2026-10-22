@@ -149,6 +149,9 @@ services:
 
   ktor-control:
     <<: *ktor
+    # Control puede ir en su propia imagen (hotfix de control sobre produccion, 2026-10-22): CONTROL_IMAGE en compose.env.
+    # Vacia = la misma BACKEND_IMAGE que los bot. Un `compose up` de todo el stack respeta asi la imagen de control.
+    image: ${CONTROL_IMAGE:-${BACKEND_IMAGE:?BACKEND_IMAGE es obligatoria (oposicontrol-backend:<sha12> o @sha256:...)}}
     hostname: ktor-control
     env_file: *env-control
     environment:

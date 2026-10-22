@@ -33,6 +33,7 @@ mutate() {
   [ "$(echo "$out" | grep -c '^FAIL:')" = 1 ] || { echo "TEST FAIL: '$desc' rompio mas de una comprobacion:"; echo "$out"; exit 1; }
 }
 P=ops/monitoring/prometheus/prometheus.yml
+mutate "control sin CONTROL_IMAGE" ops/deploy/compose.production.yaml '/image: ${CONTROL_IMAGE:-/d' "ktor-control admite su propia imagen"
 mutate "credentials_file comentado" $P 's/^\([[:space:]]*\)credentials_file:/\1# credentials_file:/' "prometheus ktor job"
 mutate "type Bearer cambiado" $P 's/^\([[:space:]]*\)type:[[:space:]]*Bearer/\1type: Basic/' "prometheus ktor job"
 mutate "sin montaje del token" ops/monitoring/compose.yaml '/secrets\/metrics_token:\/etc\/prometheus\/secrets\/metrics_token/d' "compose monta"

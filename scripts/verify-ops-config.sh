@@ -190,6 +190,8 @@ check "compose.production.yaml parsea (docker compose config -q si hay Docker; s
 check "compose.production: ktor-bot-1 y ktor-bot-2 con SERVER_PROFILE=bot, plantilla x-ktor y heap explicito" \
   "ktor_service_ok ktor-bot-1 bot && ktor_service_ok ktor-bot-2 bot"
 check "compose.production: ktor-control con SERVER_PROFILE=control, plantilla x-ktor y heap explicito" "ktor_service_ok ktor-control control"
+check "compose.production: ktor-control admite su propia imagen (CONTROL_IMAGE, si no BACKEND_IMAGE) y los bot no" \
+  "svc ktor-control | grep -Fq 'image: \${CONTROL_IMAGE:-\${BACKEND_IMAGE:?' && ! svc ktor-bot-1 | grep -Eq '^[[:space:]]+image:' && ! svc ktor-bot-2 | grep -Eq '^[[:space:]]+image:' && grep -q '^CONTROL_IMAGE=' ops/deploy/compose.env.example"
 check "compose.production: todos los servicios con limites cpus y mem_limit" "all_limits"
 check "compose.production: healthcheck /health/live, restart, stop_grace_period y rotacion de logs en la plantilla x-ktor" \
   "xktor | grep -Fq 'http://127.0.0.1:8080/health/live' && xktor | grep -Eq '^  restart:[[:space:]]*unless-stopped' && xktor | grep -Eq '^  stop_grace_period:' && xktor | grep -Eq '^  logging:' && grep -Eq 'max-size:' \"\$CP\""
