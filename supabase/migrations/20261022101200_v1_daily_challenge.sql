@@ -45,14 +45,38 @@
 -- drop index if exists public.ux_retos_diarios_segmento;
 -- alter table public.retos_diarios add constraint retos_diarios_fecha_key unique (fecha);
 -- create policy registros_reto_todo_propio on public.registros_reto_diario for all to authenticated using (usuario_id = (select auth.uid()) or es_admin()) with check (usuario_id = (select auth.uid()) or es_admin());
--- create policy ranking_liga_select_auth_ligas_activas on public.ranking_liga for select to authenticated using (exists (select 1 from public.ligas l where l.id = ranking_liga.liga_id and l.activa) or es_admin());
+-- create policy ranking_liga_select_auth_ligas_activas on public.ranking_liga for select to authenticated using (exists (select 1 from public.ligas l where l.id = ranking_liga.liga_id and l.activa = true) or es_admin());
 -- create policy canonical_v2_daily_challenge_read on public.preguntas_reto_diario for select to authenticated using (true);
--- revoke select on public.rachas_usuario from authenticated;  -- (re-granted after anon below: the ACL keeps MAIN's grantee order)
--- grant select on public.retos_diarios, public.rachas_usuario, public.registros_reto_diario, public.ranking_liga, public.estado_premium_usuario to anon;
--- grant select on public.retos_diarios, public.rachas_usuario, public.preguntas_reto_diario, public.ranking_liga to authenticated;
--- grant select, insert, update, delete on public.registros_reto_diario to authenticated;
--- do $r$ declare t text; begin foreach t in array array['estadisticas_usuario', 'estadisticas_usuario_etiqueta', 'estadisticas_usuario_pregunta', 'estado_competitivo_usuario', 'estado_opositester_usuario', 'estadisticas_globales_etiqueta', 'estadisticas_globales_pregunta'] loop if to_regclass('public.' || t) is not null then execute format('revoke select on public.%I from authenticated', t); execute format('grant select on public.%I to anon', t); execute format('grant select on public.%I to authenticated', t); end if; end loop; if to_regclass('public.lotes_actualizacion_ranking') is not null then grant insert, update, delete on public.lotes_actualizacion_ranking to authenticated; end if; end $r$;
--- do $r$ declare f text; begin for f in select p.oid::regprocedure::text from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname like 'recalcular_estadisticas%' loop execute format('revoke all on function %s from postgres, service_role', f); execute format('grant execute on function %s to public', f); execute format('grant execute on function %s to postgres', f); execute format('grant execute on function %s to anon, authenticated, service_role', f); end loop; end $r$;
+-- -- client ACL of the MAIN tables and functions touched above: EXACTLY MAIN's (READ-ONLY catalog capture of MAIN, 2026-10-14), statement by statement, in MAIN's grantee order
+-- revoke all on table public.retos_diarios, public.preguntas_reto_diario, public.registros_reto_diario, public.rachas_usuario, public.ranking_liga, public.estado_premium_usuario from public, anon, authenticated, service_role;
+-- grant delete, insert, maintain, references, select, trigger, truncate, update on table public.retos_diarios, public.preguntas_reto_diario, public.registros_reto_diario, public.rachas_usuario, public.ranking_liga, public.estado_premium_usuario to service_role;
+-- grant maintain, select on table public.retos_diarios, public.rachas_usuario, public.ranking_liga, public.estado_premium_usuario to anon, authenticated;
+-- grant select on table public.preguntas_reto_diario to authenticated;
+-- grant delete, insert, maintain, select, update on table public.registros_reto_diario to authenticated;
+-- grant maintain, select on table public.registros_reto_diario to anon;
+-- do $r$
+-- declare t text;
+-- begin
+--   foreach t in array array['estadisticas_usuario', 'estadisticas_usuario_etiqueta', 'estadisticas_usuario_pregunta', 'estadisticas_globales_etiqueta', 'estadisticas_globales_pregunta', 'estado_competitivo_usuario', 'estado_opositester_usuario'] loop
+--     if to_regclass('public.' || t) is not null then
+--       execute format('revoke all on table public.%I from public, anon, authenticated, service_role', t);
+--       execute format('grant delete, insert, maintain, references, select, trigger, truncate, update on table public.%I to service_role', t);
+--       if t in ('estado_competitivo_usuario', 'estado_opositester_usuario') then
+--         execute format('grant select on table public.%I to authenticated', t);  -- MAIN: authenticated SELECT only, nothing for anon
+--       else
+--         execute format('grant maintain, select on table public.%I to anon, authenticated', t);
+--       end if;
+--     end if;
+--   end loop;
+--   if to_regclass('public.lotes_actualizacion_ranking') is not null then
+--     grant insert, update, delete on public.lotes_actualizacion_ranking to authenticated;
+--   end if;
+--   for t in select p.oid::regprocedure::text from pg_proc p where p.pronamespace = 'public'::regnamespace and p.proname like 'recalcular_estadisticas%' loop
+--     execute format('revoke all on function %s from public, anon, authenticated, service_role', t);
+--     execute format('grant execute on function %s to public, anon, authenticated, service_role', t);
+--   end loop;
+-- end
+-- $r$;
 -- commit;
 -- ROLLBACK-END
 --
