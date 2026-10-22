@@ -35,3 +35,4 @@
 20261022103200_v1_store_payments_round5
 20261022103300_v1_store_payments_round6
 20261022103400_v1_exam_penalty_official_default
+20261022103500_v1_daily_challenge_dst
