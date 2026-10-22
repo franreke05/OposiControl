@@ -19,6 +19,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.foundation.layout.height
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -177,7 +178,11 @@ private fun QuestionResourceRowView(
     onIntent: (QuestionsIntent) -> Unit,
 ) {
     val tokens = GlassTheme.tokens
-    var openError by remember(row.openUrl) { mutableStateOf<String?>(null) }
+    // La URL del recurso que se está viendo en el popup; null = cerrado.
+    var viewerUrl by remember(row.openUrl) { mutableStateOf<String?>(null) }
+    viewerUrl?.let { url ->
+        QuestionResourceViewerDialog(resource = resource, row = row, url = url, onDismiss = { viewerUrl = null })
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -222,13 +227,13 @@ private fun QuestionResourceRowView(
                 color = tokens.textSecondary,
             )
         }
-        // El archivo entero (audio, vídeo o la imagen a tamaño real) se abre en el navegador o reproductor del sistema con
-        // la URL firmada (caduca en una hora; al volver a cargar la pregunta llega otra). Si no se puede, se dice por qué.
+        // «Abrir» enseña el recurso en un popup dentro del panel (petición del propietario 2026-10-22). La URL firmada
+        // caduca en una hora; al volver a cargar la pregunta llega otra.
         row.openUrl?.let { url ->
             SecondaryButton(
                 text = "Abrir",
                 size = ButtonSize.COMPACT,
-                onClick = { openError = openQuestionResourceExternally(url) },
+                onClick = { viewerUrl = url },
                 icon = { AppIconImage(AppIcon.VIEW, size = 13.dp) },
             )
         }
@@ -249,9 +254,97 @@ private fun QuestionResourceRowView(
             ) { AppIconImage(AppIcon.DELETE, size = 14.dp) }
         }
     }
-    openError?.let { Text(text = it, style = MaterialTheme.typography.bodySmall, color = tokens.dangerInk) }
     }
 }
+
+/**
+ * El popup de «Abrir». La imagen se ve entera dentro del panel. El audio y el vídeo no tienen reproductor en el panel
+ * (no hay librería de medios instalada): el popup los identifica y «Reproducir» los abre en el reproductor del sistema.
+ */
+@Composable
+private fun QuestionResourceViewerDialog(
+    resource: QuestionResource,
+    row: QuestionResourceRow,
+    url: String,
+    onDismiss: () -> Unit,
+) {
+    val tokens = GlassTheme.tokens
+    var openError by remember(url) { mutableStateOf<String?>(null) }
+    val isImage = resource.type == QuestionResourceType.IMAGE
+    Dialog(onDismissRequest = onDismiss) {
+        GlassSurface(
+            modifier = Modifier.width(if (isImage) QUESTION_RESOURCE_VIEWER_IMAGE_WIDTH else QUESTION_RESOURCE_DIALOG_WIDTH),
+            shape = Radius.lg,
+            tint = tokens.surfaceSolid,
+            strokeColor = tokens.border,
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(Spacing.lg),
+                verticalArrangement = Arrangement.spacedBy(Spacing.md),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                    SemanticIconContainer(
+                        icon = questionResourceIcon(resource.type),
+                        role = SemanticRole.INFO,
+                        size = Sizing.iconButtonSmall,
+                        iconSize = 16.dp,
+                    )
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(
+                            text = row.title,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            color = tokens.textPrimary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            text = row.formatLabel?.let { "${row.typeLabel} · $it" } ?: row.typeLabel,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = tokens.textSecondary,
+                        )
+                    }
+                }
+                if (isImage) {
+                    QuestionResourceImagePreview(
+                        url = url,
+                        modifier = Modifier
+                            .width(QUESTION_RESOURCE_VIEWER_IMAGE_WIDTH - Spacing.lg * 2)
+                            .height(QUESTION_RESOURCE_VIEWER_IMAGE_HEIGHT)
+                            .clip(Radius.md)
+                            .background(tokens.surfaceMuted),
+                        contentScale = ContentScale.Fit,
+                    )
+                } else {
+                    Text(
+                        text = QUESTION_RESOURCE_VIEWER_MEDIA_NOTE,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = tokens.textPrimary,
+                    )
+                }
+                openError?.let { Text(text = it, style = MaterialTheme.typography.bodySmall, color = tokens.dangerInk) }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.xs, Alignment.End),
+                ) {
+                    SecondaryButton(
+                        text = if (isImage) "Abrir a tamaño real" else "Reproducir",
+                        onClick = { openError = openQuestionResourceExternally(url) },
+                        icon = { AppIconImage(AppIcon.VIEW, size = 13.dp) },
+                    )
+                    PrimaryButton(text = "Cerrar", onClick = onDismiss)
+                }
+            }
+        }
+    }
+}
+
+internal const val QUESTION_RESOURCE_VIEWER_MEDIA_NOTE: String =
+    "«Reproducir» lo abre en el reproductor del ordenador."
+
+/** Popup de imagen: 720 de ancho y 440 de alto para la imagen, que se ve entera (sin recortar). */
+private val QUESTION_RESOURCE_VIEWER_IMAGE_WIDTH = 720.dp
+private val QUESTION_RESOURCE_VIEWER_IMAGE_HEIGHT = 440.dp
 
 /**
  * El alta de un recurso.

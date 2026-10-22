@@ -27,7 +27,7 @@ private fun storageAllows(url: String): Boolean =
     MediaUrlPolicy.isOpenableStorageObject(url, KoinPlatform.getKoinOrNull()?.getOrNull<AppConfig>())
 
 @Composable
-internal actual fun QuestionResourceImagePreview(url: String, modifier: Modifier) {
+internal actual fun QuestionResourceImagePreview(url: String, modifier: Modifier, contentScale: ContentScale) {
     // null = cargando; Result = terminado (imagen o fallo).
     val result by produceState<Result<ImageBitmap>?>(null, url) {
         value = withContext(Dispatchers.IO) {
@@ -46,7 +46,7 @@ internal actual fun QuestionResourceImagePreview(url: String, modifier: Modifier
     Box(modifier, contentAlignment = Alignment.Center) {
         val image = result?.getOrNull()
         if (image != null) {
-            Image(image, "Vista previa del recurso", Modifier.matchParentSize(), contentScale = ContentScale.Crop)
+            Image(image, "Vista previa del recurso", Modifier.matchParentSize(), contentScale = contentScale)
         } else {
             Text(
                 text = if (result == null) "Cargando…" else "Sin vista previa",

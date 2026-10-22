@@ -5,10 +5,11 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.ContentScale
 
 /** El panel de administración es de escritorio: aquí no hay vista previa. */
 @Composable
-internal actual fun QuestionResourceImagePreview(url: String, modifier: Modifier) {
+internal actual fun QuestionResourceImagePreview(url: String, modifier: Modifier, contentScale: ContentScale) {
     Box(modifier, contentAlignment = Alignment.Center) { Text("Vista previa en escritorio") }
 }
 
