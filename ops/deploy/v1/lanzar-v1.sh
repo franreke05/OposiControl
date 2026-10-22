@@ -231,14 +231,20 @@ ventana)
 arrancar)
   need_sha
   titulo "F5 compose del SHA en el servidor e imagen V1 en los tres Ktor (control primero)"
-  C="$(compose_cmd)"; dir="$(echo "$C" | sed -E 's/^cd ([^ ]+) .*/\1/')"
-  echo "Servidor: $C"
-  confirmar ARRANCAR "copiar compose.production.yaml y compose.hostcaddy.override.yaml del SHA a $dir/ops/deploy (con .bak), poner BACKEND_IMAGE=$IMG y CONTROL_IMAGE= en compose.env, y arrancar control, bot-1 y bot-2 uno a uno"
+  C="$(compose_cmd)"
+  # Rutas EXACTAS de los compose que usa el servidor (etiqueta config_files del contenedor; vale aunque este parado).
+  files="$(r "docker inspect oposibots-ktor-control-1 --format '{{index .Config.Labels \"com.docker.compose.project.config_files\"}}'" | tr ',' ' ')"
+  [ -n "$files" ] || { echo "ERROR: no se pudieron leer las rutas de compose del servidor."; exit 1; }
+  for rf in $files; do [ -f "ops/deploy/$(basename "$rf")" ] || { echo "ERROR: $rf no tiene equivalente en ops/deploy de este SHA."; exit 1; }; done
+  echo "Servidor: $C"; echo "Compose que se sustituyen: $files"
+  confirmar ARRANCAR "copiar esos compose del SHA (con .bak), poner BACKEND_IMAGE=$IMG y CONTROL_IMAGE= en compose.env, y arrancar control, bot-1 y bot-2 uno a uno"
   ts=$(date +%Y%m%d%H%M)
-  for f in compose.production.yaml compose.hostcaddy.override.yaml; do
-    r "cp -a $dir/ops/deploy/$f $dir/ops/deploy/$f.bak-$ts"
-    "$SSH_BIN" -o BatchMode=yes "$HOST" "cat > $dir/ops/deploy/$f" < "ops/deploy/$f"
+  for rf in $files; do
+    r "cp -a $rf $rf.bak-$ts"
+    "$SSH_BIN" -o BatchMode=yes "$HOST" "cat > $rf" < "ops/deploy/$(basename "$rf")"
+    echo "  $rf actualizado (copia $rf.bak-$ts)"
   done
+  r "$C config -q" || { for rf in $files; do r "cp -a $rf.bak-$ts $rf"; done; echo "ERROR: el compose nuevo no es valido en el servidor; restaurado."; exit 1; }
   r "cd $ENV_DIR && cp -a compose.env compose.env.bak-$ts && sed -i -e 's|^BACKEND_IMAGE=.*|BACKEND_IMAGE=$IMG|' compose.env && \
      { grep -q '^CONTROL_IMAGE=' compose.env && sed -i 's|^CONTROL_IMAGE=.*|CONTROL_IMAGE=|' compose.env || echo 'CONTROL_IMAGE=' >> compose.env; } && grep -E '^(BACKEND_IMAGE|CONTROL_IMAGE)=' compose.env"
   for svc in ktor-control ktor-bot-1 ktor-bot-2; do
