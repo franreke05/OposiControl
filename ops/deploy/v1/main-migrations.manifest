@@ -2,8 +2,8 @@
 # version  blob(git hash-object, 12)  predecesora(debe estar en supabase_migrations antes de aplicar; - = sin requisito)  clase
 # clase: apply = se aplica en la ventana; apply-or-record = se aplica, o se registra con --record-only si ya esta en MAIN (VERIFY = 0);
 #        record = ya aplicada en MAIN fuera del historial (solo --verify-only / --record-only); never = no se ejecuta ni se registra.
-20261020100000 57b44aadb2ff 20261015100000 apply-or-record
-20261021100000 c8be42d5206f 20261020100000 apply-or-record
+20261020100000 95678b9244b7 20261015100000 apply-or-record
+20261021100000 cc57f43697f8 20261020100000 apply-or-record
 20261022100000 972f494b2799 20261021100000 apply
 20261022100100 21d685eaac7c 20261022100000 apply
 20261022100200 74bd03a7c5bd 20261022100100 apply

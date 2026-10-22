@@ -100,8 +100,8 @@ Columnas:
 
 | # | Migración | blob | Clase | Datos / notas |
 |---|---|---|---|---|
-| 1 | `20261020100000_security_access_request_email_verified` | `57b44aadb2ff` | E | Solo si F1.1 dice que falta. LEGACY sin ROLLBACK. La imagen V1 la necesita (registro). |
-| 2 | `20261021100000_security_audit_log_append_only` | `c8be42d5206f` | H | Solo si falta. LEGACY sin ROLLBACK: `auditoria_log` pasa a solo-añadir para todos los roles. |
+| 1 | `20261020100000_security_access_request_email_verified` | `95678b9244b7` | E | Solo si F1.1 dice que falta (F1 2026-10-22: falta). Con bloque ROLLBACK y en el gate PG17 (ventana, `fix/v1-security-pending-gate`). La imagen V1 la necesita (registro). |
+| 2 | `20261021100000_security_audit_log_append_only` | `cc57f43697f8` | H | Solo si falta (F1 2026-10-22: falta). Con bloque ROLLBACK, EXECUTE revocado a anon/authenticated y en el gate PG17: `auditoria_log` pasa a solo-añadir para todos los roles. |
 | 3 | `20261022100000_slice3_attempt_content_revisions` | `972f494b2799` | E | Intentos abiertos duplicados = 0 |
 | 4 | `20261022100100_security_exam_publication_time` | `21d685eaac7c` | H | — |
 | 5 | `20261022100200_v1_exam_community_required` | `74bd03a7c5bd` | C | Exámenes sin comunidad = 0 (2026-10-19: 0 de 3). Añade `SET NOT NULL`. |

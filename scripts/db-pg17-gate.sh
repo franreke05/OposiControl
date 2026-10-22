@@ -38,16 +38,20 @@ applied="$(tr -d '\r' < "$hist" | grep -Ev '^[[:space:]]*(#|$)' | cut -d' ' -f1)
 [ "$(echo "$applied" | wc -l | tr -d ' ')" -ge 70 ] || fail "$hist no parece el historial completo de MAIN"
 v1list="$( [ -f supabase/V1_MIGRATIONS.txt ] && tr -d '\r' < supabase/V1_MIGRATIONS.txt | grep -Ev '^[[:space:]]*(#|$)' )"
 is_v1() { case "$1" in 20261022*) return 0 ;; esac; printf '%s\n' "$v1list" | grep -qx "$1"; }
+# Ventana V1 (2026-10-22): estas _security_ NO-V1 no estan en MAIN (F1) y se aplican en la MISMA ventana que las V1 (manifiesto
+# ops/deploy/v1, apply-or-record): son pendientes y pasan por todo el gate (matriz, aserciones, ROLLBACK/re-aplicar).
+WINDOW_SECURITY="20261020100000_security_access_request_email_verified 20261021100000_security_audit_log_append_only"
+in_window_security() { case " $WINDOW_SECURITY " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 security="$( (cd supabase/migrations && ls | grep -E '^202610.*_security_.*\.sql$' | sed 's/\.sql$//' | sort) )"
 for v in $security; do
-  is_v1 "$v" || continue
+  is_v1 "$v" || in_window_security "$v" || continue
   # once MAIN_MIGRATION_HISTORY.txt is recaptured after the V1 deploy, an applied V1 _security_ migration is no longer pending
   echo "$applied" | grep -qx "${v%%_*}" && continue
   printf '%s\n' "$pending" | grep -qx "$v" || fail "$v: una migracion V1 (20261022* o V1_MIGRATIONS.txt) con _security_ es pendiente y no figura en $pend (quedaria fuera del gate)"
 done
 actual="$( (cd supabase/migrations && ls | grep -E '^[0-9]{14}_.*\.sql$' | sed 's/\.sql$//' | sort) | while read -r m; do
   v="${m%%_*}"; echo "$applied" | grep -qx "$v" && continue; case " $HISTORY_DIVERGENT " in *" $v "*) continue ;; esac
-  case "$m" in 202610*_security_*) is_v1 "$m" || continue ;; esac; echo "$m"; done)"
+  case "$m" in 202610*_security_*) is_v1 "$m" || in_window_security "$m" || continue ;; esac; echo "$m"; done)"
 [ "$pending" = "$actual" ] || { echo "FAIL: $pend y (repo - historial de MAIN) difieren (< pendientes, > real):"; diff <(echo "$pending") <(echo "$actual"); exit 1; }
 
 block() { # bloque comentado `-- NAME-BEGIN/END` (misma regla que Slice0Db.bloqueComentado): toda linea debe empezar por --
@@ -64,12 +68,12 @@ done
 #     sin cambiar este fichero, y se justifican en docs/registry/TECH_DEBT.md (DEBT-156b).
 #     - Sin ROLLBACK: anteriores a la convencion ROLLBACK/VERIFY en las *_security_* (forward-only).
 #     - Sin clase de dbtest que las nombre: anteriores a la regla; su VERIFY es la unica comprobacion automatica.
-LEGACY_SECURITY_NO_ROLLBACK="20261012100000_security_client_write_hardening 20261013100000_security_admin_access_requests 20261014100000_security_user_notices 20261015100000_security_audit_log_index 20261020100000_security_access_request_email_verified 20261021100000_security_audit_log_append_only"
+LEGACY_SECURITY_NO_ROLLBACK="20261012100000_security_client_write_hardening 20261013100000_security_admin_access_requests 20261014100000_security_user_notices 20261015100000_security_audit_log_index"
 LEGACY_SECURITY_NO_DBTEST="20261012100000_security_client_write_hardening 20261014100000_security_user_notices 20261015100000_security_audit_log_index"
 in_list() { case " $2 " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 # (Las V1 con _security_ son pendientes: las cubre el bucle de pendientes de arriba y no se repiten aqui.)
 for v in $security; do
-  is_v1 "$v" && continue
+  is_v1 "$v" || in_window_security "$v" && continue
   f="supabase/migrations/$v.sql"
   block "$f" VERIFY >/dev/null || fail "$v: bloque VERIFY ausente o con lineas sin comentar (migracion _security_)"
   in_list "$v" "$LEGACY_SECURITY_NO_ROLLBACK" || block "$f" ROLLBACK >/dev/null || fail "$v: bloque ROLLBACK ausente o con lineas sin comentar (migracion _security_)"
@@ -134,6 +138,9 @@ extra_eng=supabase/baseline/main_shape_subset_extra_engagement.sql
 # V1 NIGHT-A: la vertical de importacion en bloque de MAIN (staging + RPC de importacion), fuera del subconjunto generado.
 extra_imp=supabase/baseline/main_shape_subset_extra_import.sql
 [ -s "$extra_imp" ] && { psqlc < "$extra_imp" >/dev/null 2>"$err" || { cat "$err"; fail "$extra_imp no carga con ON_ERROR_STOP=1"; }; }
+# E7 (develop reconcile): solicitudes_acceso_admin (MAIN-applied 20261013100000) for develop's pending 20261020100000.
+extra_ar=supabase/baseline/main_shape_subset_extra_access_requests.sql
+[ -s "$extra_ar" ] && { psqlc < "$extra_ar" >/dev/null 2>"$err" || { cat "$err"; fail "$extra_ar no carga con ON_ERROR_STOP=1"; }; }
 fingerprint "$tmp/f0"
 apply_all
 fingerprint "$tmp/f1"

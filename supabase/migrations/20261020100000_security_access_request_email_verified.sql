@@ -89,6 +89,14 @@ comment on function public.admin_purge_user_sessions(uuid) is
 
 commit;
 
+-- E7 (integration): the prose "Rollback (manual)" above, in the block form the PG17 gate executes. COMMENT-ONLY addition, no SQL change.
+-- ROLLBACK-BEGIN
+-- drop function if exists public.admin_purge_user_sessions(uuid);
+-- alter table public.solicitudes_acceso_admin drop constraint if exists solicitudes_acceso_admin_intentos_verificacion_chk;
+-- alter table public.solicitudes_acceso_admin drop column if exists intentos_verificacion;
+-- alter table public.solicitudes_acceso_admin drop column if exists correo_verificado_en;
+-- ROLLBACK-END
+
 -- VERIFY-BEGIN
 -- select 'column_exists_nullable_timestamptz', (count(*) <> 1)::int from information_schema.columns where table_schema = 'public' and table_name = 'solicitudes_acceso_admin' and column_name = 'correo_verificado_en' and data_type = 'timestamp with time zone' and is_nullable = 'YES'
 -- union all select 'attempts_column_integer_not_null_default_0', (count(*) <> 1)::int from information_schema.columns where table_schema = 'public' and table_name = 'solicitudes_acceso_admin' and column_name = 'intentos_verificacion' and data_type = 'integer' and is_nullable = 'NO' and column_default = '0'

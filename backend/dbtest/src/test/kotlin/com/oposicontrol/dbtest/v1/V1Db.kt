@@ -21,13 +21,14 @@ object V1Db {
     private const val MAIN_SUBSET = "supabase/baseline/main_shape_subset.sql"
     private const val PENDING = "supabase/baseline/PENDING_MIGRATIONS.txt"
 
-    // Mismo orden que el gate: extra, extra_plans, auth_users, extra_engagement, extra_import.
+    // Mismo orden que el gate: extra, extra_plans, auth_users, extra_engagement, extra_import, extra_access_requests.
     private val EXTRAS = listOf(
         "supabase/baseline/main_shape_subset_extra.sql",
         "supabase/baseline/main_shape_subset_extra_plans.sql",
         "supabase/baseline/main_shape_auth_users.sql",
         "supabase/baseline/main_shape_subset_extra_engagement.sql",
         "supabase/baseline/main_shape_subset_extra_import.sql",
+        "supabase/baseline/main_shape_subset_extra_access_requests.sql",
     )
 
     private val contador = AtomicInteger()

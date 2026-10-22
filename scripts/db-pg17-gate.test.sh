@@ -30,7 +30,9 @@ expect_fail() { # $1 = escenario, $2 = mensaje FAIL esperado
 mutated() { cmp -s "$1" "${1#$w/}" && { echo "TEST FAIL: mutacion vacua en $1"; exit 1; }; return 0; }
 rev=supabase/migrations/20261022100000_slice3_attempt_content_revisions.sql
 pend=supabase/baseline/PENDING_MIGRATIONS.txt
-fresh; sed -i 's/^20261022100000_slice3_attempt_content_revisions/20261015100000_security_audit_log_index/' "$w/$pend"; mutated "$w/$pend"
+# Sin version de MAIN posterior a 20261021 y con las _security_ de la ventana al frente (WINDOW_SECURITY), la sustitucion se hace
+# quitando una pendiente V1 y poniendo una ya aplicada como PRIMERA linea: la lista sigue ordenada y solo cambia el conjunto.
+fresh; sed -i -e '/^20261022100000_slice3_attempt_content_revisions$/d' -e '0,/^2026/s/^2026/20261015100000_security_audit_log_index\n2026/' "$w/$pend"; mutated "$w/$pend"
 expect_fail "pendiente sustituida por una ya aplicada en MAIN" "PENDING_MIGRATIONS.txt y (repo - historial de MAIN) difieren"
 fresh; sed -i '/^-- VERIFY-BEGIN/,/^-- VERIFY-END/d' "$w/$rev"; mutated "$w/$rev"
 expect_fail "bloque VERIFY ausente" "20261022100000_slice3_attempt_content_revisions: bloque VERIFY ausente"

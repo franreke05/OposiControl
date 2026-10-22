@@ -71,6 +71,8 @@ end
 $$;
 
 revoke all on function public.auditoria_log_append_only() from public;
+-- E7 (integration): Supabase default privileges grant EXECUTE to anon/authenticated on new public functions; the gate matrix requires none on SECURITY DEFINER.
+revoke all on function public.auditoria_log_append_only() from anon, authenticated;
 
 comment on function public.auditoria_log_append_only() is
     'Hace public.auditoria_log de solo anadir: rechaza UPDATE, DELETE y TRUNCATE. Unica excepcion: la FK del actor (ON DELETE SET NULL) al borrar el usuario de Auth.';
@@ -86,6 +88,13 @@ create trigger auditoria_log_append_only_truncate
     for each statement execute function public.auditoria_log_append_only();
 
 commit;
+
+-- E7 (integration): the prose "Rollback (manual)" above, in the block form the PG17 gate executes. COMMENT-ONLY addition, no SQL change.
+-- ROLLBACK-BEGIN
+-- drop trigger if exists auditoria_log_append_only_row on public.auditoria_log;
+-- drop trigger if exists auditoria_log_append_only_truncate on public.auditoria_log;
+-- drop function if exists public.auditoria_log_append_only();
+-- ROLLBACK-END
 
 -- VERIFY-BEGIN
 -- select 'row_trigger_missing_or_disabled', (count(*) <> 1)::int from pg_trigger t where t.tgrelid = 'public.auditoria_log'::regclass and t.tgname = 'auditoria_log_append_only_row' and not t.tgisinternal and t.tgenabled = 'O' and t.tgfoid = 'public.auditoria_log_append_only()'::regprocedure
