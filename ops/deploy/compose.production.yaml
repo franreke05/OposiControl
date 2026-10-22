@@ -117,6 +117,9 @@ services:
     env_file: *env-bot
     environment:
       SERVER_PROFILE: bot
+      # Revision OposiControl 2026-10-22: 10 s a Supabase en el perfil bot (control sigue en 20 s por los imports). Con 20 s una
+      # escritura solo cabia en los primeros 4 s de la peticion (BOT_EDGE_TIMEOUT_MS 25 s - 1 s); con 10 s, en los primeros 14 s.
+      UPSTREAM_REQUEST_TIMEOUT_MS: ${BOT_UPSTREAM_REQUEST_TIMEOUT_MS:-10000}
       # JAVA_TOOL_OPTIONS REEMPLAZA al ENV de la imagen: se repite java.awt.headless. Heap al 60 % del limite de memoria
       # del contenedor (mem_limit): el 40 % restante cubre metaspace, pilas de hilos, buffers Netty y TLS. Sin ffmpeg en la
       # ruta bot (no recibe multipart). ExitOnOutOfMemoryError: un OOM reinicia el contenedor limpio en vez de dejar una
@@ -137,6 +140,9 @@ services:
     env_file: *env-bot
     environment:
       SERVER_PROFILE: bot
+      # Revision OposiControl 2026-10-22: 10 s a Supabase en el perfil bot (control sigue en 20 s por los imports). Con 20 s una
+      # escritura solo cabia en los primeros 4 s de la peticion (BOT_EDGE_TIMEOUT_MS 25 s - 1 s); con 10 s, en los primeros 14 s.
+      UPSTREAM_REQUEST_TIMEOUT_MS: ${BOT_UPSTREAM_REQUEST_TIMEOUT_MS:-10000}
       JAVA_TOOL_OPTIONS: ${BOT_JAVA_TOOL_OPTIONS:--Djava.awt.headless=true -XX:MaxRAMPercentage=60 -XX:InitialRAMPercentage=30 -XX:+ExitOnOutOfMemoryError -XX:+UseG1GC -XX:MaxGCPauseMillis=200 -Xlog:gc,gc+cpu:stdout:time,uptime,level,tags}
     cpus: ${BOT_CPUS:-1.0}
     mem_limit: ${BOT_MEM_LIMIT:-768m}

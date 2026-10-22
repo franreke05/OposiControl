@@ -137,11 +137,14 @@ caddy_no_status_ejection() { local f
     caddy_bot_block "$f" | grep -Eq '^[[:space:]]*reverse_proxy ' || return 1
     ! caddy_bot_block "$f" | grep -Eq '^[[:space:]]*(max_fails|fail_duration|unhealthy_request_count)[[:space:]]' || return 1
   done; }
-# Revision OposiControl 2026-10-22: el pool bot lee el cuerpo ENTERO en Caddy (`request_buffers` >= 2MB, el tope de body-limit)
+# Revision OposiControl 2026-10-22: el perfil bot corta a Supabase a los 10 s, asi una escritura cabe antes del borde.
+bot_upstream_timeout() { [ "$(grep -c 'UPSTREAM_REQUEST_TIMEOUT_MS: ${BOT_UPSTREAM_REQUEST_TIMEOUT_MS:-10000}' ops/deploy/compose.production.yaml)" = 2 ]; }
+# Revision OposiControl 2026-10-22: el pool bot lee el cuerpo ENTERO en Caddy (`request_buffers 3MB` y tope incondicional `request_body max_size 3MB`)
 # antes de ir a Ktor; si no, POST lentos sin autenticar retienen los permisos de admision hasta `read_body` (130 s).
 caddy_bot_buffers_body() { local f
   for f in ops/caddy/Caddyfile.production ops/caddy/Caddyfile.hostcaddy; do
-    caddy_bot_block "$f" | grep -Eq '^[[:space:]]*request_buffers 2MB[[:space:]]*$' || return 1
+    caddy_bot_block "$f" | grep -Eq '^[[:space:]]*request_buffers 3MB[[:space:]]*$' || return 1
+    caddy_bot_block "$f" | grep -Eq '^[[:space:]]*max_size 3MB[[:space:]]*$' || return 1
   done; }
 # CERT-LOAD-1000: el 503 SERVER_BUSY + Retry-After de Ktor llega tal cual al cliente: sin reintentos por respuesta
 # (`lb_retry_match`), sin reescribirla (`handle_response`, `replace_status`), sin quitar Retry-After, y con un
@@ -209,8 +212,9 @@ check "Caddyfile.production y .hostcaddy: el pool bot no expulsa replicas por co
   "caddy_no_status_ejection"
 check "Caddyfile.production y .hostcaddy: el pool bot deja pasar el 503 + Retry-After de Ktor (sin reintentos por respuesta, lb_try_duration 1..5 s) (CERT-LOAD-1000)" \
   "caddy_bot_passes_busy"
-check "Caddyfile.production y .hostcaddy: el pool bot recibe el cuerpo entero en Caddy antes de Ktor (request_buffers 2MB, revision 2026-10-22)" \
+check "Caddyfile.production y .hostcaddy: el pool bot recibe el cuerpo entero en Caddy antes de Ktor (request_body 3MB + request_buffers 3MB, revision 2026-10-22)" \
   "caddy_bot_buffers_body"
+check "compose.production: los dos Ktor bot cortan a Supabase a los 10 s (cabe una escritura antes del borde, revision 2026-10-22)" "bot_upstream_timeout"
 check "compose.production: GC explicito y log de GC en los tres Ktor (CERT-LOAD-1000)" "jvm_gc_explicit"
 check "backend.bot.env.example: mandos de admision, plazo y cache de perfil documentados (CERT-LOAD-1000)" "admission_knobs_documented"
 check "Caddyfile.production: el log de acceso no registra Authorization ni cookies" \

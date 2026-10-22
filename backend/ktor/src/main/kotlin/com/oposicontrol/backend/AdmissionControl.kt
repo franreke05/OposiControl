@@ -227,9 +227,30 @@ internal object UpstreamDeadlineGuard {
 
     private val READ_OPERATIONS = setOf("GET", "COUNT", "PAGE", "SIGN", "SIGN_BATCH")
 
+    /**
+     * RPC de SOLO LECTURA (revision OposiControl 2026-10-22): se tratan como lecturas (no esperan al presupuesto de escritura
+     * y no marcan el punto sin retorno). Todas son `stable` en su ultima migracion (Postgres no deja escribir en una funcion
+     * `stable`), salvo las de [READ_ONLY_RPC_EXCEPTIONS]. Lo vigila AdmissionReadOnlyRpcTest contra supabase/migrations.
+     */
+    internal val READ_ONLY_RPCS = setOf(
+        "app_server_now",
+        "app_foro_list", "app_foro_categorias", "app_foro_post", "app_foro_comments", "app_foro_image_status",
+        "app_stats_summary", "app_stats_weaknesses", "app_stats_difficulty",
+        "app_ranking_me", "app_referral_list", "app_referral_get",
+        "app_list_saved", "app_saved_state", "app_get_streak", "app_my_exams_collection",
+        "app_plan_catalog", "app_plan_quota", "app_store_entitlements",
+        "app_get_daily_challenge", "app_challenge_resource", "app_legacy_daily_challenge",
+    )
+
+    /**
+     * Lecturas que NO son `stable` en SQL: las dos del reto no escriben nada; `app_referral_get` crea una sola vez el codigo
+     * de invitacion del usuario (idempotente, con cerrojo por usuario), asi que repetirla tras un 503/504 no cambia nada.
+     */
+    internal val READ_ONLY_RPC_EXCEPTIONS = setOf("app_get_daily_challenge", "app_challenge_resource", "app_referral_get")
+
     private fun rpcName(path: String): String? = path.substringBefore('?').substringAfter("/rest/v1/rpc/", "").takeIf { it.isNotEmpty() }
 
-    fun isRead(operation: String): Boolean = operation in READ_OPERATIONS
+    fun isRead(operation: String, path: String = ""): Boolean = operation in READ_OPERATIONS || rpcName(path) in READ_ONLY_RPCS
 
     /**
      * Antes de empezar una llamada: lanza 503 SERVER_BUSY si el plazo vencio sin haber escrito nada; devuelve el timeout
@@ -240,7 +261,7 @@ internal object UpstreamDeadlineGuard {
         if (rpcName(path) in ALWAYS_ALLOWED_RPCS || state.committed) return defaultTimeoutMs
         val remaining = state.remainingMillis()
         if (remaining <= 0) throw deadlineExceeded("before_upstream")
-        if (isRead(operation)) return minOf(defaultTimeoutMs, remaining)
+        if (isRead(operation, path)) return minOf(defaultTimeoutMs, remaining)
         // Escritura antes del punto sin retorno: solo empieza si su timeout entero cabe antes del corte del borde. Si no,
         // 503 sin haber escrito nada (reintentable con la misma Idempotency-Key) en vez de un 504 con la escritura aplicada.
         val writeRemaining = state.writeRemainingMillis()
@@ -251,16 +272,16 @@ internal object UpstreamDeadlineGuard {
     /** Despues de una llamada correcta: una escritura de negocio marca el punto sin retorno. */
     fun afterSuccess(operation: String, path: String) {
         val state = RequestDeadline.current() ?: return
-        if (isRead(operation)) return
+        if (isRead(operation, path)) return
         val rpc = rpcName(path)
         if (rpc in NON_COMMITTING_RPCS || rpc in ALWAYS_ALLOWED_RPCS) return
         state.markCommitted()
     }
 
     /** Una LECTURA cortada por el plazo (no por el timeout normal) es SERVER_BUSY, no un 500. */
-    fun timedOutByDeadline(operation: String): Boolean {
+    fun timedOutByDeadline(operation: String, path: String = ""): Boolean {
         val state = RequestDeadline.current() ?: return false
-        return isRead(operation) && !state.committed && state.remainingMillis() <= 0
+        return isRead(operation, path) && !state.committed && state.remainingMillis() <= 0
     }
 
     fun deadlineExceeded(stage: String): BackendDomainException {

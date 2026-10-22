@@ -121,8 +121,10 @@ mutate "Caddyfile vuelve a la salud pasiva max_fails en el pool bot (CERT-LOAD-1
 mutate "Caddyfile vuelve a la salud pasiva fail_duration en el pool bot (CERT-LOAD-1000)" $CF 's/^\t\t\t\tlb_try_interval 250ms$/&\n\t\t\t\tfail_duration 10s/' "no expulsa replicas por codigo de estado"
 mutate "Caddyfile.hostcaddy vuelve a la salud pasiva en el pool bot (CERT-LOAD-1000)" ops/caddy/Caddyfile.hostcaddy 's/^\t\t\t\tlb_try_interval 250ms$/&\n\t\t\t\tfail_duration 10s\n\t\t\t\tmax_fails 2/' "no expulsa replicas por codigo de estado"
 # Revision 2026-10-22: sin buffer de cuerpo, POST lentos agotan la admision.
-mutate "Caddyfile quita request_buffers del pool bot" $CF '/^\t\t\t\trequest_buffers 2MB$/d' "recibe el cuerpo entero"
-mutate "Caddyfile.hostcaddy quita request_buffers del pool bot" ops/caddy/Caddyfile.hostcaddy '/^\t\t\t\trequest_buffers 2MB$/d' "recibe el cuerpo entero"
+mutate "Caddyfile quita request_buffers del pool bot" $CF '/^\t\t\t\trequest_buffers 3MB$/d' "recibe el cuerpo entero"
+mutate "Caddyfile.hostcaddy quita request_buffers del pool bot" ops/caddy/Caddyfile.hostcaddy '/^\t\t\t\trequest_buffers 3MB$/d' "recibe el cuerpo entero"
+mutate "Caddyfile quita el tope de 3MB del pool bot" $CF '/^				max_size 3MB$/d' "recibe el cuerpo entero"
+mutate "compose.production vuelve a 20 s a Supabase en el bot" ops/deploy/compose.production.yaml 's/BOT_UPSTREAM_REQUEST_TIMEOUT_MS:-10000/BOT_UPSTREAM_REQUEST_TIMEOUT_MS:-20000/' "cortan a Supabase a los 10 s"
 # CERT-LOAD-1000: el 503 SERVER_BUSY + Retry-After de Ktor no se reintenta ni se reescribe en el borde.
 mutate "Caddyfile reintenta respuestas en el pool bot (CERT-LOAD-1000)" $CF 's/^\t\t\t\tlb_try_interval 250ms$/&\n\t\t\t\tlb_retry_match {\n\t\t\t\t\tmethod POST\n\t\t\t\t}/' "deja pasar el 503"
 mutate "Caddyfile con lb_try_duration largo en el pool bot (CERT-LOAD-1000)" $CF 's/^\t\t\t\tlb_try_duration 3s$/\t\t\t\tlb_try_duration 30s/' "deja pasar el 503"

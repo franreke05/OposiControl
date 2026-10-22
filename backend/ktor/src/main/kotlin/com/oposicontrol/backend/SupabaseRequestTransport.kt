@@ -249,6 +249,8 @@ class SupabaseRequestTransport internal constructor(
         val body = """{"id":"$bucket","name":"$bucket","public":$isPublic}"""
         val builder = newAbsoluteBuilder(absoluteUrl = "$baseUrl/storage/v1/bucket", scope = SupabaseAuthScope.Elevated)
             .header("Content-Type", "application/json")
+        // Revision 2026-10-22: Storage tambien pasa por el plazo (crear el bucket es idempotente: no marca el punto sin retorno).
+        UpstreamDeadlineGuard.beforeCall("POST", "/storage/v1/bucket", UPSTREAM_REQUEST_TIMEOUT.toMillis())
         val response = try {
             client.send(
                 builder.POST(HttpRequest.BodyPublishers.ofString(body)).build(),
@@ -284,6 +286,7 @@ class SupabaseRequestTransport internal constructor(
         val builder = newAbsoluteBuilder(absoluteUrl = url, scope = SupabaseAuthScope.Elevated)
             .header("Content-Type", contentType)
         if (upsert) builder.header("x-upsert", "true")
+        UpstreamDeadlineGuard.beforeCall("PUT", url, UPSTREAM_REQUEST_TIMEOUT.toMillis())
         val response = try {
             client.send(
                 builder.POST(HttpRequest.BodyPublishers.ofByteArray(bytes)).build(),
@@ -322,6 +325,7 @@ class SupabaseRequestTransport internal constructor(
     fun storageDelete(bucket: String, objectPath: String): Boolean {
         val url = "$baseUrl/storage/v1/object/$bucket/${encodeObjectPath(objectPath)}"
         val builder = newAbsoluteBuilder(absoluteUrl = url, scope = SupabaseAuthScope.Elevated)
+        UpstreamDeadlineGuard.beforeCall("DELETE", url, UPSTREAM_REQUEST_TIMEOUT.toMillis())
         val response = try {
             client.send(builder.DELETE().build(), HttpResponse.BodyHandlers.ofString())
         } catch (error: Exception) {
@@ -464,7 +468,7 @@ class SupabaseRequestTransport internal constructor(
             }
             client.send(effective, HttpResponse.BodyHandlers.ofString())
         } catch (error: Exception) {
-            if (error is java.net.http.HttpTimeoutException && UpstreamDeadlineGuard.timedOutByDeadline(operation)) {
+            if (error is java.net.http.HttpTimeoutException && UpstreamDeadlineGuard.timedOutByDeadline(operation, path)) {
                 throw UpstreamDeadlineGuard.deadlineExceeded("upstream_read")
             }
             throw IllegalStateException(

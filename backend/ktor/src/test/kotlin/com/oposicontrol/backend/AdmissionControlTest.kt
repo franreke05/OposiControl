@@ -285,6 +285,44 @@ class AdmissionControlTest {
     }
 
     @Test
+    fun readOnlyRpcsStillRunWithoutWriteBudgetNeverCommitAndStorageWritesAreGatedLikeAnyWrite() {
+        val upstream = Upstream()
+        val transport = upstream.transport()
+        val nowNanos = AtomicNanos(System.nanoTime())
+        // Plazo vivo, sin presupuesto de escritura (el caso del foro: image_status y despues la subida).
+        val state = DeadlineState(
+            deadlineNanos = nowNanos.value + TimeUnit.SECONDS.toNanos(5),
+            writeEndNanos = nowNanos.value,
+        ) { nowNanos.value }
+        RequestDeadline.runWith(state) {
+            transport.rpc("app_foro_image_status", "{}")
+            transport.rpc("app_stats_summary", "{}")
+            assertEquals(false, state.committed, "una RPC de lectura no fija el punto sin retorno")
+            val put = assertFailsWith<BackendDomainException> {
+                transport.storagePut("foro", "u/img.webp", ByteArray(4), "image/webp")
+            }
+            assertEquals("SERVER_BUSY", put.errorCode)
+            val delete = assertFailsWith<BackendDomainException> { transport.storageDelete("foro", "u/img.webp") }
+            assertEquals("SERVER_BUSY", delete.errorCode)
+            val commit = assertFailsWith<BackendDomainException> { transport.rpc("app_foro_image_commit", "{}") }
+            assertEquals("SERVER_BUSY", commit.errorCode)
+        }
+        assertEquals(listOf("POST /rest/v1/rpc/app_foro_image_status", "POST /rest/v1/rpc/app_stats_summary"), upstream.paths)
+    }
+
+    @Test
+    fun aStorageUploadThatFitsIsAWriteAndMarksTheNoReturnPoint() {
+        val upstream = Upstream()
+        val transport = upstream.transport()
+        val state = DeadlineState(
+            deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(5),
+            writeEndNanos = System.nanoTime() + UPSTREAM_REQUEST_TIMEOUT.toNanos() + TimeUnit.SECONDS.toNanos(1),
+        )
+        RequestDeadline.runWith(state) { transport.storagePut("foro", "u/img.webp", ByteArray(4), "image/webp") }
+        assertEquals(true, state.committed)
+    }
+
+    @Test
     fun theEdgeBudgetMustLeaveRoomForAWriteOrStartupFails() {
         assertFailsWith<IllegalArgumentException> { AdmissionSettings(deadlineMs = 15_000, edgeTimeoutMs = 15_000) }
         assertEquals(24_000L, AdmissionSettings().writeBudgetMs)

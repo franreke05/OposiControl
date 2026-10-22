@@ -115,6 +115,7 @@ Todos los valores por defecto salen de la medicion LOCAL y hay que re-medirlos e
 | `BOT_ADMISSION_RETRY_AFTER_SECONDS` | 2 | `Retry-After` enviado: base..2*base (fluctuacion contra reintentos sincronizados). |
 | `BOT_REQUEST_DEADLINE_MS` | 15000 | Plazo total por peticion (cola incluida), menor que `response_header_timeout 25s` del borde. |
 | `BOT_EDGE_TIMEOUT_MS` | 25000 | Corte del borde (Caddy). Una escritura de negocio solo empieza si `UPSTREAM_REQUEST_TIMEOUT_MS` cabe antes de el menos 1 s; si no, 503 `SERVER_BUSY` sin escribir (sin escrituras fantasma). Revision OposiControl 2026-10-22. |
+| `UPSTREAM_REQUEST_TIMEOUT_MS` (bot, compose `BOT_UPSTREAM_REQUEST_TIMEOUT_MS`) | 10000 | Timeout a Supabase en el perfil bot (control sigue en 20000). Con 10 s una escritura cabe hasta el segundo 14 de la peticion. Revision 2026-10-22. |
 | `PROFILE_IDENTITY_CACHE_TTL_MS` | 30000 (0 = off, max 120000) | Cache del estado de cuenta (`CachingCanonicalProfileDirectory`). |
 
 * **Admision**: semaforo justo + cola acotada, en la fase `Plugins` (despues de la correlacion y de StatusPages). Exentas `/health*` y

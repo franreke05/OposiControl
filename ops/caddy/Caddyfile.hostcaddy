@@ -35,6 +35,7 @@ api.oposibots.es {
 	header X-Request-Id {http.request.uuid}
 	@bounded {
 		not header Content-Type multipart/*
+		not path_regexp ^/api/v1/app/oposired/imagenes/[A-Za-z0-9_-]+/contenido$
 	}
 	request_body @bounded {
 		max_size 2MB
@@ -62,12 +63,15 @@ api.oposibots.es {
 		}
 		@bot path /v1/auth/* /v1/especialidades /v1/examenes /v1/examenes/* /api/v1/app /api/v1/app/* /api/v1/webhooks/payments/* /api/v1/webhooks/store/*
 		handle @bot {
+			request_body {
+				max_size 3MB
+			}
 			reverse_proxy 127.0.0.1:18081 127.0.0.1:18082 {
 				lb_policy least_conn
 				lb_retries 2
 				lb_try_duration 3s
 				lb_try_interval 250ms
-				request_buffers 2MB
+				request_buffers 3MB
 				header_up X-Forwarded-For {remote_host}
 				header_up X-Request-Id {http.request.uuid}
 				health_uri /health/live

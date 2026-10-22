@@ -11,6 +11,8 @@
 #   }
 @bounded {
     not header Content-Type multipart/*
+    # Imagen del foro (D5-31): hasta 3 MB, acotada por el pool bot de Caddy y por su ruta en Ktor.
+    not path_regexp ^/api/v1/app/oposired/imagenes/[A-Za-z0-9_-]+/contenido$
 }
 request_body @bounded {
     max_size 2MB

@@ -36,6 +36,7 @@ internal val RequestBodyLimit = createApplicationPlugin("RequestBodyLimit") {
         if (declared <= REQUEST_BODY_MAX_BYTES) return@onCall
         if (call.request.contentType().match(ContentType.MultiPart.Any)) return@onCall
         if (isAuthPlanePath(call.request.path())) return@onCall
+        if (isForoImageContentPath(call.request.path())) return@onCall
         throw PayloadTooLargeException(REQUEST_BODY_MAX_BYTES)
     }
 }
@@ -47,6 +48,15 @@ internal val RequestBodyLimit = createApplicationPlugin("RequestBodyLimit") {
  */
 internal fun isAuthPlanePath(path: String): Boolean =
     path.startsWith(AUTH_PLANE_PATH_PREFIX) && '%' !in path && path.split('/').none { it == "." || it == ".." }
+
+/**
+ * Subida de la imagen del foro (D5-31, `PUT /api/v1/app/oposired/imagenes/{id}/contenido`): su ruta acota el cuerpo a
+ * [ForoImageSanitizer.MAX_BYTES] (3 MB, 422 IMAGE_REJECTED), por encima del tope global de 2 MB que la hacia 413. Solo la ruta
+ * literal (id sin `/`, `.`, `%`); el borde (Caddy, pool bot) corta en 3 MB.
+ */
+private val FORO_IMAGE_CONTENT_PATH = Regex("^/api/v1/app/oposired/imagenes/[A-Za-z0-9_-]{1,64}/contenido$")
+
+internal fun isForoImageContentPath(path: String): Boolean = FORO_IMAGE_CONTENT_PATH.matches(path)
 
 internal fun Application.installRequestBodyLimit() {
     install(RequestBodyLimit)
