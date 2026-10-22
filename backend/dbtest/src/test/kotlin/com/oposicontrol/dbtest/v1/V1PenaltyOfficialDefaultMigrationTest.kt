@@ -1,6 +1,7 @@
 package com.oposicontrol.dbtest.v1
 
 import com.oposicontrol.dbtest.ejecutar
+import com.oposicontrol.dbtest.slice0.Slice0Db
 import com.oposicontrol.dbtest.slice0.filas
 import com.oposicontrol.dbtest.unico
 import java.sql.Connection
@@ -115,6 +116,39 @@ class V1PenaltyOfficialDefaultMigrationTest {
         c.ejecutar("update public.examenes set es_oficial = false where id = '$plain'")
         c.ejecutar("update public.examenes set es_oficial = true, penalizacion_num = 0, penalizacion_den = 1 where id = '$plain'")
         assertEquals("true|false|0|1", c.examRule(plain), "explicit change to 0/1 kept, no default on top")
+        // Control P3 (1): an explicit SET to the SAME value is explicit too (column trigger on the SET list, not a value comparison)
+        c.ejecutar("update public.examenes set es_oficial = false where id = '$plain'")
+        c.ejecutar("update public.examenes set es_oficial = true, penalizacion_racional = false where id = '$plain'")
+        assertEquals("true|false|0|1", c.examRule(plain), "explicit SET false with the value unchanged: no default on top")
+        // the mark of one statement never leaks into a later one of the same transaction
+        c.autoCommit = false
+        try {
+            c.ejecutar("update public.examenes set es_oficial = false where id = '$plain'")
+            c.ejecutar("update public.examenes set penalizacion_num = 0 where id = '$plain'")
+            c.ejecutar("update public.examenes set es_oficial = true where id = '$plain'")
+            assertEquals("true|true|0|1", c.examRule(plain), "a later plain switch in the same transaction still gets the default")
+            c.commit()
+        } finally {
+            c.autoCommit = true
+        }
+    }
+
+    @Test
+    fun theVerifyBlockProvesTheEndStateAndTheRollbackKeepsTheData() = V1Db.escenario { c ->
+        c.ejecutar(seed)
+        val verify = Slice0Db.verifyDe("supabase/migrations/$migration.sql")
+        val rows = c.filas(verify)
+        assertEquals(true, rows.size >= 8, "VERIFY rows: $rows")
+        assertEquals(emptyList(), rows.filter { it[1] != "0" }, "every VERIFY counter is 0")
+        c.ejecutar(
+            """insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, titulo, tipo_examen, tipo_acceso, activo, es_oficial)
+               values ('e5b00000-0000-0000-0000-000000000003', 'V1P-3', '$esp', '$com', 'Nuevo oficial', 'rafaga', 'gratuito', false, true)""",
+        )
+        c.ejecutar(Slice0Db.rollbackDe("supabase/migrations/$migration.sql"))
+        assertEquals("true|true|0|1", c.examRule("e5b00000-0000-0000-0000-000000000003"), "documented: a rollback leaves the defaulted penalty on")
+        assertEquals("0", c.unico("select count(*) from pg_trigger where tgname in ('trg_examenes_penalty_official_default', 'trg_examenes_penalty_explicit_mark')"))
+        // after the rollback the VERIFY detects the missing end state
+        assertEquals(true, c.filas(verify).any { it[1] != "0" }, "VERIFY fails without the migration")
     }
 
     @Test

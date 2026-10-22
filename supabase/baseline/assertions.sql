@@ -2461,6 +2461,16 @@ begin
   update public.examenes set es_oficial = false where id = pg_temp.ex(19);
   update public.examenes set es_oficial = true, penalizacion_num = 0, penalizacion_den = 1 where id = pg_temp.ex(19);
   assert (select not penalizacion_racional and penalizacion_num = 0 from public.examenes where id = pg_temp.ex(19)), 'an explicit change to 0/1 in the same statement: no default on top';
+  -- an explicit SET to the SAME value (false, already false) is still an explicit setting (column trigger on the SET list, not a value comparison)
+  update public.examenes set es_oficial = false where id = pg_temp.ex(19);
+  update public.examenes set es_oficial = true, penalizacion_racional = false where id = pg_temp.ex(19);
+  assert (select not penalizacion_racional and penalizacion_num = 0 from public.examenes where id = pg_temp.ex(19)), 'explicit SET penalizacion_racional = false (unchanged value): no default on top';
+  -- the explicit mark of one statement never leaks into a later statement of the same transaction
+  update public.examenes set es_oficial = false where id = pg_temp.ex(19);
+  update public.examenes set penalizacion_num = 0 where id = pg_temp.ex(19);
+  update public.examenes set es_oficial = true where id = pg_temp.ex(19);
+  assert (select penalizacion_racional from public.examenes where id = pg_temp.ex(19)), 'a later plain switch to official still gets the default';
+  assert coalesce(current_setting('app.penalty_explicit', true), '') = '', 'the transaction-local mark is cleared';
   update public.examenes set es_oficial = false where id = pg_temp.ex(18);
   update public.examenes set es_oficial = true where id = pg_temp.ex(18);
   assert (select penalizacion_racional from public.examenes where id = pg_temp.ex(18)), 'an exam that already has the penalty keeps it';
