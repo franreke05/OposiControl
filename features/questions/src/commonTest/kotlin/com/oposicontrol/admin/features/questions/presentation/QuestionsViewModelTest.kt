@@ -16,12 +16,15 @@ import com.oposicontrol.admin.domain.model.QuestionOption
 import com.oposicontrol.admin.domain.model.QuestionPage
 import com.oposicontrol.admin.domain.model.QuestionResource
 import com.oposicontrol.admin.domain.model.QuestionResourceType
+import com.oposicontrol.admin.domain.model.QuestionTag
+import com.oposicontrol.admin.domain.model.Tag
 import com.oposicontrol.admin.domain.model.QuestionType
 import com.oposicontrol.admin.domain.repository.QuestionActiveFilter
 import com.oposicontrol.admin.domain.repository.QuestionResourceDraft
 import com.oposicontrol.admin.domain.repository.QuestionResourceFile
 import com.oposicontrol.admin.domain.repository.QuestionResourceKind
 import com.oposicontrol.admin.domain.repository.QuestionsRepository
+import com.oposicontrol.admin.domain.repository.TagsRepository
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -88,11 +91,13 @@ class QuestionsViewModelTest {
         repository: FakeQuestionsRepository,
         exams: List<Exam> = listOf(exam),
         content: FakeContentRepository = FakeContentRepository(exams),
+        tags: FakeTagsRepository = FakeTagsRepository(),
     ): QuestionsViewModel {
         return QuestionsViewModel(
             dispatcherProvider = TestDispatcherProvider(StandardTestDispatcher(testScheduler)),
             questionsRepository = repository,
             contentRepository = content,
+            tagsRepository = tags,
         )
     }
 
@@ -917,6 +922,173 @@ class QuestionsViewModelTest {
         val failure = assertIs<UiAsync.Error>(viewModel.state.value.resourceSaveState)
         assertEquals(QUESTION_RESOURCES_STALE_NOTE, failure.error.message)
     }
+
+    // -----------------------------------------------------------------------
+    // Etiquetas (temas)
+    // -----------------------------------------------------------------------
+
+    private val tagConst = Tag(id = "t-const", name = "Constitución", slug = "constitucion", origin = "manual")
+    private val tagAdmin = Tag(id = "t-admin", name = "Derecho administrativo", slug = "derecho-administrativo", origin = "manual")
+    private val tagOld = Tag(id = "t-old", name = "Antigua", slug = "antigua", origin = "manual", active = false)
+
+    private fun TestScope.selectedWithTags(
+        repository: FakeQuestionsRepository,
+        tags: FakeTagsRepository = FakeTagsRepository(refreshResult = AppResult.Success(listOf(tagConst, tagAdmin, tagOld))),
+    ): QuestionsViewModel {
+        val viewModel = buildViewModel(repository, tags = tags)
+        advanceUntilIdle()
+        viewModel.dispatch(QuestionsIntent.SelectQuestion("q-1"))
+        advanceUntilIdle()
+        return viewModel
+    }
+
+    @Test
+    fun selectingAQuestionLoadsItsTagsAndOnlyActiveCatalogTagsAreOffered() = runTest {
+        val repository = FakeQuestionsRepository(
+            detailResult = AppResult.Success(detail()),
+            questionTagsResult = AppResult.Success(listOf(QuestionTag(id = "t-const", name = "Constitución"))),
+        )
+        val viewModel = selectedWithTags(repository)
+
+        val state = viewModel.state.value
+        assertEquals(listOf("q-1"), repository.listedTagsFor)
+        assertEquals(listOf("t-const"), state.draftTagIds)
+        assertTrue(state.canEditTags())
+        assertFalse(state.tagsDirty())
+        // La desactivada no se ofrece; la ya elegida tampoco.
+        assertEquals(listOf("t-admin"), state.addableTags().map { it.id })
+    }
+
+    @Test
+    fun addingAndRemovingTagsOnlyEditsTheSelectionUntilSaved() = runTest {
+        val repository = FakeQuestionsRepository(
+            detailResult = AppResult.Success(detail()),
+            questionTagsResult = AppResult.Success(listOf(QuestionTag(id = "t-const", name = "Constitución"))),
+            setTagsResult = { ids -> AppResult.Success(ids.map { QuestionTag(id = it, name = it) }) },
+        )
+        val viewModel = selectedWithTags(repository)
+
+        viewModel.dispatch(QuestionsIntent.AddQuestionTag("t-admin"))
+        viewModel.dispatch(QuestionsIntent.RemoveQuestionTag("t-const"))
+        advanceUntilIdle()
+        assertEquals(listOf("t-admin"), viewModel.state.value.draftTagIds)
+        assertTrue(viewModel.state.value.tagsDirty())
+        assertTrue(repository.savedTagSets.isEmpty(), "nada viaja hasta pulsar Guardar etiquetas")
+        // Las etiquetas no ensucian el borrador de la pregunta: tienen su propio guardado.
+        assertFalse(viewModel.state.value.dirty)
+
+        viewModel.dispatch(QuestionsIntent.SaveQuestionTags)
+        advanceUntilIdle()
+
+        assertEquals(listOf("q-1" to listOf("t-admin")), repository.savedTagSets)
+        val state = viewModel.state.value
+        assertIs<UiAsync.Success<Unit>>(state.tagsSaveState)
+        assertEquals(listOf("t-admin"), (state.questionTags as UiAsync.Success).value.map { it.id })
+        assertFalse(state.tagsDirty())
+    }
+
+    @Test
+    fun aFailedTagSaveKeepsTheSelectionAndSaysWhy() = runTest {
+        val repository = FakeQuestionsRepository(
+            detailResult = AppResult.Success(detail()),
+            setTagsResult = { AppResult.Failure(AppError.Validation("Estas etiquetas no existen o están desactivadas: x.")) },
+        )
+        val viewModel = selectedWithTags(repository)
+
+        viewModel.dispatch(QuestionsIntent.AddQuestionTag("t-const"))
+        viewModel.dispatch(QuestionsIntent.SaveQuestionTags)
+        advanceUntilIdle()
+
+        val state = viewModel.state.value
+        val error = assertIs<UiAsync.Error>(state.tagsSaveState)
+        assertTrue(error.error.message.contains("desactivadas"), error.error.message)
+        assertEquals(listOf("t-const"), state.draftTagIds)
+        assertTrue(state.tagsDirty())
+        assertEquals(Pair(error.error.message, true), questionTagsSaveMessage(state))
+    }
+
+    @Test
+    fun theSelectionStopsAtTheServerMaximum() = runTest {
+        val catalog = (1..21).map { Tag(id = "t-$it", name = "Tema $it", slug = "tema-$it", origin = "manual") }
+        val viewModel = selectedWithTags(
+            FakeQuestionsRepository(detailResult = AppResult.Success(detail())),
+            tags = FakeTagsRepository(refreshResult = AppResult.Success(catalog)),
+        )
+
+        catalog.forEach { viewModel.dispatch(QuestionsIntent.AddQuestionTag(it.id)) }
+        advanceUntilIdle()
+
+        val state = viewModel.state.value
+        assertEquals(QUESTION_TAGS_MAX, state.draftTagIds.size)
+        assertIs<UiAsync.Error>(state.tagsSaveState)
+    }
+
+    @Test
+    fun creatingATagAddsItToTheCatalogAndToTheSelectionWithoutSavingTheQuestionTags() = runTest {
+        val created = Tag(id = "t-new", name = "Igualdad", slug = "igualdad", origin = "manual")
+        val tags = FakeTagsRepository(
+            refreshResult = AppResult.Success(listOf(tagConst)),
+            upsertResult = { AppResult.Success(created) },
+        )
+        val repository = FakeQuestionsRepository(detailResult = AppResult.Success(detail()))
+        val viewModel = selectedWithTags(repository, tags)
+
+        viewModel.dispatch(QuestionsIntent.RequestCreateTag)
+        viewModel.dispatch(QuestionsIntent.UpdateNewTagName("  Igualdad "))
+        viewModel.dispatch(QuestionsIntent.ConfirmCreateTag)
+        advanceUntilIdle()
+
+        // Sólo el nombre: el slug lo deriva el servidor.
+        assertEquals(listOf(Tag(id = "", name = "Igualdad", slug = "", origin = "manual")), tags.upserted)
+        val state = viewModel.state.value
+        assertFalse(state.showCreateTagDialog)
+        assertEquals(listOf("t-new"), state.draftTagIds)
+        assertEquals(listOf(QuestionTagChip("t-new", "Igualdad", active = true)), state.selectedTagChips())
+        assertTrue(state.tagsDirty())
+        assertTrue(repository.savedTagSets.isEmpty())
+    }
+
+    @Test
+    fun creatingATagWithoutNameOrWithAnExistingNameDoesNotCallTheServer() = runTest {
+        val tags = FakeTagsRepository(refreshResult = AppResult.Success(listOf(tagConst)))
+        val viewModel = selectedWithTags(FakeQuestionsRepository(detailResult = AppResult.Success(detail())), tags)
+
+        viewModel.dispatch(QuestionsIntent.RequestCreateTag)
+        viewModel.dispatch(QuestionsIntent.UpdateNewTagName("   "))
+        viewModel.dispatch(QuestionsIntent.ConfirmCreateTag)
+        advanceUntilIdle()
+        assertIs<UiAsync.Error>(viewModel.state.value.createTagState)
+        assertTrue(viewModel.state.value.showCreateTagDialog)
+
+        viewModel.dispatch(QuestionsIntent.UpdateNewTagName("constitución"))
+        viewModel.dispatch(QuestionsIntent.ConfirmCreateTag)
+        advanceUntilIdle()
+
+        assertTrue(tags.upserted.isEmpty(), "una etiqueta con ese nombre ya existe: se reutiliza")
+        assertEquals(listOf("t-const"), viewModel.state.value.draftTagIds)
+        assertFalse(viewModel.state.value.showCreateTagDialog)
+    }
+
+    @Test
+    fun aNewQuestionCannotBeTaggedAndTagsFailingToLoadIsAnError() = runTest {
+        val repository = FakeQuestionsRepository(
+            detailResult = AppResult.Success(detail()),
+            questionTagsResult = AppResult.Failure(AppError.Validation("boom")),
+        )
+        val viewModel = selectedWithTags(repository)
+        assertIs<UiAsync.Error>(viewModel.state.value.questionTags)
+        assertFalse(viewModel.state.value.canEditTags())
+
+        viewModel.dispatch(QuestionsIntent.StartCreate)
+        advanceUntilIdle()
+        assertEquals(UiAsync.Idle, viewModel.state.value.questionTags)
+        assertFalse(viewModel.state.value.canEditTags())
+
+        viewModel.dispatch(QuestionsIntent.SaveQuestionTags)
+        advanceUntilIdle()
+        assertTrue(repository.savedTagSets.isEmpty())
+        assertIs<UiAsync.Error>(viewModel.state.value.tagsSaveState)
+    }
 }
 
 /**
@@ -1007,6 +1179,8 @@ private class FakeQuestionsRepository(
     private val uploadResourceResult: AppResult<QuestionResource>? = null,
     private val deleteResourceResult: AppResult<QuestionResource>? = null,
     private val resourcesResult: AppResult<List<QuestionResource>> = AppResult.Success(emptyList()),
+    private val questionTagsResult: AppResult<List<QuestionTag>> = AppResult.Success(emptyList()),
+    private val setTagsResult: ((List<String>) -> AppResult<List<QuestionTag>>)? = null,
 ) : QuestionsRepository {
     /** Cada consulta que ha llegado, en orden: lo que el ViewModel pidió de verdad. */
     val queries = mutableListOf<QuestionListQuery>()
@@ -1083,6 +1257,21 @@ private class FakeQuestionsRepository(
         unlinkCallCount += 1
         unlinked += questionId to examId
         return unlinkResult ?: AppResult.Failure(AppError.Validation("no unlink configured"))
+    }
+
+    // --- Etiquetas ---
+
+    val listedTagsFor = mutableListOf<String>()
+    val savedTagSets = mutableListOf<Pair<String, List<String>>>()
+
+    override suspend fun getQuestionTags(questionId: String): AppResult<List<QuestionTag>> {
+        listedTagsFor += questionId
+        return questionTagsResult
+    }
+
+    override suspend fun setQuestionTags(questionId: String, tagIds: List<String>): AppResult<List<QuestionTag>> {
+        savedTagSets += questionId to tagIds
+        return setTagsResult?.invoke(tagIds) ?: AppResult.Failure(AppError.Validation("no set tags configured"))
     }
 
     // --- Recursos (KQ4) ---
@@ -1187,4 +1376,19 @@ private class FakeContentRepository(
     override suspend fun deleteResource(questionId: String, resourceId: String) = AppResult.Success(Unit)
     override suspend fun uploadExamCover(examId: String, localPathOrUri: String) = AppResult.Failure(AppError.Validation("not used"))
     override suspend fun clearExamCover(examId: String) = AppResult.Failure(AppError.Validation("not used"))
+}
+
+private class FakeTagsRepository(
+    private val refreshResult: AppResult<List<Tag>> = AppResult.Success(emptyList()),
+    private val upsertResult: ((Tag) -> AppResult<Tag>)? = null,
+) : TagsRepository {
+    val upserted = mutableListOf<Tag>()
+
+    override fun observeTags(): Flow<List<Tag>> = MutableStateFlow(emptyList())
+    override suspend fun refreshTags(): AppResult<List<Tag>> = refreshResult
+    override suspend fun upsertTag(tag: Tag): AppResult<Tag> {
+        upserted += tag
+        return upsertResult?.invoke(tag) ?: AppResult.Failure(AppError.Validation("no upsert configured"))
+    }
+    override suspend fun deleteTag(tagId: String): AppResult<Unit> = AppResult.Success(Unit)
 }

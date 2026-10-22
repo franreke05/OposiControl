@@ -4,5 +4,5 @@ import com.oposicontrol.admin.features.questions.presentation.QuestionsViewModel
 import org.koin.dsl.module
 
 val questionsFeatureModule = module {
-    factory { QuestionsViewModel(get(), get(), get()) }
+    factory { QuestionsViewModel(get(), get(), get(), get()) }
 }

@@ -33,6 +33,18 @@ class AppNavigationCatalogTest {
     }
 
     @Test
+    fun tagsHasItsOwnDesktopOnlyContentEntry() {
+        assertEquals(AdminSection.TAGS, AppRoute.Content.Tags.toLegacySection())
+        assertEquals(AppRoute.Content.Tags, AdminSection.TAGS.toAppRoute())
+        val item = itemFor(AppRoute.Content.Tags)
+        assertEquals("content.tags", item.metadata.id)
+        assertEquals("Etiquetas", item.metadata.title)
+        assertEquals(NavigationGroupId.CONTENT, item.metadata.group)
+        assertEquals(true, item.metadata.showInSidebar)
+        assertEquals(NavigationVisibility.DESKTOP_ONLY, item.metadata.visibility)
+    }
+
+    @Test
     fun contentQuestionsAndResourcesStillMapToTheLegacyEditor() {
         assertEquals(AdminSection.QUESTIONS_RESOURCES, AppRoute.Content.Questions.toLegacySection())
         assertEquals(AdminSection.QUESTIONS_RESOURCES, AppRoute.Content.Resources.toLegacySection())

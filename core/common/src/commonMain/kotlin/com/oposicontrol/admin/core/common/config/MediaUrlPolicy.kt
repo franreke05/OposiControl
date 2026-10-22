@@ -13,6 +13,7 @@ import com.oposicontrol.admin.core.common.logging.Logger
  */
 object MediaUrlPolicy {
     private const val PUBLIC_OBJECT_PREFIX = "/storage/v1/object/public/"
+    private const val SIGNED_OBJECT_PREFIX = "/storage/v1/object/sign/"
 
     /** Entry point for the platform actuals: no [AppConfig] (Koin not started) denies everything. */
     fun isAllowedRemoteMedia(url: String, config: AppConfig?, logger: Logger? = null): Boolean {
@@ -27,7 +28,22 @@ object MediaUrlPolicy {
         return allowed
     }
 
-    fun isAllowedRemoteMedia(url: String, supabaseUrl: String, allowInsecureDevHttp: Boolean = false): Boolean {
+    fun isAllowedRemoteMedia(url: String, supabaseUrl: String, allowInsecureDevHttp: Boolean = false): Boolean =
+        isStorageObject(url, supabaseUrl, allowInsecureDevHttp, listOf(PUBLIC_OBJECT_PREFIX))
+
+    /**
+     * Abrir un archivo de Storage FUERA de la app (navegador o reproductor del sistema), nunca descargarlo dentro: lo
+     * usa el «Abrir» de los recursos de pregunta, cuyo bucket es privado y llega con URL FIRMADA de una hora. Mismas
+     * reglas que [isAllowedRemoteMedia] (https, mismo host que `SUPABASE_URL`, sin traversal) y además la ruta firmada.
+     * Cualquier otra URL guardada en la base no se abre.
+     */
+    fun isOpenableStorageObject(url: String, config: AppConfig?): Boolean =
+        config != null && isOpenableStorageObject(url, config.supabaseUrl, config.allowInsecureDevMedia)
+
+    fun isOpenableStorageObject(url: String, supabaseUrl: String, allowInsecureDevHttp: Boolean = false): Boolean =
+        isStorageObject(url, supabaseUrl, allowInsecureDevHttp, listOf(PUBLIC_OBJECT_PREFIX, SIGNED_OBJECT_PREFIX))
+
+    private fun isStorageObject(url: String, supabaseUrl: String, allowInsecureDevHttp: Boolean, prefixes: List<String>): Boolean {
         val allowedAuthority = authorityOf(supabaseUrl.trim(), allowInsecureDevHttp)?.second?.takeIf { it.isNotEmpty() } ?: return false
         val candidate = url.trim()
         if (candidate.any { it.isWhitespace() || it.code < 32 || it.code == 127 || it == '\\' }) return false
@@ -35,7 +51,8 @@ object MediaUrlPolicy {
         if (authority != allowedAuthority) return false
         val rest = candidate.substring(scheme.length + authority.length)
         val path = rest.substringBefore('?').substringBefore('#')
-        if (!path.startsWith(PUBLIC_OBJECT_PREFIX) || path.length == PUBLIC_OBJECT_PREFIX.length) return false
+        val prefix = prefixes.firstOrNull { path.startsWith(it) } ?: return false
+        if (path.length == prefix.length) return false
         val lowered = path.lowercase()
         return !lowered.contains("%2e") && !lowered.contains("%2f") && !lowered.contains("%5c") &&
             path.split('/').none { it == ".." || it == "." }

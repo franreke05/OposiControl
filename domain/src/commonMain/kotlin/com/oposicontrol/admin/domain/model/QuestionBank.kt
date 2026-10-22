@@ -121,3 +121,15 @@ data class QuestionExamLink(
 ) {
     val isPublished: Boolean get() = status.equals("publicado", ignoreCase = true)
 }
+
+/**
+ * Una etiqueta (tema) asignada a una pregunta, tal y como la responde
+ * `GET /preguntas/{id}/etiquetas`. [active] `false` = la etiqueta del catálogo está
+ * desactivada; sigue asignada hasta que alguien la quite.
+ */
+data class QuestionTag(
+    val id: String,
+    val name: String,
+    val colorHex: String? = null,
+    val active: Boolean = true,
+)

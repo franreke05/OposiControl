@@ -94,6 +94,7 @@ GET	/api/v1/admin/preguntas	CONTROL	admin	Admin v1: preguntas	OposiControl
 GET	/api/v1/admin/preguntas/{}	CONTROL	admin	Admin v1: preguntas/{}	OposiControl
 GET	/api/v1/admin/preguntas/{}/etiquetas	CONTROL	admin	Admin v1: etiquetas (temas) de una pregunta	OposiControl
 GET	/api/v1/admin/preguntas/{}/examenes	CONTROL	admin	Admin v1: preguntas/{}/examenes	OposiControl
+GET	/api/v1/admin/preguntas/{}/etiquetas	CONTROL	admin	Admin v1: etiquetas (temas) de una pregunta	OposiControl
 GET	/api/v1/admin/preguntas/{}/recursos	CONTROL	admin	Admin v1: preguntas/{}/recursos	OposiControl
 GET	/api/v1/admin/rankings/global	CONTROL	admin	Admin v1: rankings/global	OposiControl
 GET	/api/v1/admin/rankings/liga/{}	CONTROL	admin	Admin v1: rankings/liga/{}	OposiControl

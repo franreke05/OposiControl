@@ -7,6 +7,7 @@ import com.oposicontrol.admin.domain.model.QuestionExamLink
 import com.oposicontrol.admin.domain.model.QuestionListQuery
 import com.oposicontrol.admin.domain.model.QuestionPage
 import com.oposicontrol.admin.domain.model.QuestionResource
+import com.oposicontrol.admin.domain.model.QuestionTag
 
 /**
  * Qué preguntas quiere el banco: activas, inactivas o las dos.
@@ -152,6 +153,16 @@ interface QuestionsRepository {
 
     /** Quita la pregunta de un examen sin tocarla en el banco (`DELETE /preguntas/{id}/examenes/{examId}`). */
     suspend fun unlinkQuestionFromExam(questionId: String, examId: String): AppResult<List<QuestionExamLink>>
+
+    /** Las etiquetas (temas) asignadas a la pregunta (`GET /preguntas/{id}/etiquetas`). */
+    suspend fun getQuestionTags(questionId: String): AppResult<List<QuestionTag>>
+
+    /**
+     * Fija el CONJUNTO de etiquetas de la pregunta (`PUT /preguntas/{id}/etiquetas`):
+     * el servidor quita las que faltan, añade las nuevas y responde la lista releída.
+     * `emptyList()` las quita todas.
+     */
+    suspend fun setQuestionTags(questionId: String, tagIds: List<String>): AppResult<List<QuestionTag>>
 
     // -----------------------------------------------------------------
     // Recursos de la pregunta (KQ4) — `/preguntas/{id}/recursos…`

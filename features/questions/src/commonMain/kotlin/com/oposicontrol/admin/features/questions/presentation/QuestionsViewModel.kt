@@ -8,8 +8,11 @@ import com.oposicontrol.admin.core.common.result.AppError
 import com.oposicontrol.admin.core.common.result.AppResult
 import com.oposicontrol.admin.domain.model.QuestionDraft
 import com.oposicontrol.admin.domain.model.QuestionType
+import com.oposicontrol.admin.domain.model.Tag
 import com.oposicontrol.admin.domain.repository.ContentRepository
 import com.oposicontrol.admin.domain.repository.QuestionsRepository
+import com.oposicontrol.admin.domain.repository.TagsRepository
+import com.oposicontrol.admin.domain.validation.EtiquetaValidator
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -32,6 +35,8 @@ class QuestionsViewModel(
     dispatcherProvider: DispatcherProvider,
     private val questionsRepository: QuestionsRepository,
     private val contentRepository: ContentRepository,
+    /** Catálogo de etiquetas y alta de una nueva desde el editor; las de la pregunta van por [questionsRepository]. */
+    private val tagsRepository: TagsRepository,
 ) : MviViewModel<QuestionsState, QuestionsIntent>(
     initialState = QuestionsState(),
     dispatcherProvider = dispatcherProvider,
@@ -59,6 +64,7 @@ class QuestionsViewModel(
             }
         }
         scope.launch { refreshCatalogs() }
+        scope.launch { refreshTagCatalog() }
         scope.launch { loadQuestions() }
     }
 
@@ -209,6 +215,28 @@ class QuestionsViewModel(
             QuestionsIntent.DismissDeleteResourceConfirm -> updateState { it.copy(deleteResourceId = null) }
             QuestionsIntent.ConfirmDeleteResource -> deleteResource()
 
+            is QuestionsIntent.AddQuestionTag -> addTagToSelection(intent.tagId)
+            is QuestionsIntent.RemoveQuestionTag -> updateState {
+                it.copy(draftTagIds = it.draftTagIds - intent.tagId, tagsSaveState = UiAsync.Idle)
+            }
+            is QuestionsIntent.UpdateTagSearch -> updateState { it.copy(tagSearch = intent.query) }
+            QuestionsIntent.SaveQuestionTags -> saveQuestionTags()
+            QuestionsIntent.ReloadQuestionTags -> {
+                if (currentState().tagCatalog is UiAsync.Error) refreshTagCatalog()
+                currentState().selectedQuestionId?.takeIf { !currentState().isCreating }?.let { id ->
+                    updateState { it.copy(questionTags = UiAsync.Loading) }
+                    loadQuestionTags(id, selectionGeneration)
+                }
+            }
+            QuestionsIntent.RequestCreateTag -> updateState {
+                it.copy(showCreateTagDialog = true, newTagName = it.tagSearch.trim(), createTagState = UiAsync.Idle)
+            }
+            is QuestionsIntent.UpdateNewTagName -> updateState { it.copy(newTagName = intent.value) }
+            QuestionsIntent.CancelCreateTag -> updateState {
+                it.copy(showCreateTagDialog = false, newTagName = "", createTagState = UiAsync.Idle)
+            }
+            QuestionsIntent.ConfirmCreateTag -> createTag()
+
             QuestionsIntent.RequestCancel -> requestCancel()
             QuestionsIntent.ConfirmCancel -> confirmCancel()
             QuestionsIntent.DismissCancelConfirm -> updateState { it.copy(showCancelConfirm = false) }
@@ -302,6 +330,14 @@ class QuestionsViewModel(
                 resourceSaveState = UiAsync.Idle,
                 deleteResourceId = null,
                 resourceDeleteState = UiAsync.Idle,
+                // Igual que los recursos: sin id no hay a qué colgar etiquetas.
+                questionTags = UiAsync.Idle,
+                draftTagIds = emptyList(),
+                tagSearch = "",
+                tagsSaveState = UiAsync.Idle,
+                showCreateTagDialog = false,
+                newTagName = "",
+                createTagState = UiAsync.Idle,
             )
         }
     }
@@ -331,9 +367,18 @@ class QuestionsViewModel(
                 resourceSaveState = UiAsync.Idle,
                 deleteResourceId = null,
                 resourceDeleteState = UiAsync.Idle,
+                // Las etiquetas también son de LA pregunta.
+                questionTags = UiAsync.Loading,
+                draftTagIds = emptyList(),
+                tagSearch = "",
+                tagsSaveState = UiAsync.Idle,
+                showCreateTagDialog = false,
+                newTagName = "",
+                createTagState = UiAsync.Idle,
             )
         }
         scope.launch { loadExamLinks(id, generation) }
+        scope.launch { loadQuestionTags(id, generation) }
         val result = questionsRepository.getQuestionDetail(id)
         if (generation != selectionGeneration) return
         when (result) {
@@ -373,6 +418,111 @@ class QuestionsViewModel(
                     is AppResult.Success -> UiAsync.Success(result.value)
                 },
             )
+        }
+    }
+
+    // -----------------------------------------------------------------
+    // Etiquetas (temas)
+    // -----------------------------------------------------------------
+
+    /** Sólo las ACTIVAS se ofrecen; un fallo es un fallo, nunca una lista vacía. */
+    private suspend fun refreshTagCatalog() {
+        when (val result = tagsRepository.refreshTags()) {
+            is AppResult.Failure -> updateState { it.copy(tagCatalog = UiAsync.Error(result.error)) }
+            is AppResult.Success -> updateState { it.copy(tagCatalog = loadedCatalog(result.value.filter { tag -> tag.active })) }
+        }
+    }
+
+    /** Las guardadas siembran la selección editable; las de una selección anterior no aterrizan aquí. */
+    private suspend fun loadQuestionTags(questionId: String, generation: Int) {
+        val result = questionsRepository.getQuestionTags(questionId)
+        if (generation != selectionGeneration) return
+        updateState {
+            when (result) {
+                is AppResult.Failure -> it.copy(questionTags = UiAsync.Error(result.error))
+                is AppResult.Success -> it.copy(
+                    questionTags = UiAsync.Success(result.value),
+                    draftTagIds = result.value.map { tag -> tag.id },
+                )
+            }
+        }
+    }
+
+    private fun addTagToSelection(tagId: String) = updateState { state ->
+        when {
+            tagId in state.draftTagIds -> state.copy(tagSearch = "")
+            state.draftTagIds.size >= QUESTION_TAGS_MAX -> state.copy(
+                tagsSaveState = UiAsync.Error(AppError.Validation("Una pregunta admite como máximo $QUESTION_TAGS_MAX etiquetas.")),
+            )
+            else -> state.copy(draftTagIds = state.draftTagIds + tagId, tagSearch = "", tagsSaveState = UiAsync.Idle)
+        }
+    }
+
+    /**
+     * Guarda el CONJUNTO de etiquetas por su ruta, sin reenviar el borrador de la
+     * pregunta. Lo que vuelve del servidor sustituye a lo conocido: es la lista real.
+     */
+    private suspend fun saveQuestionTags() {
+        val state = currentState()
+        val questionId = state.selectedQuestionId
+        if (!state.canEditTags() || questionId.isNullOrBlank()) {
+            return updateState {
+                it.copy(tagsSaveState = UiAsync.Error(AppError.Validation("Guarda la pregunta antes de etiquetarla.")))
+            }
+        }
+        updateState { it.copy(tagsSaveState = UiAsync.Loading) }
+        val result = questionsRepository.setQuestionTags(questionId, state.draftTagIds)
+        updateState {
+            if (it.selectedQuestionId != questionId) return@updateState it
+            when (result) {
+                is AppResult.Failure -> it.copy(tagsSaveState = UiAsync.Error(result.error))
+                is AppResult.Success -> it.copy(
+                    tagsSaveState = UiAsync.Success(Unit),
+                    questionTags = UiAsync.Success(result.value),
+                    draftTagIds = result.value.map { tag -> tag.id },
+                )
+            }
+        }
+    }
+
+    /**
+     * Crea una etiqueta del catálogo (`POST /etiquetas`, el slug lo deriva el servidor)
+     * y la AÑADE a la selección, que se guarda después con «Guardar etiquetas». Si ya
+     * hay una activa con ese nombre, se usa ésa en vez de duplicarla.
+     */
+    private suspend fun createTag() {
+        val state = currentState()
+        val name = state.newTagName.trim()
+        val invalid = when {
+            name.isBlank() -> "La etiqueta necesita un nombre."
+            name.length > EtiquetaValidator.MAX_NAME -> "El nombre no puede superar ${EtiquetaValidator.MAX_NAME} caracteres."
+            else -> null
+        }
+        if (invalid != null) {
+            return updateState { it.copy(createTagState = UiAsync.Error(AppError.Validation(invalid))) }
+        }
+        val existing = (state.tagCatalog as? UiAsync.Success)?.value.orEmpty()
+            .firstOrNull { it.active && it.name.trim().equals(name, ignoreCase = true) }
+        if (existing != null) {
+            updateState { it.copy(showCreateTagDialog = false, newTagName = "", createTagState = UiAsync.Idle) }
+            return addTagToSelection(existing.id)
+        }
+        updateState { it.copy(createTagState = UiAsync.Loading) }
+        when (val result = tagsRepository.upsertTag(Tag(id = "", name = name, slug = "", origin = "manual"))) {
+            is AppResult.Failure -> updateState { it.copy(createTagState = UiAsync.Error(result.error)) }
+            is AppResult.Success -> {
+                val created = result.value
+                updateState {
+                    val catalog = (it.tagCatalog as? UiAsync.Success)?.value.orEmpty()
+                    it.copy(
+                        tagCatalog = UiAsync.Success(catalog.filterNot { tag -> tag.id == created.id } + created),
+                        showCreateTagDialog = false,
+                        newTagName = "",
+                        createTagState = UiAsync.Success(Unit),
+                    )
+                }
+                addTagToSelection(created.id)
+            }
         }
     }
 
@@ -642,8 +792,9 @@ class QuestionsViewModel(
                 if (wasCreating) {
                     // La pregunta ya existe: sus vínculos (el examen inicial, si lo hubo) son del servidor.
                     val generation = ++selectionGeneration
-                    updateState { it.copy(examLinks = UiAsync.Loading) }
+                    updateState { it.copy(examLinks = UiAsync.Loading, questionTags = UiAsync.Loading) }
                     scope.launch { loadExamLinks(detail.id, generation) }
+                    scope.launch { loadQuestionTags(detail.id, generation) }
                 }
                 loadQuestions()
             }

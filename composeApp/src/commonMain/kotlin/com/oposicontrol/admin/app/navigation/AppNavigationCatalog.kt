@@ -116,6 +116,9 @@ val appNavigationGroups: List<AppRouteMenuGroup> = listOf(
             // la búsqueda global —que además necesita la tabla `search_index`,
             // ausente en el proyecto Supabase apuntado—.
             item(AppRoute.Content.Taxonomy, "content.taxonomy", "Especialidades", "Especialidades, comunidades, etiquetas y modos disponibles.", NavigationGroupId.CONTENT, AppIcon.LAYERS.key),
+            // Etiquetas (temas): catálogo CRUD sobre `/api/v1/admin/etiquetas`. Sólo escritorio; también se asignan y
+            // se crean desde el editor de cada pregunta.
+            item(AppRoute.Content.Tags, "content.tags", "Etiquetas", "Etiquetas que clasifican preguntas y contenido.", NavigationGroupId.CONTENT, AppIcon.FILTER.key, NavigationVisibility.DESKTOP_ONLY),
             item(AppRoute.Content.Questions, "content.questions", "Preguntas", "Revisión y edición de preguntas y sus recursos.", NavigationGroupId.CONTENT, AppIcon.QUESTIONS.key),
             item(AppRoute.Content.Imports, "content.imports", "Importación", "Importa preguntas desde PDF, revisa el resultado y publícalo cuando esté listo.", NavigationGroupId.CONTENT, AppIcon.IMPORT.key),
             // Recursos ya vivía dentro de la misma pantalla que Preguntas
@@ -275,6 +278,7 @@ fun AppRoute.toLegacySection(): AdminSection? = when (this) {
     AppRoute.Content.Questions, AppRoute.Content.Resources -> AdminSection.QUESTIONS_RESOURCES
     AppRoute.Content.Imports -> null
     AppRoute.Content.Taxonomy -> AdminSection.SPECIALTIES
+    AppRoute.Content.Tags -> AdminSection.TAGS
     AppRoute.Publication.News -> null
     AppRoute.Publication.NewsTypes -> null
     AppRoute.Publication.Assets -> null

@@ -75,5 +75,5 @@ class KtorTagsRepositoryImpl(
 @Serializable private data class EtiquetasV1Response(val data: List<EtiquetaV1Dto>)
 @Serializable private data class EtiquetaV1Response(val data: EtiquetaV1Dto)
 
-private fun EtiquetaV1Dto.toDomain() = Tag(id = id, name = nombre, slug = slug, origin = "manual")
-private fun Tag.toDto() = EtiquetaV1Dto(id = id, nombre = name, slug = slug)
+private fun EtiquetaV1Dto.toDomain() = Tag(id = id, name = nombre, slug = slug, origin = "manual", active = activa)
+private fun Tag.toDto() = EtiquetaV1Dto(id = id, nombre = name, slug = slug, activa = active)

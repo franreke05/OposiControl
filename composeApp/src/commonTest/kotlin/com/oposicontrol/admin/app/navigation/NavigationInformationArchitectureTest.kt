@@ -25,6 +25,7 @@ class NavigationInformationArchitectureTest {
         val expected = listOf(
             AppRoute.Home,
             AppRoute.Content.Taxonomy,
+            AppRoute.Content.Tags,
             AppRoute.Content.Exams,
             AppRoute.Content.Questions,
             AppRoute.Content.Resources,
@@ -164,24 +165,25 @@ class NavigationInformationArchitectureTest {
     // --- Consolidación de navegación (2026-09-04): de 31 a 14 -----------------
     // El sidebar pasó de 31 entradas a 14, y volvió a 15 cuando Especialidades
     // recuperó su fila. Vuelve a 14 al pasar OposiTickets a subpantalla de Usuarios
-    // (ver theSidebarHasExactlyTheFourteenTargetEntries). Estas
+    // y vuelve a 15 con Etiquetas en Contenido
+    // (ver theSidebarHasExactlyTheFifteenTargetEntries). Estas
     // pruebas fijan el número exacto y que cada ruta que salió del menú (a) sigue
     // registrada, (b) sigue resolviendo metadata sin reventar, y (c) sigue
     // accesible por ruta directa — que es justo lo que "reorganizar sin borrar
     // funcionalidad" significa.
 
     @Test
-    fun theSidebarHasExactlyTheFourteenTargetEntries() {
+    fun theSidebarHasExactlyTheFifteenTargetEntries() {
         val sidebarTitles = appNavigationGroups.flatMap { it.sidebarItems }.map { it.metadata.title }
 
-        assertEquals(14, sidebarTitles.size, "El sidebar tiene ${sidebarTitles.size} entradas, se esperaban 14: $sidebarTitles")
+        assertEquals(15, sidebarTitles.size, "El sidebar tiene ${sidebarTitles.size} entradas, se esperaban 15: $sidebarTitles")
         assertEquals(
             listOf(
                 "Dashboard",
                 // Especialidades va justo debajo de Exámenes: es su configuración
                 // previa —qué modos admite la oposición— y el editor de exámenes
                 // no puede ofrecer un tipo que la especialidad no tenga abierto.
-                "Exámenes", "Especialidades", "Preguntas", "Importación",
+                "Exámenes", "Especialidades", "Etiquetas", "Preguntas", "Importación",
                 "Usuarios",
                 "Catálogo", "OposiMarket",
                 "OposiRed", "Moderación", "Soporte",
@@ -204,7 +206,7 @@ class NavigationInformationArchitectureTest {
         val content = appNavigationGroups.single { it.id == NavigationGroupId.CONTENT }
         val titles = content.sidebarItems.map { it.metadata.title }
 
-        assertEquals(listOf("Exámenes", "Especialidades", "Preguntas", "Importación"), titles)
+        assertEquals(listOf("Exámenes", "Especialidades", "Etiquetas", "Preguntas", "Importación"), titles)
     }
 
     @Test

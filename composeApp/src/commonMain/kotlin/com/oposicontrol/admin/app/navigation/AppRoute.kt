@@ -15,6 +15,9 @@ sealed interface AppRoute {
         data object Resources : Content
         data object Imports : Content
         data object Taxonomy : Content
+
+        /** Etiquetas de clasificación (`/api/v1/admin/etiquetas`). Solo escritorio. */
+        data object Tags : Content
     }
 
     sealed interface Publication : AppRoute {

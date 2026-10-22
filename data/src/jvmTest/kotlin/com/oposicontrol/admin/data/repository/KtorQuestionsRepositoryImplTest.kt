@@ -253,6 +253,31 @@ class KtorQuestionsRepositoryImplTest {
         }
     }
 
+    /** Etiquetas (temas): GET lista, PUT manda el conjunto COMPLETO (`[]` incluido) y ambas leen la respuesta. */
+    @Test
+    fun tagsUseTheirOwnRouteAndThePutSendsTheWholeSet() = runTest {
+        val seen = mutableListOf<HttpRequestData>()
+        val repository = repository(seen) { ETIQUETAS }
+
+        val listed = assertIsSuccess(repository.getQuestionTags("P-1"))
+        val saved = assertIsSuccess(repository.setQuestionTags("P-1", listOf("T-1", "T-2")))
+        assertIsSuccess(repository.setQuestionTags("P-1", emptyList()))
+
+        assertEquals(listOf("GET", "PUT", "PUT"), seen.map { it.method.value })
+        seen.forEach { assertEquals("/api/v1/admin/preguntas/P-1/etiquetas", it.url.encodedPath) }
+        val body = Json.parseToJsonElement((seen[1].body as TextContent).text).jsonObject
+        assertEquals("[\"T-1\",\"T-2\"]", body["etiquetaIds"]?.toString())
+        assertEquals(setOf("etiquetaIds"), body.keys)
+        val empty = Json.parseToJsonElement((seen[2].body as TextContent).text).jsonObject
+        assertEquals("[]", empty["etiquetaIds"]?.toString(), "quitar todas viaja como lista vacía")
+        listOf(listed, saved).forEach { tags ->
+            assertEquals(listOf("T-1", "T-2"), tags.map { it.id })
+            assertEquals("Constitución", tags[0].name)
+            assertEquals(true, tags[0].active)
+            assertFalse(tags[1].active)
+        }
+    }
+
     // -----------------------------------------------------------------
     // Andamiaje
     // -----------------------------------------------------------------
@@ -300,6 +325,11 @@ class KtorQuestionsRepositoryImplTest {
     }
 
     private companion object {
+        /** Lo que responden `GET`/`PUT /preguntas/{id}/etiquetas`: la segunda, desactivada en el catálogo. */
+        val ETIQUETAS = """
+        {"data":[{"id":"T-1","nombre":"Constitución"},{"id":"T-2","nombre":"Antigua","colorHex":"#ff0000","activa":false}]}
+        """.trimIndent()
+
         /** Un vínculo tal y como lo responde `/preguntas/{id}/examenes` (K3-4). */
         val VINCULOS = """
         {"data":[{"examenId":"EX-1","codigoExamen":"EX-0001","titulo":"Examen","tipoExamen":"rafaga","estado":"publicado","posicion":3}]}

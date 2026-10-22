@@ -437,10 +437,10 @@ fun questionShowsExplanation(type: QuestionType): Boolean = type != QuestionType
 fun questionDifficultyLabel(state: QuestionsState): String =
     state.draftDifficulty.trim().ifBlank { "Sin definir" }
 
-/** Por qué no hay tema ni especialidad que enseñar. */
+/** Por qué no hay especialidad que enseñar, y dónde van los temas. */
 const val QUESTION_NO_TOPIC_NOTE: String =
-    "Una pregunta no tiene especialidad ni tema propios: la especialidad es del examen, " +
-        "y una misma pregunta puede estar en exámenes de especialidades distintas."
+    "Una pregunta no tiene especialidad propia: la especialidad es del examen, " +
+        "y una misma pregunta puede estar en exámenes de especialidades distintas. Los temas se marcan con etiquetas."
 
 // ---------------------------------------------------------------------------
 // Relación con exámenes
@@ -531,9 +531,19 @@ data class QuestionResourceRow(
     val typeLabel: String,
     val accessible: Boolean,
     val accessLabel: String,
+    /** El formato del archivo subido («JPEG», «MP3»…), sacado del MIME; null si no lo hay. */
+    val formatLabel: String? = null,
+    /**
+     * La URL que «Abrir» entrega al navegador o reproductor del sistema para comprobar QUÉ archivo se subió. Solo si
+     * [canOpen] la acepta (Storage propio, ver `MediaUrlPolicy.isOpenableStorageObject`); si no, no hay botón.
+     */
+    val openUrl: String? = null,
 )
 
-fun questionResourceRows(resources: List<QuestionResource>): List<QuestionResourceRow> =
+fun questionResourceRows(
+    resources: List<QuestionResource>,
+    canOpen: (String) -> Boolean = { false },
+): List<QuestionResourceRow> =
     resources.sortedBy { it.sortOrder }.map { resource ->
         val inlineText = resource.type == QuestionResourceType.TEXT && !resource.textBody.isNullOrBlank()
         val accessible = inlineText || !resource.publicUrl.isNullOrBlank()
@@ -546,8 +556,25 @@ fun questionResourceRows(resources: List<QuestionResource>): List<QuestionResour
                 accessible -> "Accesible"
                 else -> "Sin dirección pública"
             },
+            formatLabel = questionResourceFormatLabel(resource.mimeType),
+            openUrl = resource.publicUrl?.trim()?.takeIf { it.isNotEmpty() && canOpen(it) },
         )
     }
+
+/** «image/jpeg» → «JPEG», «audio/mpeg» → «MP3»… Lo que se lee, no el MIME. */
+fun questionResourceFormatLabel(mimeType: String?): String? {
+    val subtype = mimeType?.substringBefore(';')?.trim()?.lowercase()?.substringAfter('/', "")?.takeIf { it.isNotEmpty() }
+        ?: return null
+    return when (subtype) {
+        "jpeg", "jpg", "pjpeg" -> "JPEG"
+        "mpeg", "mp3" -> if (mimeType.startsWith("video", ignoreCase = true)) "MPEG" else "MP3"
+        "quicktime" -> "MOV"
+        "x-wav", "wav", "wave", "vnd.wave" -> "WAV"
+        "x-m4a", "m4a" -> "M4A"
+        "svg+xml" -> "SVG"
+        else -> subtype.removePrefix("x-").uppercase()
+    }
+}
 
 const val QUESTION_RESOURCES_EMPTY: String = "Esta pregunta no tiene recursos vinculados."
 
