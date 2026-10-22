@@ -10,6 +10,12 @@
 - Pruebas (local, 2026-10-22, tras los P3 de Control sobre `74554ccd`): `:backend:dbtest:test` 322/0 (`V1AttemptAnswerRaceTest` 2, `V1PenaltyOfficialDefaultMigrationTest` 5 con control negativo, VERIFY y ROLLBACK), gate PG17 OK a la primera, manifiesto OK. `:backend:ktor:test` 2459/0 en `74554ccd` (sin cambios de Kotlin después).
 - `AdminControlGrading.applyOfficialExamDefaults` queda sin llamador (lo retira Control). Los scripts de `ops/local-exam` que leían EP-128 esperan ahora 410.
 
+## Etiquetas en el editor de preguntas — 2026-10-22 (develop `bb33d36b` + cambios sin commit) — `CURRENT_IMPLEMENTATION`, `LIVE_VERIFIED: NO`
+
+- Decisión del propietario: las etiquetas (temas) se asignan y se crean en el editor de cada pregunta; «Etiquetas» sale del menú lateral (14 entradas). La ruta y `TagsScreen` siguen existiendo, como Comunidades.
+- Ktor (perfil control): `GET /api/v1/admin/preguntas/{id}/etiquetas` y `PUT …/etiquetas` (`{"etiquetaIds":[…]}`, UUID, máx. 20, 404 si la pregunta no existe, las añadidas deben existir y estar activas). El PUT escribe solo el diff en `etiquetas_pregunta` con service_role (DELETE + INSERT, no atómico) y audita `pregunta_etiquetas_actualizadas` con los ids de antes y después. Registradas como `ADMIN_CONTRACT_GAP` (`QUESTION-TAGS`) en `ops/inventory/undocumented-routes.tsv`; sin OpenAPI.
+- Pruebas: `:backend:ktor:test` 2467/0 (1 omitido), `:data:jvmTest` 299/0 (registrador 176/176), `:features:questions:jvmTest` 94/0, `:composeApp:jvmTest` 171/0. No se ha probado contra Supabase real.
+
 ## Control panel E2E, interfaz — 2026-10-21 (panel `d277992`, rama `feature/december-v1-control-panel`, sin push)
 
 - **Interfaz contra el backend real: 15/15** (`ControlPanelUiE2ETest`). Cubre los recorridos 1, 2, 3, 4 (anular con motivo y rechazo sin reservas), 5, 6 (PDF real, vinculación de duplicados y publicación), 7, 8, 10, 11 y 12. Los E2E de datos siguen en 12/12. El recorrido 9 (reembolsos) solo se prueba en la capa de datos: el reembolso es automático, lo hace Bot, y el panel solo lo muestra. Evidencia: `docs/audit-v1/evidence/CONTROL-E2E/` (sección del 2026-10-21).

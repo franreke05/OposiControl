@@ -806,6 +806,25 @@ fun Route.adminV1Routes(gateway: AdminV1Gateway, idempotency: IdempotencyStore? 
                 }
                 call.respond(AdminPreguntaExamenesResponse(vinculos))
             }
+            // Etiquetas (temas) de la pregunta: `etiquetas_pregunta` sólo se escribe por
+            // aquí, con service_role (la RLS de MAIN no deja escribir a los clientes).
+            // El PUT fija el CONJUNTO entero y responde la lista ya releída, igual que
+            // los vínculos con exámenes: quien guarda quiere pintar el resultado real.
+            get("/{id}/etiquetas") {
+                val id = call.requiredPath("id").validatedUuid("id")
+                call.respond(AdminPreguntaEtiquetasResponse(withUpstreamIo { gateway.listEtiquetasDePregunta(id) }))
+            }
+            put("/{id}/etiquetas") {
+                val id = call.requiredPath("id").validatedUuid("id")
+                val body = call.receive<AdminPreguntaEtiquetasRequest>()
+                // Todo se valida ANTES de la primera petición: un id que no es UUID
+                // acabaría dentro de un filtro `in.(…)` de PostgREST.
+                val etiquetaIds = body.etiquetaIds.map { it.validatedUuid("etiquetaIds") }.distinct()
+                require(etiquetaIds.size <= PREGUNTA_ETIQUETAS_MAX) {
+                    "Una pregunta admite como máximo $PREGUNTA_ETIQUETAS_MAX etiquetas."
+                }
+                call.respond(AdminPreguntaEtiquetasResponse(withUpstreamIo { gateway.setEtiquetasDePregunta(id, etiquetaIds) }))
+            }
             // Aquí entraban TRES identificadores de cliente que acababan en un
             // filtro de PostgREST; desde KQ0-8 y D-03 queda UNO, el del path:
             // `recursos[]` se ignora entero y `examenId` ya no vincula. Los del
@@ -3598,6 +3617,21 @@ data class AdminEtiquetaDto(
 @Serializable data class AdminEtiquetasResponse(val data: List<AdminEtiquetaDto>)
 @Serializable data class AdminEtiquetaResponse(val data: AdminEtiquetaDto)
 
+/** Máximo de etiquetas por pregunta que admite `PUT /preguntas/{id}/etiquetas`. */
+internal const val PREGUNTA_ETIQUETAS_MAX = 20
+
+/** Una etiqueta asignada a una pregunta (`etiquetas_pregunta` ⨝ `etiquetas`). */
+@Serializable
+data class AdminPreguntaEtiquetaDto(
+    val id: String,
+    val nombre: String,
+    val colorHex: String? = null,
+    val activa: Boolean = true,
+)
+@Serializable data class AdminPreguntaEtiquetasResponse(val data: List<AdminPreguntaEtiquetaDto>)
+/** El conjunto COMPLETO de etiquetas que debe quedar en la pregunta; `[]` las quita todas. */
+@Serializable data class AdminPreguntaEtiquetasRequest(val etiquetaIds: List<String>)
+
 // Comunidades autónomas
 @Serializable
 data class AdminComunidadDto(
@@ -3931,6 +3965,25 @@ private data class V1EtiquetaRow(
     @SerialName("color_hex") val colorHex: String? = null,
     val activa: Boolean = true,
 )
+
+/** Fila de `etiquetas_pregunta`, con la etiqueta embebida cuando se pide (`etiquetas(...)`). */
+@Serializable
+private data class V1EtiquetaPreguntaRow(
+    @SerialName("pregunta_id") val preguntaId: String? = null,
+    @SerialName("etiqueta_id") val etiquetaId: String,
+    val etiquetas: V1EtiquetaEmbebidaRow? = null,
+)
+
+@Serializable
+private data class V1EtiquetaEmbebidaRow(
+    val id: String,
+    val nombre: String,
+    @SerialName("color_hex") val colorHex: String? = null,
+    val activa: Boolean = true,
+)
+
+@Serializable
+private data class V1EtiquetaEstadoRow(val id: String, val activa: Boolean = true)
 
 @Serializable
 private data class V1ComunidadRow(
@@ -7592,6 +7645,71 @@ class AdminV1Gateway private constructor(
         val id = rawId.validatedUuid("id")
         request("DELETE", "/rest/v1/etiquetas?id=eq.$id", null)
         registrarAuditoria("etiqueta_eliminada", "etiquetas", id)
+    }
+
+    // ETIQUETAS DE UNA PREGUNTA (etiquetas_pregunta)
+    // Los ids llegan YA validados como UUID por la ruta: van dentro de `eq.`/`in.(…)`.
+
+    /** Una sola lectura embebida; ordenadas por nombre. Una pregunta sin etiquetas (o inexistente) es `[]`. */
+    fun listEtiquetasDePregunta(preguntaId: String): List<AdminPreguntaEtiquetaDto> =
+        request(
+            "GET",
+            "/rest/v1/etiquetas_pregunta?select=etiqueta_id,etiquetas(id,nombre,color_hex,activa)&pregunta_id=eq.$preguntaId",
+            null,
+        ).decodeList<V1EtiquetaPreguntaRow>()
+            .mapNotNull { row -> row.etiquetas?.let { AdminPreguntaEtiquetaDto(it.id, it.nombre, it.colorHex, it.activa) } }
+            .sortedBy { it.nombre.lowercase() }
+
+    /**
+     * Fija el conjunto de etiquetas de la pregunta: borra las quitadas, inserta las nuevas y deja UNA fila de
+     * auditoría con los ids de antes y de después. Sin cambios no escribe nada (ni audita).
+     *
+     * Las que se AÑADEN tienen que existir y estar activas; una que ya estaba y se conserva puede estar desactivada
+     * (desactivar una etiqueta no obliga a quitarla de cada pregunta para poder guardar otra).
+     *
+     * No es atómico: son dos sentencias PostgREST (DELETE + INSERT). Si la segunda falla, la respuesta es el error
+     * y el estado real se ve releyendo con [listEtiquetasDePregunta].
+     */
+    fun setEtiquetasDePregunta(preguntaId: String, etiquetaIds: List<String>): List<AdminPreguntaEtiquetaDto> {
+        request("GET", "/rest/v1/preguntas?select=id&id=eq.$preguntaId&limit=1", null)
+            .decodeList<JsonObject>().firstOrNull()
+            ?: throw CanonicalErrorCode.NOT_FOUND.exception("Pregunta no encontrada.")
+        val antes = request("GET", "/rest/v1/etiquetas_pregunta?select=etiqueta_id&pregunta_id=eq.$preguntaId", null)
+            .decodeList<V1EtiquetaPreguntaRow>().map { it.etiquetaId.lowercase() }.distinct()
+        val quitar = antes.filter { it !in etiquetaIds }
+        val anadir = etiquetaIds.filter { it !in antes }
+        if (anadir.isNotEmpty()) {
+            val activas = request("GET", "/rest/v1/etiquetas?select=id,activa&id=in.(${anadir.joinToString(",")})", null)
+                .decodeList<V1EtiquetaEstadoRow>().filter { it.activa }.map { it.id.lowercase() }.toSet()
+            val invalidas = anadir.filter { it !in activas }
+            require(invalidas.isEmpty()) { "Estas etiquetas no existen o están desactivadas: ${invalidas.joinToString(", ")}." }
+        }
+        if (quitar.isEmpty() && anadir.isEmpty()) return listEtiquetasDePregunta(preguntaId)
+        if (quitar.isNotEmpty()) {
+            request(
+                "DELETE",
+                "/rest/v1/etiquetas_pregunta?pregunta_id=eq.$preguntaId&etiqueta_id=in.(${quitar.joinToString(",")})",
+                null,
+            )
+        }
+        if (anadir.isNotEmpty()) {
+            request(
+                "POST",
+                "/rest/v1/etiquetas_pregunta",
+                sbJson.encodeToString(anadir.map { V1EtiquetaPreguntaRow(preguntaId = preguntaId, etiquetaId = it) }),
+                // Una doble pulsación concurrente no convierte la PK en un 409: la fila ya está, que es lo pedido.
+                prefer = "resolution=ignore-duplicates,return=minimal",
+            )
+        }
+        val despues = antes.filter { it !in quitar } + anadir
+        registrarAuditoriaResultado(
+            accion = "pregunta_etiquetas_actualizadas",
+            tabla = "etiquetas_pregunta",
+            registroId = preguntaId,
+            antes = buildJsonObject { put("etiquetaIds", JsonArray(antes.sorted().map { JsonPrimitive(it) })) },
+            despues = buildJsonObject { put("etiquetaIds", JsonArray(despues.sorted().map { JsonPrimitive(it) })) },
+        )
+        return listEtiquetasDePregunta(preguntaId)
     }
 
     // COMUNIDADES AUTÓNOMAS

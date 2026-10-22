@@ -94,6 +94,7 @@ GET	/api/v1/admin/planes/{}/beneficios	CONTROL	admin	Admin v1: planes/{}/benefic
 GET	/api/v1/admin/preguntas	CONTROL	admin	Admin v1: preguntas	OposiControl
 GET	/api/v1/admin/preguntas/{}	CONTROL	admin	Admin v1: preguntas/{}	OposiControl
 GET	/api/v1/admin/preguntas/{}/examenes	CONTROL	admin	Admin v1: preguntas/{}/examenes	OposiControl
+GET	/api/v1/admin/preguntas/{}/etiquetas	CONTROL	admin	Admin v1: etiquetas (temas) de una pregunta	OposiControl
 GET	/api/v1/admin/preguntas/{}/recursos	CONTROL	admin	Admin v1: preguntas/{}/recursos	OposiControl
 GET	/api/v1/admin/rankings/global	CONTROL	admin	Admin v1: rankings/global	OposiControl
 GET	/api/v1/admin/rankings/liga/{}	CONTROL	admin	Admin v1: rankings/liga/{}	OposiControl
@@ -305,6 +306,7 @@ PUT	/api/v1/admin/comercial/productos/{}	CONTROL	admin	Admin v1: alta o cambio d
 PUT	/api/v1/admin/comercial/productos/{}/tarifas/{}/{}	CONTROL	admin	Admin v1: alta o cambio de una tarifa por producto, periodo y fase	OposiControl
 PUT	/api/v1/admin/especialidades/{}/capacidades	CONTROL	admin	Admin v1: especialidades/{}/capacidades	OposiControl
 PUT	/api/v1/admin/planes/{}	CONTROL	admin	Admin v1: alta o cambio de un plan por codigo	OposiControl
+PUT	/api/v1/admin/preguntas/{}/etiquetas	CONTROL	admin	Admin v1: fija el conjunto de etiquetas de una pregunta (diff + auditoria)	OposiControl
 PUT	/api/v1/admin/tipos-noticia/{}	CONTROL	admin	Admin news: type upsert	OposiControl
 PUT	/api/v1/app/intentos/{}/respuestas/{}	BOT	user-jwt	Consumer app API: intentos/{}/respuestas/{} (D2-09)	OposiBot
 PUT	/api/v1/app/opositeca/guardados/{}/{}	BOT	user-jwt	Consumer OposiTeca: save a question (D4-20)	OposiBot

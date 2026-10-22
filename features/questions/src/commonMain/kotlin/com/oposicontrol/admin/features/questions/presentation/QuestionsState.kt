@@ -9,7 +9,9 @@ import com.oposicontrol.admin.domain.model.QuestionListQuery
 import com.oposicontrol.admin.domain.model.QuestionListSort
 import com.oposicontrol.admin.domain.model.QuestionOption
 import com.oposicontrol.admin.domain.model.QuestionPage
+import com.oposicontrol.admin.domain.model.QuestionTag
 import com.oposicontrol.admin.domain.model.QuestionType
+import com.oposicontrol.admin.domain.model.Tag
 import com.oposicontrol.admin.domain.repository.QuestionActiveFilter
 import com.oposicontrol.admin.domain.repository.QuestionResourceDraft
 import com.oposicontrol.admin.domain.repository.QuestionResourceFile
@@ -102,6 +104,22 @@ data class QuestionsState(
     val deleteResourceId: String? = null,
     /** Estado propio del borrado: un fallo suyo no se confunde con uno del alta. */
     val resourceDeleteState: UiAsync<Unit> = UiAsync.Idle,
+
+    // --- Etiquetas (temas) de la pregunta ---
+
+    /** El catálogo de etiquetas ACTIVAS que se pueden asignar (`GET /etiquetas`). */
+    val tagCatalog: UiAsync<List<Tag>> = UiAsync.Loading,
+    /** Las etiquetas GUARDADAS de la pregunta (`GET /preguntas/{id}/etiquetas`); `Idle` en un alta. */
+    val questionTags: UiAsync<List<QuestionTag>> = UiAsync.Idle,
+    /** La selección que se está editando, en orden; se guarda aparte del borrador con «Guardar etiquetas». */
+    val draftTagIds: List<String> = emptyList(),
+    /** Texto del buscador del desplegable «Añadir etiqueta». */
+    val tagSearch: String = "",
+    /** Estado PROPIO del guardado de etiquetas: no se mezcla con el de la pregunta. */
+    val tagsSaveState: UiAsync<Unit> = UiAsync.Idle,
+    val showCreateTagDialog: Boolean = false,
+    val newTagName: String = "",
+    val createTagState: UiAsync<Unit> = UiAsync.Idle,
 
     val saveState: UiAsync<Unit> = UiAsync.Idle,
     val archiveState: UiAsync<Unit> = UiAsync.Idle,
@@ -233,4 +251,49 @@ fun QuestionsState.totalPages(): Int {
     val total = totalQuestions()
     if (total == 0) return 1
     return (total + pageSize - 1) / pageSize
+}
+
+// ---------------------------------------------------------------------------
+// Etiquetas (temas) de la pregunta
+// ---------------------------------------------------------------------------
+
+/** Máximo de etiquetas por pregunta: el mismo que impone `PUT /preguntas/{id}/etiquetas`. */
+const val QUESTION_TAGS_MAX: Int = 20
+
+/** Una etiqueta de la selección, ya con su nombre resuelto. */
+data class QuestionTagChip(val id: String, val name: String, val active: Boolean)
+
+/** Las ids GUARDADAS en el servidor; vacío mientras cargan, si fallaron o en un alta. */
+fun QuestionsState.savedTagIds(): List<String> =
+    (questionTags as? UiAsync.Success)?.value?.map { it.id }.orEmpty()
+
+/** Sólo una pregunta YA guardada, con sus etiquetas leídas, se puede etiquetar. */
+fun QuestionsState.canEditTags(): Boolean =
+    !isCreating && !selectedQuestionId.isNullOrBlank() && questionTags is UiAsync.Success
+
+/** Si la selección difiere de lo guardado (el orden no cuenta: el servidor guarda un conjunto). */
+fun QuestionsState.tagsDirty(): Boolean =
+    canEditTags() && draftTagIds.toSet() != savedTagIds().toSet()
+
+/**
+ * La selección con nombre: primero lo que dice la pregunta (incluye etiquetas ya
+ * desactivadas), y si no, el catálogo (las recién añadidas o recién creadas).
+ */
+fun QuestionsState.selectedTagChips(): List<QuestionTagChip> {
+    val saved = (questionTags as? UiAsync.Success)?.value.orEmpty().associateBy { it.id }
+    val catalog = (tagCatalog as? UiAsync.Success)?.value.orEmpty().associateBy { it.id }
+    return draftTagIds.map { id ->
+        saved[id]?.let { QuestionTagChip(id, it.name, it.active) }
+            ?: catalog[id]?.let { QuestionTagChip(id, it.name, it.active) }
+            ?: QuestionTagChip(id, "Etiqueta desconocida", active = false)
+    }
+}
+
+/** Las etiquetas activas que aún se pueden añadir, filtradas por [QuestionsState.tagSearch] y por nombre. */
+fun QuestionsState.addableTags(): List<Tag> {
+    val query = tagSearch.trim().lowercase()
+    return (tagCatalog as? UiAsync.Success)?.value.orEmpty()
+        .filter { it.active && it.id !in draftTagIds }
+        .filter { query.isEmpty() || it.name.lowercase().contains(query) }
+        .sortedBy { it.name.lowercase() }
 }

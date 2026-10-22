@@ -437,10 +437,10 @@ fun questionShowsExplanation(type: QuestionType): Boolean = type != QuestionType
 fun questionDifficultyLabel(state: QuestionsState): String =
     state.draftDifficulty.trim().ifBlank { "Sin definir" }
 
-/** Por qué no hay tema ni especialidad que enseñar. */
+/** Por qué no hay especialidad que enseñar, y dónde van los temas. */
 const val QUESTION_NO_TOPIC_NOTE: String =
-    "Una pregunta no tiene especialidad ni tema propios: la especialidad es del examen, " +
-        "y una misma pregunta puede estar en exámenes de especialidades distintas."
+    "Una pregunta no tiene especialidad propia: la especialidad es del examen, " +
+        "y una misma pregunta puede estar en exámenes de especialidades distintas. Los temas se marcan con etiquetas."
 
 // ---------------------------------------------------------------------------
 // Relación con exámenes

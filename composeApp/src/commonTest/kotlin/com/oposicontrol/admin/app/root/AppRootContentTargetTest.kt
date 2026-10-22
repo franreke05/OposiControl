@@ -426,8 +426,7 @@ class AppRootContentTargetTest {
                 )
             }
         }
-        // Comunidades ya no tiene entrada en el menú (2026-10-22); su pantalla sigue abriéndose por la ruta.
-        assertEquals("content.tags", sidebarRouteIdFor(AppRoute.Content.Tags, compactLayout = false))
+        // Comunidades y Etiquetas ya no tienen entrada en el menú (2026-10-22); sus pantallas siguen abriéndose por la ruta.
     }
 
     @Test
@@ -475,6 +474,7 @@ class AppRootContentTargetTest {
             .toShellGroups(compactLayout = false).flatMap { it.items }.map { it.id }
         assertTrue("commercial.catalog" in desktopIds)
         assertTrue("content.communities" !in desktopIds, "Comunidades salió del menú el 2026-10-22")
+        assertTrue("content.tags" !in desktopIds, "Etiquetas salió del menú el 2026-10-22")
     }
 
     @Test

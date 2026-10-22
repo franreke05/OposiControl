@@ -65,6 +65,24 @@ sealed interface QuestionsIntent {
     data object ConfirmDeleteResource : QuestionsIntent
     data object DismissDeleteResourceConfirm : QuestionsIntent
 
+    // -----------------------------------------------------------------
+    // Etiquetas (temas): selección propia, guardada por su ruta
+    // (`PUT /preguntas/{id}/etiquetas`) con «Guardar etiquetas».
+    // -----------------------------------------------------------------
+
+    data class AddQuestionTag(val tagId: String) : QuestionsIntent
+    data class RemoveQuestionTag(val tagId: String) : QuestionsIntent
+    data class UpdateTagSearch(val query: String) : QuestionsIntent
+    data object SaveQuestionTags : QuestionsIntent
+    /** Vuelve a pedir etiquetas de la pregunta y catálogo tras un fallo. */
+    data object ReloadQuestionTags : QuestionsIntent
+
+    data object RequestCreateTag : QuestionsIntent
+    data class UpdateNewTagName(val value: String) : QuestionsIntent
+    data object CancelCreateTag : QuestionsIntent
+    /** Crea la etiqueta (`POST /etiquetas`) y la añade a la selección; no la guarda en la pregunta. */
+    data object ConfirmCreateTag : QuestionsIntent
+
     data object RequestCancel : QuestionsIntent
     data object ConfirmCancel : QuestionsIntent
     data object DismissCancelConfirm : QuestionsIntent

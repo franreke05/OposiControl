@@ -11,6 +11,8 @@ import com.oposicontrol.admin.domain.model.QuestionOption
 import com.oposicontrol.admin.domain.model.QuestionPage
 import com.oposicontrol.admin.domain.model.QuestionResource
 import com.oposicontrol.admin.domain.model.QuestionResourceType
+import com.oposicontrol.admin.domain.model.QuestionTag
+import com.oposicontrol.admin.domain.model.Tag
 import com.oposicontrol.admin.domain.model.QuestionType
 import kotlinx.datetime.Instant
 
@@ -166,6 +168,16 @@ internal object QuestionsFixtures {
             draftExplanation = d.explanation,
             draftSource = d.source,
             draftDifficulty = d.difficulty,
+            // Dos etiquetas guardadas, una añadida sin guardar y el catálogo con sugerencias.
+            tagCatalog = UiAsync.Success(
+                listOf("Higiene", "Infección nosocomial", "Seguridad del paciente", "Epidemiología").mapIndexed { i, name ->
+                    Tag(id = "t-$i", name = name, slug = "t-$i", origin = "manual")
+                },
+            ),
+            questionTags = UiAsync.Success(
+                listOf(QuestionTag(id = "t-0", name = "Higiene"), QuestionTag(id = "t-1", name = "Infección nosocomial")),
+            ),
+            draftTagIds = listOf("t-0", "t-1", "t-2"),
         )
     }
 

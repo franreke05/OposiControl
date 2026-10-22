@@ -15,6 +15,7 @@ import com.oposicontrol.admin.domain.model.QuestionOption
 import com.oposicontrol.admin.domain.model.QuestionPage
 import com.oposicontrol.admin.domain.model.QuestionResource
 import com.oposicontrol.admin.domain.model.QuestionResourceType
+import com.oposicontrol.admin.domain.model.QuestionTag
 import com.oposicontrol.admin.domain.model.QuestionType
 import com.oposicontrol.admin.domain.repository.QuestionResourceDraft
 import com.oposicontrol.admin.domain.repository.QuestionResourceFile
@@ -30,6 +31,7 @@ import io.ktor.client.request.get
 import io.ktor.client.request.parameter
 import io.ktor.client.request.patch
 import io.ktor.client.request.post
+import io.ktor.client.request.put
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.HttpResponse
 import io.ktor.client.statement.bodyAsText
@@ -217,6 +219,32 @@ class KtorQuestionsRepositoryImpl(
         }
         response.requireSuccess(endpoint)
         response.body<QPreguntaExamenesResponse>().data.map { it.toLink() }
+    }
+
+    // -----------------------------------------------------------------
+    // Etiquetas (temas) de la pregunta: `/preguntas/{id}/etiquetas`
+    // -----------------------------------------------------------------
+
+    override suspend fun getQuestionTags(questionId: String) = adapter.safeCall {
+        val endpoint = BackendRoutes.adminV1PreguntaEtiquetas(questionId)
+        val response = client.get(url(endpoint)) {
+            adminAuthHeaders(appConfig, sessionLocalDataSource)
+            expectSuccess = false
+        }
+        response.requireSuccess(endpoint)
+        response.body<QPreguntaEtiquetasResponse>().data.map { it.toTag() }
+    }
+
+    override suspend fun setQuestionTags(questionId: String, tagIds: List<String>) = adapter.safeCall {
+        val endpoint = BackendRoutes.adminV1PreguntaEtiquetas(questionId)
+        val response = client.put(url(endpoint)) {
+            adminAuthHeaders(appConfig, sessionLocalDataSource)
+            contentType(ContentType.Application.Json)
+            setBody(QPreguntaEtiquetasRequest(etiquetaIds = tagIds))
+            expectSuccess = false
+        }
+        response.requireSuccess(endpoint)
+        response.body<QPreguntaEtiquetasResponse>().data.map { it.toTag() }
     }
 
     // -----------------------------------------------------------------
@@ -452,6 +480,23 @@ private data class QVincularExamenDto(val examenId: String, val posicion: Int? =
 
 @Serializable
 private data class QPreguntaExamenesResponse(val data: List<QPreguntaExamenVinculoDto> = emptyList())
+
+/** `PUT /preguntas/{id}/etiquetas`: el conjunto COMPLETO; `[]` viaja (quita todas). */
+@Serializable
+private data class QPreguntaEtiquetasRequest(val etiquetaIds: List<String>)
+
+@Serializable
+private data class QPreguntaEtiquetasResponse(val data: List<QPreguntaEtiquetaDto> = emptyList())
+
+@Serializable
+private data class QPreguntaEtiquetaDto(
+    val id: String,
+    val nombre: String,
+    val colorHex: String? = null,
+    val activa: Boolean = true,
+)
+
+private fun QPreguntaEtiquetaDto.toTag() = QuestionTag(id = id, name = nombre, colorHex = colorHex, active = activa)
 
 /**
  * Un vínculo tal y como lo responde el servidor (K3-4). Los defaults casan con los

@@ -27,6 +27,7 @@ import com.oposicontrol.admin.core.ui.components.ConfirmDialog
 import com.oposicontrol.admin.core.ui.components.GlassSurface
 import com.oposicontrol.admin.core.ui.components.PrimaryButton
 import com.oposicontrol.admin.core.ui.components.SecondaryButton
+import com.oposicontrol.admin.core.ui.components.humanMessage
 import com.oposicontrol.admin.core.ui.theme.GlassTheme
 import com.oposicontrol.admin.core.ui.theme.Radius
 import com.oposicontrol.admin.core.ui.theme.Spacing
@@ -133,6 +134,9 @@ internal fun QuestionsContent(
     if (state.showAssociateDialog) {
         QuestionLinkExamDialog(state, onIntent)
     }
+    if (state.showCreateTagDialog) {
+        QuestionCreateTagDialog(state, onIntent)
+    }
     state.unlinkExamId?.let { examId ->
         val link = state.knownExamLinks().firstOrNull { it.examId == examId }
         ConfirmDialog(
@@ -225,6 +229,65 @@ private fun QuestionLinkExamDialog(state: QuestionsState, onIntent: (QuestionsIn
                         onClick = { onIntent(QuestionsIntent.ConfirmAssociateExam) },
                         enabled = linkable.isNotEmpty(),
                         loading = state.saveState is UiAsync.Loading,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * «Crear etiqueta» desde el editor: sólo el nombre (el slug lo deriva el servidor,
+ * igual que en el catálogo). La nueva entra en la selección de esta pregunta y se
+ * guarda con «Guardar etiquetas».
+ */
+@Composable
+private fun QuestionCreateTagDialog(state: QuestionsState, onIntent: (QuestionsIntent) -> Unit) {
+    val tokens = GlassTheme.tokens
+    Dialog(onDismissRequest = { onIntent(QuestionsIntent.CancelCreateTag) }) {
+        GlassSurface(
+            modifier = Modifier.width(400.dp),
+            shape = Radius.lg,
+            tint = tokens.surfaceSolid,
+            strokeColor = tokens.border,
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(Spacing.lg),
+                verticalArrangement = Arrangement.spacedBy(Spacing.md),
+            ) {
+                Text(
+                    text = "Crear etiqueta",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = tokens.textPrimary,
+                )
+                QuestionTextField(
+                    label = "Nombre",
+                    value = state.newTagName,
+                    onValueChange = { onIntent(QuestionsIntent.UpdateNewTagName(it)) },
+                    placeholder = "Por ejemplo: Constitución",
+                    supportingText = "Se añade al catálogo y a esta pregunta. Guarda las etiquetas para fijarla.",
+                )
+                if (state.createTagState is UiAsync.Error) {
+                    Text(
+                        text = (state.createTagState as UiAsync.Error).error.humanMessage(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = tokens.dangerInk,
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(Spacing.xs, Alignment.End),
+                ) {
+                    SecondaryButton(
+                        text = "Cancelar",
+                        onClick = { onIntent(QuestionsIntent.CancelCreateTag) },
+                    )
+                    PrimaryButton(
+                        text = "Crear",
+                        onClick = { onIntent(QuestionsIntent.ConfirmCreateTag) },
+                        enabled = state.newTagName.isNotBlank(),
+                        loading = state.createTagState is UiAsync.Loading,
                     )
                 }
             }

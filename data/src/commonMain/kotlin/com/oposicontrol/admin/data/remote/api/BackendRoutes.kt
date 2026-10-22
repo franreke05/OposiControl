@@ -81,6 +81,9 @@ object BackendRoutes {
     /** La ÚNICA puerta para ver y crear vínculos pregunta ↔ examen (K3-4, KQ3-1, D-03). */
     fun adminV1PreguntaExamenes(preguntaId: String): String = "$ADMIN_V1_PREGUNTAS/$preguntaId/examenes"
 
+    /** Etiquetas (temas) de la pregunta: `GET` las lista y `PUT` fija el conjunto. */
+    fun adminV1PreguntaEtiquetas(preguntaId: String): String = "$ADMIN_V1_PREGUNTAS/$preguntaId/etiquetas"
+
     fun adminV1PreguntaExamen(preguntaId: String, examenId: String): String =
         "$ADMIN_V1_PREGUNTAS/$preguntaId/examenes/$examenId"
 

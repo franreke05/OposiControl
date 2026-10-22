@@ -494,10 +494,11 @@ class QuestionsPresentationTest {
     }
 
     @Test
-    fun `la dificultad se lee y se dice que no hay tema ni especialidad`() {
+    fun `la dificultad se lee y se dice que no hay especialidad y que los temas son etiquetas`() {
         assertEquals("media", questionDifficultyLabel(state()))
         assertEquals("Sin definir", questionDifficultyLabel(state().copy(draftDifficulty = "")))
-        assertTrue(QUESTION_NO_TOPIC_NOTE.contains("no tiene especialidad ni tema"), QUESTION_NO_TOPIC_NOTE)
+        assertTrue(QUESTION_NO_TOPIC_NOTE.contains("no tiene especialidad propia"), QUESTION_NO_TOPIC_NOTE)
+        assertTrue(QUESTION_NO_TOPIC_NOTE.contains("etiquetas"), QUESTION_NO_TOPIC_NOTE)
     }
 
     @Test
@@ -671,5 +672,46 @@ class QuestionsPresentationTest {
         assertEquals("MP4", questionResourceFormatLabel("video/mp4"))
         assertEquals("WAV", questionResourceFormatLabel("audio/x-wav"))
         assertEquals(null, questionResourceFormatLabel(null))
+    }
+
+    // --- Etiquetas (temas) ---
+
+    private fun taggedState(draft: List<String>, search: String = "") = QuestionsState(
+        selectedQuestionId = "q-1",
+        tagCatalog = UiAsync.Success(
+            listOf(
+                com.oposicontrol.admin.domain.model.Tag("t-b", "Bioética", "bioetica", "manual"),
+                com.oposicontrol.admin.domain.model.Tag("t-a", "Anatomía", "anatomia", "manual"),
+                com.oposicontrol.admin.domain.model.Tag("t-x", "Retirada", "retirada", "manual", active = false),
+            ),
+        ),
+        questionTags = UiAsync.Success(
+            listOf(
+                com.oposicontrol.admin.domain.model.QuestionTag("t-a", "Anatomía"),
+                com.oposicontrol.admin.domain.model.QuestionTag("t-x", "Retirada", active = false),
+            ),
+        ),
+        draftTagIds = draft,
+        tagSearch = search,
+    )
+
+    @Test
+    fun `las etiquetas sugeridas son activas, no elegidas, filtradas y por nombre`() {
+        assertEquals(listOf("t-b"), taggedState(listOf("t-a", "t-x")).addableTags().map { it.id })
+        assertEquals(listOf("t-a", "t-b"), taggedState(emptyList()).addableTags().map { it.id })
+        assertEquals(listOf("t-b"), taggedState(emptyList(), search = " bIO ").addableTags().map { it.id })
+    }
+
+    @Test
+    fun `el orden no ensucia y una desactivada ya asignada se dice como tal`() {
+        assertFalse(taggedState(listOf("t-x", "t-a")).tagsDirty())
+        assertTrue(taggedState(listOf("t-a")).tagsDirty())
+        assertEquals(
+            listOf(QuestionTagChip("t-x", "Retirada", active = false), QuestionTagChip("t-b", "Bioética", active = true)),
+            taggedState(listOf("t-x", "t-b")).selectedTagChips(),
+        )
+        // En un alta no se etiqueta.
+        assertFalse(taggedState(listOf("t-a")).copy(isCreating = true).canEditTags())
+        assertEquals("2 de $QUESTION_TAGS_MAX etiquetas." to false, questionTagsSaveMessage(taggedState(listOf("t-a", "t-x"))))
     }
 }
