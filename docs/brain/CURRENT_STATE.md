@@ -1,5 +1,12 @@
 # Current State
 
+## Hotfix de Control sobre producción — 2026-10-22 (rama `hotfix/control-tags-cfa2e14`, imagen `oposicontrol-backend:d922357e84d3`) — `NOT_DEPLOYED`
+
+- Producción corre `cfa2e14afc8e` en los tres Ktor (bot-1, bot-2, control) de un solo servidor. Desplegar develop NO es viable sin el lanzamiento V1: el control de develop necesita `102000`/`102100`/`101300` y su cierre (`100300..101200`) rompe el bot `cfa2e14` (verificado en MAIN: ninguna de las 36 pendientes aplicada).
+- Hotfix sobre `cfa2e14a`, sin migraciones: etiquetas por pregunta (GET/PUT), regla `ETIQUETA:` en la importación y enlace al publicar, popup de recursos y pantalla Etiquetas en el panel. El marcador `--- BLOQUE: RESERVA ---` se reconoce y sus preguntas salen con error (no se publican) hasta V1. Pruebas: Ktor 1913/0, composeApp 150/0, data 249/0, questions 94/0, core:common 15/0. Imagen comprobada (usuario `app`, `/app` de solo lectura).
+- Envío: `bash ops/deploy/ship-control-only.sh oposicontrol-backend:d922357e84d3 --go` (solo el contenedor control; rollback con `cfa2e14afc8e`). Panel: `OposiControlAdmin-1.1.0.msi` del hotfix (apunta a `api.oposibots.es`, sin claves secretas).
+- Las reservas entran con el lanzamiento V1 completo (36 migraciones + bot + control): decisión pendiente del propietario.
+
 ## Etiquetas: pantalla, selector e importación — 2026-10-22 (develop sobre `a9fbe337`) — `CURRENT_IMPLEMENTATION`, `LIVE_VERIFIED: NO`
 
 - Decisión del propietario (revoca la de abajo sobre el menú): «Etiquetas» vuelve a Contenido (solo escritorio), con diseño de dashboard (contadores Etiquetas/Activas/Desactivadas, catálogo con buscador y editor Nombre/Slug con confirmación al borrar).
