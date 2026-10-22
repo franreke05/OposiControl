@@ -539,9 +539,10 @@ Duración estimada: 45-60 min desde que se paran los Ktor hasta el humo. El tope
    Ensayado en la ventana completa (5.6): actor no admin rechazado, relleno, deshacer y rehacer.
 4. **Comprobación tras migrar** (`RO`): se repiten F1.1 (deben salir las nuevas versiones) y F1.2 (valores DESPUÉS de 5.3), y todos los VERIFY:
    ```bash
-   for f in $(ls supabase/migrations/2026102[0-3]*.sql | grep -v 20261023100100); do bash ops/deploy/v1/apply-main-migration.sh --verify-only "$f"; done 2>&1 | tee verify-despues.txt
-   grep -c 'VERIFY = 0' verify-despues.txt     # = todas las de la seccion 4 salvo #38 (las ya aplicadas incluidas)
+   for f in $(ls supabase/migrations/2026102[0-3]*.sql | grep -vE "20261023100100|20261022102600|20261022102800|20261022102900"); do bash ops/deploy/v1/apply-main-migration.sh --verify-only "$f"; done 2>&1 | tee verify-despues.txt
+   grep -c 'VERIFY = 0' verify-despues.txt     # = todas las de la seccion 4 salvo #38 y las 3 de abajo (las ya aplicadas incluidas)
    ```
+   **Excluidas a proposito: 102600, 102800 y 102900.** Sus VERIFY hacen `::regprocedure` sobre firmas que borran migraciones POSTERIORES de la misma ventana (`app_store_inbox_pending(integer)` en 102800, `app_store_inbox_mark(text,text,text,text,text)` y `app_store_inbox_pending(integer,boolean)` en 102900 y 103200). Pasado el lote dan «ERROR: el VERIFY no se ejecuta», aunque en la ventana dieron 0 justo al aplicarse (ventana real del 2026-10-22: asi fue). No se reescriben porque ya estan aplicadas en MAIN y su blob esta en el manifiesto. En su lugar, comprobacion de solo lectura de las firmas vigentes: `select to_regprocedure('public.app_store_inbox_mark(text,text,text,text,text,text,integer)') is not null, to_regprocedure('public.app_store_inbox_pending(integer,text[])') is not null, to_regprocedure('public.app_store_inbox_mark(text,text,text,text,text)') is null;` = `t,t,t`.
    Más el estado de la cartera (`RO`, editor SQL):
    ```sql
    select (select count(*) from public.app_wallet_reconcile(null)) as reconcile_debe_ser_0,
