@@ -141,6 +141,17 @@ caddy_no_status_ejection() { local f
 bot_upstream_timeout() { [ "$(grep -c 'UPSTREAM_REQUEST_TIMEOUT_MS: ${BOT_UPSTREAM_REQUEST_TIMEOUT_MS:-10000}' ops/deploy/compose.production.yaml)" = 2 ]; }
 # Revision OposiControl 2026-10-22: el pool bot lee el cuerpo ENTERO en Caddy (`request_buffers 3MB` y tope incondicional `request_body max_size 3MB`)
 # antes de ir a Ktor; si no, POST lentos sin autenticar retienen los permisos de admision hasta `read_body` (130 s).
+# Lanzamiento V1 2026-10-22: GET /api/v1/public/especialidades existia en el perfil bot pero Caddy no la enrutaba (404).
+# Cada ruta de routes.bot.txt (salvo salud y metricas, que tienen su propio bloque) tiene que casar con un patron de @bot.
+caddy_bot_routes_all_matched() { local f pats p ok
+  for f in ops/caddy/Caddyfile.production ops/caddy/Caddyfile.hostcaddy; do
+    pats="$(grep -E '^[[:space:]]*@bot path ' "$f" | head -1 | sed -E 's/^[[:space:]]*@bot path //')"
+    [ -n "$pats" ] || return 1
+    for p in $(grep -E '^(GET|POST|PUT|PATCH|DELETE|HEAD) /' ops/inventory/routes.bot.txt | awk '{print $2}' | sort -u | grep -vE '^/(health|metrics)(/|$)'); do
+      ok=0; for pat in $pats; do case "$p" in $pat) ok=1; break ;; esac; done
+      [ "$ok" = 1 ] || { echo "  sin enrutar en $f: $p" >&2; return 1; }
+    done
+  done; }
 # El host corre Caddy 2.6.2, sin `request_buffers` (2.7+): alli es `buffer_requests` (cuerpo entero, con el mismo tope de 3MB).
 caddy_bot_buffers_body() { local f
   caddy_bot_block ops/caddy/Caddyfile.production | grep -Eq '^[[:space:]]*request_buffers 3MB[[:space:]]*$' || return 1
@@ -219,6 +230,8 @@ check "Caddyfile.production y .hostcaddy: el pool bot deja pasar el 503 + Retry-
   "caddy_bot_passes_busy"
 check "Caddyfile.production y .hostcaddy: el pool bot recibe el cuerpo entero en Caddy antes de Ktor (request_body 3MB + request_buffers 3MB, revision 2026-10-22)" \
   "caddy_bot_buffers_body"
+check "Caddyfile.production y .hostcaddy: toda ruta del perfil bot (ops/inventory/routes.bot.txt) cae en el matcher @bot (lanzamiento V1 2026-10-22: /api/v1/public/especialidades daba 404)" \
+  "caddy_bot_routes_all_matched"
 check "compose.production: los dos Ktor bot cortan a Supabase a los 10 s (cabe una escritura antes del borde, revision 2026-10-22)" "bot_upstream_timeout"
 check "compose.production: GC explicito y log de GC en los tres Ktor (CERT-LOAD-1000)" "jvm_gc_explicit"
 check "backend.bot.env.example: mandos de admision, plazo y cache de perfil documentados (CERT-LOAD-1000)" "admission_knobs_documented"

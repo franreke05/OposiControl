@@ -123,6 +123,7 @@ mutate "Caddyfile vuelve a la salud pasiva fail_duration en el pool bot (CERT-LO
 mutate "Caddyfile.hostcaddy vuelve a la salud pasiva en el pool bot (CERT-LOAD-1000)" ops/caddy/Caddyfile.hostcaddy 's/^\t\t\t\tlb_try_interval 250ms$/&\n\t\t\t\tfail_duration 10s\n\t\t\t\tmax_fails 2/' "no expulsa replicas por codigo de estado"
 # Revision 2026-10-22: sin buffer de cuerpo, POST lentos agotan la admision.
 mutate "Caddyfile quita request_buffers del pool bot" $CF '/^\t\t\t\trequest_buffers 3MB$/d' "recibe el cuerpo entero"
+mutate "Caddyfile.hostcaddy sin /api/v1/public/* en @bot" ops/caddy/Caddyfile.hostcaddy 's| /api/v1/public/\*||' "cae en el matcher @bot"
 mutate "Caddyfile.hostcaddy quita buffer_requests del pool bot" ops/caddy/Caddyfile.hostcaddy '/^\t\t\t\tbuffer_requests$/d' "recibe el cuerpo entero"
 mutate "Caddyfile.hostcaddy con request_buffers (Caddy 2.6 no lo admite)" ops/caddy/Caddyfile.hostcaddy 's/^\t\t\t\tbuffer_requests$/\t\t\t\trequest_buffers 3MB/' "recibe el cuerpo entero"
 mutate "Caddyfile quita el tope de 3MB del pool bot" $CF '/^				max_size 3MB$/d' "recibe el cuerpo entero"

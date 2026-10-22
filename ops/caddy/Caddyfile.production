@@ -101,7 +101,7 @@
 		# --- OposiBot (pool de 2 replicas sin estado): auth, consumer y catalogo publico compartido. ---
 		# Webhooks de pago y tienda (Google RTDN, App Store Server Notifications V2): SOLO estos dos prefijos llegan al pool bot; Ktor
 		# autentica cada uno (HMAC sandbox local, OIDC Pub/Sub, JWS de Apple). El resto sigue en deny-by-default.
-		@bot path /v1/auth/* /v1/especialidades /v1/examenes /v1/examenes/* /api/v1/app /api/v1/app/* /api/v1/webhooks/payments/* /api/v1/webhooks/store/*
+		@bot path /v1/auth/* /v1/especialidades /v1/examenes /v1/examenes/* /api/v1/app /api/v1/app/* /api/v1/public/* /api/v1/webhooks/payments/* /api/v1/webhooks/store/*
 		handle @bot {
 			# Tope INCONDICIONAL de 3 MB en el pool bot (revision OposiControl 2026-10-22), tambien multipart: la imagen del foro
 			# (D5-31) llega a 3 MB y el resto de cuerpos ya va acotado a 2 MB por body-limit.caddy.

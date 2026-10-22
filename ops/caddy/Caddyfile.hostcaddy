@@ -61,7 +61,7 @@ api.oposibots.es {
 				}
 			}
 		}
-		@bot path /v1/auth/* /v1/especialidades /v1/examenes /v1/examenes/* /api/v1/app /api/v1/app/* /api/v1/webhooks/payments/* /api/v1/webhooks/store/*
+		@bot path /v1/auth/* /v1/especialidades /v1/examenes /v1/examenes/* /api/v1/app /api/v1/app/* /api/v1/public/* /api/v1/webhooks/payments/* /api/v1/webhooks/store/*
 		handle @bot {
 			request_body {
 				max_size 3MB
