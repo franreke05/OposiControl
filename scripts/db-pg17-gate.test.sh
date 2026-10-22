@@ -77,6 +77,13 @@ fresh; sed -i 's/^      insert into public.preguntas_intento (intento_id, pregun
 [ "$(grep -c '^      select p_intento_id, u.pregunta_id, u.ord::integer, u.rol, u.anul, u.sust$' "$w/$off")" = 1 ] || { echo "TEST FAIL: (f) la mutacion no toca exactamente el congelado vigente"; exit 1; }
 expect_fail "(f) el congelado no liga la revision" "assertions.sql"
 grep -q 'every frozen question bound to a revision' "$tmp/out" || { echo "TEST FAIL: (f) sin la asercion de la revision"; exit 1; }
+# (g)/(h): la carrera debe fallar por su RESULTADO (mensaje semantico de expect/noerr), nunca por la secuenciacion (retencion, bloqueo, senal).
+race_semantic() { # $1 = escenario, $2 = regex BRE del fallo semantico, $3 = regex de los ids de carrera cuya secuenciacion debe estar limpia
+  grep -q "$2" "$tmp/out" || { grep "^  race" "$tmp/out"; echo "TEST FAIL: $1 sin el fallo semantico esperado"; exit 1; }
+  ! grep -q "^  race \($3\): \(la conexion .* no llego a retener\|la conexion .* no se bloqueo\|la senal de liberacion vencio\|espera:\)" "$tmp/out" \
+    || { grep "^  race" "$tmp/out"; echo "TEST FAIL: $1 fallo por la secuenciacion de la carrera, no por el cerrojo"; exit 1; }
+  echo "ok:   $1 -> $(grep "$2" "$tmp/out" | head -1 | sed 's/^ *//')"
+}
 # (g) Mueve la linea del cerrojo `store-key:` de la funcion $2 justo antes de la primera linea de esa funcion que empieza por $3.
 store_mig=supabase/migrations/20261022102900_v1_store_payments_concurrency.sql
 move_lock() {
@@ -89,13 +96,13 @@ move_lock() {
 }
 fresh; move_lock "$w/$store_mig" app_store_refund_reversed "  perform pg_advisory_xact_lock(hashtextextended('wallet:'" || { echo "TEST FAIL: mutA no aplica"; exit 1; }; mutated "$w/$store_mig"
 expect_fail "(g) mutA: cerrojo de la reversion movido bajo la busqueda" "carreras de tienda con dos conexiones"
-grep -q "race R1\.1" "$tmp/out" || { echo "TEST FAIL: (g) mutA no la detecta R1"; exit 1; }
+race_semantic "(g) R1" "^  race R1\.1: '.*' (esperado 'REVERSAL_RECORDED')$" 'R1\.[12]'
 fresh; move_lock "$w/$store_mig" app_store_refund_purchase "  return query select r.outcome" || { echo "TEST FAIL: mutA2 no aplica"; exit 1; }; mutated "$w/$store_mig"
 expect_fail "(g2) mutA2: cerrojo del reembolso movido bajo la busqueda" "carreras de tienda con dos conexiones"
-grep -q "race R2\.1" "$tmp/out" || { echo "TEST FAIL: (g2) mutA2 no la detecta R2"; exit 1; }
+race_semantic "(g2) R2" "^  race R2\.1: '.*' (esperado 'REFUNDED|reembolsada|1|1')$" 'R2\.[12]'
 fresh; move_lock "$w/$store_mig" app_store_credit_purchase "  return query select * from public.app_credit_payment_order(" || { echo "TEST FAIL: mutC no aplica"; exit 1; }; mutated "$w/$store_mig"
 expect_fail "(g3) cerrojo del credito movido tras los huerfanos" "carreras de tienda con dos conexiones"
-grep -q "race R[34]\.1" "$tmp/out" || { echo "TEST FAIL: (g3) no la detecta R3/R4"; exit 1; }
+race_semantic "(g3) R3/R4" "^  race R3\.1: '.*' (esperado 'REVERSAL_HELD')$\|^  race R4\.1: '.*' (esperado 'en_revision|0|0')$" 'R[34]\.[12]'
 r3=supabase/migrations/20261022103000_v1_store_payments_round3.sql
 fresh
 { sed -n '1,/^-- 4\. N3-1:/p' "$w/$r3" | sed '$d'
@@ -103,5 +110,5 @@ fresh
     | sed 's/^create function/create or replace function/; s/^begin$/begin\n  -- mutante: pg_try_advisory_xact_lock solo en el texto; la fila se bloquea antes que la clave/'
   sed -n '/^-- 5\. Subscriptions:/,$p' "$w/$r3"; } > "$w/$r3.mut" && mv "$w/$r3.mut" "$w/$r3"; mutated "$w/$r3"
 expect_fail "(h) N3-1: reconcile fila-antes-que-clave" "carreras de tienda con dos conexiones"
-grep -q "race D1\.[12]: .*40P01\|deadlock" "$tmp/out" || { grep "race" "$tmp/out"; echo "TEST FAIL: (h) sin el 40P01 de D1"; exit 1; }
+race_semantic "(h) D1 40P01" "^  race D1\.[12] [abc]: ERROR: *deadlock detected" 'D1\.[12]'
 echo "db-pg17-gate.test OK ($n escenarios)"
