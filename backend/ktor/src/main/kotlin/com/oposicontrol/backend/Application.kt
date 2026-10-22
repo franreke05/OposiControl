@@ -154,8 +154,9 @@ fun main() {
     // Cierre ordenado ante SIGTERM: `start(wait = true)` registra el shutdown hook y lo ejecuta con estos plazos. Netty deja de
     // aceptar conexiones y espera hasta `shutdownGracePeriod` a que las peticiones en vuelo terminen (hasta
     // `shutdownTimeout` como tope duro); luego `ApplicationStopped` cierra los recursos (Valkey, HttpClient).
-    val graceMillis = System.getenv("SHUTDOWN_GRACE_PERIOD_MS")?.toLongOrNull()?.takeIf { it >= 0 } ?: 5_000L
-    val timeoutMillis = System.getenv("SHUTDOWN_TIMEOUT_MS")?.toLongOrNull()?.takeIf { it >= graceMillis } ?: 25_000L
+    val plan = ShutdownPlan.fromEnvironment { System.getenv(it) }
+    val graceMillis = plan.graceMillis
+    val timeoutMillis = plan.timeoutMillis
     val server = embeddedServer(
         Netty,
         host = host,
@@ -167,7 +168,11 @@ fun main() {
     server.engineConfig.shutdownTimeout = timeoutMillis
     // Hook propio y `start(wait = false)`: el hook de `start(wait = true)` llama a `stop()` con el timeout = grace (valores por
     // defecto de Ktor); aqui el tope duro es `timeoutMillis`. SIGTERM -> deja de aceptar, drena en vuelo, cierra recursos.
-    Runtime.getRuntime().addShutdownHook(Thread({ server.stop(graceMillis, timeoutMillis) }, "ktor-graceful-shutdown"))
+    // CERT-LOAD-1000: antes de parar, DRENAJE (ShutdownDrain): /health/live pasa a 503 y Caddy saca la replica en su siguiente
+    // sonda mientras esta sigue atendiendo; despues el cierre ordenado de siempre.
+    Runtime.getRuntime().addShutdownHook(
+        Thread({ ShutdownDrain.drainThenStop(plan, Thread::sleep) { grace, timeout -> server.stop(grace, timeout) } }, "ktor-graceful-shutdown"),
+    )
     server.start(wait = false)
     Thread.currentThread().join()
 }

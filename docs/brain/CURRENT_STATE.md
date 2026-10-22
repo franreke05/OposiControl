@@ -38,6 +38,7 @@
 * Admision acotada por replica (32 en vuelo, cola 64, espera 2 s) con 503 `SERVER_BUSY` + `Retry-After` inmediato; plazo de 15 s por
   peticion con punto sin retorno tras la primera escritura de negocio; `/health*` y `/metrics` exentas (`AdmissionControl.kt`).
 * Caddy (produccion y host): el pool bot ya no tiene salud pasiva (`max_fails`/`fail_duration`); salud activa `/health/live` cada 5 s.
+  Al apagar, el bot DRENA 10 s con `/health/live` en 503 DRAINING (FA41) antes de cerrar el puerto (`ShutdownDrain.kt`).
   `verify-ops-config.sh` lo vigila (y el 503 sin reintentos, el GC explicito y los mandos documentados).
 * Limitador Valkey asincrono (sin hilo IO), sigue fallando cerrado. Cache de estado de cuenta 30 s (solo cuentas activas, revocacion
   acotada). Lecturas de acceso en paralelo en D2-01/D2-02/D2-03. G1 + log de GC en bot y control.

@@ -758,8 +758,15 @@ internal suspend fun readinessChecks(supabaseCheck: () -> String): Map<String, S
     mapOf("ktor" to "UP", "supabase" to withUpstreamIo(supabaseCheck))
 
 /** D8-07 (openapi/foundation LivenessStatus): `{"status":"UP"}`. Unica definicion, usada por ambos perfiles. */
-fun Route.healthLiveRoute() = get("/health/live") {
-    call.respond(mapOf("status" to "UP"))
+fun Route.healthLiveRoute() = healthLiveRoute { ShutdownDrain.draining }
+
+/** CERT-LOAD-1000 (FA41): durante el drenaje de apagado (ShutdownDrain.kt) responde 503 `{"status":"DRAINING"}` para que el balanceador saque la replica. */
+internal fun Route.healthLiveRoute(draining: () -> Boolean) = get("/health/live") {
+    if (draining()) {
+        call.respond(HttpStatusCode.ServiceUnavailable, mapOf("status" to "DRAINING"))
+    } else {
+        call.respond(mapOf("status" to "UP"))
+    }
 }
 
 /**

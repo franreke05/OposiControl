@@ -105,11 +105,18 @@ components:
         x-pagination: NONE
         x-idempotency: NONE
         x-error-codes: []
-        description: 'Process down means no response. Probes use the status code only.'
+        x-error-envelope-exempt: 'The 503 body is the liveness document itself (status DRAINING), not an error envelope.'
+        description: 'Process down means no response. Probes use the status code only. FA41 (CERT-LOAD-1000, 2026-10-21): during the shutdown drain (SIGTERM, SHUTDOWN_DRAIN_MS) the process keeps serving but answers 503 DRAINING so the load balancer takes it out of rotation before the port closes.'
         security: []
         responses:
           '200':
             description: 'Process is up.'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/LivenessStatus'
+          '503':
+            description: 'Process is draining before shutdown (status DRAINING).'
             content:
               application/json:
                 schema:
@@ -254,8 +261,8 @@ components:
       properties:
         status:
           type: string
-          enum: [UP]
-          description: 'SLICE 0: Ktor emits UP (healthLiveRoute).'
+          enum: [UP, DRAINING]
+          description: 'SLICE 0: Ktor emits UP (healthLiveRoute). FA41: DRAINING (with 503) during the shutdown drain.'
     ReadinessStatus:
       type: object
       required: [status, checks, timestamp]

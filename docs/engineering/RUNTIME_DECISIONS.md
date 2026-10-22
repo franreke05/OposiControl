@@ -130,10 +130,18 @@ Todos los valores por defecto salen de la medicion LOCAL y hay que re-medirlos e
 * **Borde (Caddy, pool bot)**: sin salud pasiva (`max_fails`/`fail_duration`): Caddy cuenta como fallo pasivo tambien el
   `response_header_timeout` y no se puede limitar a fallos de conexion. Solo salud activa en `/health/live` cada 5 s (timeout 4 s).
   El 503 de Ktor es una respuesta y pasa tal cual (sin `lb_retry_match`, `handle_response` ni reescritura de `Retry-After`);
-  `lb_retries 2` / `lb_try_duration 3s` solo reintentan fallos de CONEXION (`dial_timeout 1s`). **Coste aceptado**: una replica
-  que muere sin drenar recibe trafico hasta la siguiente sonda (<= 5 s; con `least_conn` la replica caida, con 0 conexiones, es la
-  preferida, asi que en esa ventana la mayoria de peticiones nuevas fallan con 502). Mitigacion pendiente: drenaje en el apagado
-  (fallar `/health/live` antes de cerrar el puerto) o desplegar replica a replica esperando la sonda. Lo vigila `verify-ops-config.sh`.
+  `lb_retries 2` / `lb_try_duration 3s` solo reintentan fallos de CONEXION (`dial_timeout 1s`). Lo vigila `verify-ops-config.sh`.
+* **Drenaje al apagar** (`ShutdownDrain.kt`, contrato FA41): sin salud pasiva, una replica que cerraba el puerto seguia recibiendo
+  trafico hasta la siguiente sonda (<= 5 s; con `least_conn` la replica caida, con 0 conexiones, es la preferida: 502 para casi
+  todo lo nuevo en esa ventana). Ahora, al recibir SIGTERM, `/health/live` responde **503 `{"status":"DRAINING"}` al instante** y
+  la replica sigue atendiendo (en vuelo y nuevas) durante `SHUTDOWN_DRAIN_MS` (defecto **10 s en `bot`**, 0 en `control`/`combined`;
+  mayor que el intervalo 5 s + tope 4 s de la sonda); despues el cierre ordenado (`SHUTDOWN_GRACE_PERIOD_MS` 5 s, `SHUTDOWN_TIMEOUT_MS` 20 s con
+  drenaje / 25 s sin el). Peor caso 10 + 20 = 30 s < `stop_grace_period: 35s` (lo cruza `ShutdownDrainTest` con el Caddyfile y el
+  compose). Riesgo residual: solo una caida BRUSCA (kill -9, OOM con ExitOnOutOfMemoryError) deja la ventana de <= 5 s.
+  **Despliegue** (`~/redeploy-rolling.sh`, NO versionado en este repo; lo lanza `ops/deploy/release.sh ship`): tiene que ser
+  replica a replica y, antes de parar la siguiente, esperar a que la nueva conteste 200 en `/health/live` **y** a que Caddy la
+  haya sondeado al menos una vez (>= 5 s mas, el `health_interval` del pool bot); si no, las dos replicas pueden quedar fuera de
+  rotacion a la vez. `docker stop` (SIGTERM) respeta el drenaje; no usar `docker kill` ni `stop -t` < 31 s.
 * **Limitador Valkey**: API asincrona de Lettuce, sin hilo de `Dispatchers.IO` mientras espera; tope propio (`commandTimeout`, 2 s) y
   el de Lettuce. Sigue fallando CERRADO (503 `UPSTREAM_UNAVAILABLE`) si Valkey no contesta; `memory` solo en desarrollo.
 * **Cache de estado de cuenta**: clave = `sub` verificado; solo cuentas `activa` + onboarding completo; cualquier otro estado se

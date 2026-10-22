@@ -122,7 +122,9 @@
 				# Ktor rechaza al instante lo que no cabe (503 SERVER_BUSY + Retry-After) y corta por plazo antes del borde; ese 503
 				# es una RESPUESTA, no un error: pasa tal cual al cliente y no se reintenta aqui (sin `lb_retry_match` ni
 				# `handle_response`). Tampoco `unhealthy_status` / `unhealthy_latency` (F-07: dependencia compartida -> caida total).
-				# Coste aceptado: una replica que muere sin drenar puede recibir peticiones hasta la siguiente sonda (<= 5 s);
+				# Al apagarse (SIGTERM) Ktor DRENA: /health/live responde 503 DRAINING y sigue atendiendo SHUTDOWN_DRAIN_MS (10 s >
+				# 5 s + 4 s de la sonda) antes de cerrar el puerto, asi que una parada ordenada no deja 502. Solo una caida brusca
+				# (kill, OOM) recibe peticiones hasta la siguiente sonda (<= 5 s);
 				# lb_retries reintenta los fallos de CONEXION (siempre reintentables) durante lb_try_duration.
 				transport http {
 					# 1 s (red interna): deja sitio a los reintentos de conexion dentro de lb_try_duration 3s.
