@@ -1,0 +1,193 @@
+# STAGING stack on the PRODUCTION host (oposibots-prod-01). Prepared, NOT deployed. Runbook: docs/engineering/STAGING_ON_PROD_HOST_RUNBOOK.md
+#
+#   Cloudflare -> host Caddy (system service, site file ops/caddy/staging/Caddyfile.staging-hostcaddy)
+#              -> 127.0.0.1:18181 ktor-bot-1 (bot) | 127.0.0.1:18183 ktor-control (control) -> STAGING Supabase project (never MAIN)
+#   valkey (own), prometheus (own, minimal, NO Alertmanager: alerts are evaluated and never sent). No Grafana. No container Caddy.
+#
+# Why a standalone file and not an override of compose.production.yaml: an override would inherit `name: oposibots-production`,
+# the prod subnet, the /etc/oposibots/production env paths, and the grafana/alertmanager/caddy services (compose cannot delete a
+# service from an override). One mistyped flag would then act on production. This file shares nothing with it but the image.
+#
+# ALWAYS through the wrapper (it pins -p, -f and --env-file and refuses anything else):
+#   bash ops/deploy/staging/stagingctl.sh config|up|ps|logs|down|isolation-check
+# Equivalent raw command (never without -p and -f):
+#   docker compose -p oposibots-staging --env-file /etc/oposibots/staging/compose.env -f ops/deploy/compose.staging.yaml <cmd>
+#
+# Footprint (it shares CPU/RAM with production): every service has cpus, mem_limit (= memswap_limit: never swaps), pids_limit,
+# cpu_shares 256 (production containers keep the default 1024, so under contention prod gets ~4x the CPU time) and
+# oom_score_adj 500 (under host-wide memory pressure the kernel kills staging before production). Log rotation everywhere.
+# Totals: cpus 1.65 (ceiling, not reservation), memory 2.0 GiB hard (bot 640m + control 1g + valkey 64m + prometheus 320m).
+
+name: oposibots-staging
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+    compress: "true"
+
+x-env-bot: &env-bot
+  - ${STAGING_COMMON_ENV_FILE:-/etc/oposibots/staging/backend.common.env}
+  - ${STAGING_BOT_ENV_FILE:-/etc/oposibots/staging/backend.bot.env}
+x-env-control: &env-control
+  - ${STAGING_COMMON_ENV_FILE:-/etc/oposibots/staging/backend.common.env}
+  - ${STAGING_CONTROL_ENV_FILE:-/etc/oposibots/staging/backend.control.env}
+
+x-ktor: &ktor
+  image: ${BACKEND_IMAGE:?BACKEND_IMAGE es obligatoria (oposicontrol-backend:<sha12>, construida en local y transferida)}
+  restart: unless-stopped
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  pids_limit: 256
+  cpu_shares: 256
+  oom_score_adj: 500
+  healthcheck:
+    test: ["CMD", "curl", "-fsS", "--max-time", "3", "http://127.0.0.1:8080/health/live"]
+    interval: 30s
+    timeout: 5s
+    retries: 3
+    start_period: 60s
+  stop_grace_period: 35s
+  logging: *logging
+  networks:
+    - staging
+  depends_on:
+    valkey:
+      condition: service_healthy
+
+# Values that make staging safe are FIXED here, in `environment:` (it wins over env_file), so a host env file cannot weaken them:
+# production fail-closed rules (APP_ENV=staging), PKCE required, Valkey limiters, every store/credit flag OFF (G1, D8 and both
+# platforms), store reconciliation job off. PAYMENTS_SANDBOX_SECRET is never set: with APP_ENV=staging the process would exit 78.
+x-safety-common: &safety-common
+  APP_ENV: staging
+  SENTRY_ENVIRONMENT: staging
+  METRICS_ENABLED: "true"
+
+services:
+  ktor-bot-1:
+    <<: *ktor
+    hostname: ktor-bot-1
+    env_file: *env-bot
+    environment:
+      <<: *safety-common
+      SERVER_PROFILE: bot
+      JAVA_TOOL_OPTIONS: ${STAGING_BOT_JAVA_TOOL_OPTIONS:--Djava.awt.headless=true -XX:MaxRAMPercentage=55 -XX:InitialRAMPercentage=20 -XX:+ExitOnOutOfMemoryError}
+      AUTH_PKCE_MODE: required
+      AUTH_RATE_LIMIT_MODE: valkey
+      TRUST_PROXY_HEADERS: "true"
+      PAYMENTS_STORE_GOOGLE_PLAY_ENABLED: "false"
+      PAYMENTS_STORE_APP_STORE_ENABLED: "false"
+      PAYMENTS_STORE_LIVE_CREDIT_ENABLED: "false"
+      PAYMENTS_STORE_SUBSCRIPTIONS_ENABLED: "false"
+      PAYMENTS_STORE_SANDBOX: reject
+      PAYMENTS_STORE_JOB_SECONDS: "0"
+      PAYMENTS_REFUNDS_ENABLED: "false"
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    ports:
+      # Loopback only: reachable by the host Caddy, never from outside the host.
+      - "127.0.0.1:${STAGING_BOT_PORT:-18181}:8080"
+    cpus: ${STAGING_BOT_CPUS:-0.6}
+    mem_limit: ${STAGING_BOT_MEM_LIMIT:-640m}
+    memswap_limit: ${STAGING_BOT_MEM_LIMIT:-640m}
+
+  ktor-control:
+    <<: *ktor
+    hostname: ktor-control
+    env_file: *env-control
+    environment:
+      <<: *safety-common
+      SERVER_PROFILE: control
+      # ffmpeg runs OUTSIDE the heap: heap 45 % of 1 GiB (~460 MB), the rest for ffmpeg, metaspace and threads.
+      JAVA_TOOL_OPTIONS: ${STAGING_CONTROL_JAVA_TOOL_OPTIONS:--Djava.awt.headless=true -XX:MaxRAMPercentage=45 -XX:InitialRAMPercentage=20 -XX:+ExitOnOutOfMemoryError}
+      ADMIN_RATE_LIMIT_MODE: valkey
+      PROMETHEUS_URL: http://prometheus:9090
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    ports:
+      - "127.0.0.1:${STAGING_CONTROL_PORT:-18183}:8080"
+    cpus: ${STAGING_CONTROL_CPUS:-0.75}
+    mem_limit: ${STAGING_CONTROL_MEM_LIMIT:-1g}
+    memswap_limit: ${STAGING_CONTROL_MEM_LIMIT:-1g}
+
+  # Own Valkey (never production's): auth and admin limiter counters only, no persistence, password required.
+  valkey:
+    image: ${VALKEY_IMAGE:-valkey/valkey:8.1-alpine}
+    restart: unless-stopped
+    environment:
+      VALKEY_PASSWORD: ${STAGING_VALKEY_PASSWORD:?STAGING_VALKEY_PASSWORD es obligatoria (la misma que va en VALKEY_URL y ADMIN_RATE_LIMIT_VALKEY_URL de staging)}
+    command:
+      - sh
+      - -c
+      - exec valkey-server --requirepass "$$VALKEY_PASSWORD" --save "" --appendonly no --maxmemory 32mb --maxmemory-policy volatile-ttl --bind 0.0.0.0 --protected-mode yes
+    healthcheck:
+      test: ["CMD-SHELL", "valkey-cli -a \"$$VALKEY_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    read_only: true
+    cpus: 0.1
+    mem_limit: 64m
+    memswap_limit: 64m
+    pids_limit: 32
+    cpu_shares: 256
+    oom_score_adj: 500
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 10s
+    logging: *logging
+    networks:
+      - staging
+
+  # Minimal Prometheus: feeds the Control panel system status and lets alert rules be TESTED. No `alerting:` block and no
+  # Alertmanager in this stack, so an alert can never notify anyone. 2 days / 200 MB of TSDB. Production Prometheus cannot reach
+  # this network and does not list these targets.
+  prometheus:
+    image: ${PROMETHEUS_IMAGE:-prom/prometheus:v3.14.0}
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=2d
+      - --storage.tsdb.retention.size=200MB
+    volumes:
+      - ../monitoring/prometheus/prometheus.staging.yml:/etc/prometheus/prometheus.yml:ro
+      - ../monitoring/prometheus/alert_rules.yml:/etc/prometheus/alert_rules.yml:ro
+      - ${STAGING_METRICS_TOKEN_FILE:-/etc/oposibots/staging/metrics_token}:/etc/prometheus/secrets/metrics_token:ro
+      - prometheus-data:/prometheus
+    cpus: 0.2
+    mem_limit: 320m
+    memswap_limit: 320m
+    pids_limit: 64
+    cpu_shares: 256
+    oom_score_adj: 500
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:9090/-/healthy"]
+      interval: 60s
+      timeout: 5s
+      retries: 3
+    stop_grace_period: 20s
+    logging: *logging
+    networks:
+      - staging
+
+volumes:
+  prometheus-data:
+
+# Own bridge network only. No `external: true`: staging never joins a production network (the Docker bridge isolation chains
+# drop traffic between different bridges). Gateway fixed: it is TRUSTED_PROXY_HOSTS for the bot (the host Caddy reaches the
+# loopback ports and arrives through this gateway). The subnet must not overlap production (172.28.0.0/24) nor any other Docker
+# network or host route: checked by ops/deploy/staging/staging-preflight-readonly.sh before `up`.
+networks:
+  staging:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${STAGING_SUBNET:-172.30.28.0/24}
+          gateway: ${STAGING_GATEWAY:-172.30.28.1}

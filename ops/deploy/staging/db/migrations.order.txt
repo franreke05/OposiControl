@@ -1,0 +1,47 @@
+# STAGING schema: repo migrations to apply AFTER the base schema (decision D-STG-1 in docs/engineering/STAGING_ON_PROD_HOST_RUNBOOK.md),
+# in this exact order (= version order; CAND-04 holds: 20261023100200 after 20261022102600). = every file of supabase/migrations whose
+# version is NOT in supabase/baseline/MAIN_MIGRATION_HISTORY.txt, minus the two known history divergences (20260730120000,
+# 20260923103000; README of supabase/baseline). 2 develop _security_ + 34 PENDING (2 non-V1 + 32 V1) + 5 DEBT-156b (2026102310*).
+# Local rehearsal 2026-10-21 (Supabase PG17 17.6.1.171, MAIN data-free catalog capture of 2026-10-14 as base, GoTrue auth.users shape):
+# 40/41 applied; 20261023100100 stopped in its PREFLIGHT only because the bare image has no storage schema (the hosted project has it).
+20261020100000_security_access_request_email_verified
+20261021100000_security_audit_log_append_only
+20261022100000_slice3_attempt_content_revisions
+20261022100100_security_exam_publication_time
+20261022100200_v1_exam_community_required
+20261022100300_v1_wallet_ledger_hardening
+20261022100400_v1_payment_orders
+20261022100500_v1_exam_redeem
+20261022100600_v1_specialty_immutable
+20261022100700_v1_admin_grant
+20261022100800_v1_saved_items
+20261022100900_v1_plan_access_v2
+20261022101000_v1_demo_mode
+20261022101100_v1_attempt_limiter
+20261022101150_v1_plan_catalog
+20261022101200_v1_daily_challenge
+20261022101300_v1_official_rules
+20261022101500_v1_config_bounds
+20261022101600_v1_stats
+20261022101700_v1_ranking
+20261022101800_v1_referral
+20261022101900_v1_foro
+20261022102000_v1_import_reserves
+20261022102100_v1_razonado_markup
+20261022102200_v1_auth_code_binding
+20261022102300_v1_control_rpcs
+20261022102400_v1_refund_order_fix
+20261022102500_v1_auth_binding_hardening
+20261022102600_v1_store_payments
+20261022102700_v1_user_tables_client_write_revoke
+20261022102800_v1_store_payments_fixes
+20261022102900_v1_store_payments_concurrency
+20261022103000_v1_store_payments_round3
+20261022103100_v1_store_payments_round4
+20261022103200_v1_store_payments_round5
+20261022103300_v1_store_payments_round6
+20261023100000_security_content_admin_write_revoke
+20261023100100_security_storage_admin_write_revoke
+20261023100200_security_revenue_excludes_sandbox
+20261023100300_security_moderator_requires_active_account
+20261023100400_security_noticia_trigger_search_path

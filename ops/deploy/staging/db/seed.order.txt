@@ -1,0 +1,17 @@
+# STAGING synthetic seed (ops/local-exam/sql), in the order ops/local-exam/up.mjs applies them. SYNTHETIC ONLY: fixed test UUIDs,
+# @exam.local addresses (not routable), no password hashes, TEST prices. Nothing from MAIN.
+# Excluded on purpose: 97_v1_economy_local.sql (adds the SANDBOX provider: never outside local), 95_explain_volume.sql (volume test),
+# 88_*/89_*/91_feedback_pregunta_local.sql/91_publish_revision_y.sql/96_restore_fixtures.sql (local harness/repairs), 00..03 overlays
+# (they reproduce MAIN objects for the local subset; the staging base schema already has them; 03 needs supabase_admin).
+# Also excluded: 98c_v1_qa_fixtures.sql: written against the LOCAL stats shape (respondidas/correctas/falladas); on the MAIN shape it
+# fails (column "respondidas" does not exist). Rehearsed locally 2026-10-21: the 9 files below apply cleanly after the 41 migrations.
+# The auth.users rows created here have NO password: interactive logins use GoTrue accounts the owner creates (runbook, phase 5).
+90_fixtures.sql
+93_phase_b_scheduled_exam.sql
+94_e2e_users.sql
+95_v1_specialties.sql
+96_v1_communities.sql
+92_phase_b_wallet_entitlement.sql
+98_v1_economy_fixtures.sql
+98b_v1_access_v2_fixtures.sql
+99_v1_admin_fixture.sql

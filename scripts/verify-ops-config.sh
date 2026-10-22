@@ -183,4 +183,82 @@ check "alertas y paneles solo usan metricas que existen en el codigo" "metrics_k
 check "no hay secretos en claro bajo ops/ (JWT, sb_secret_, claves privadas, asignaciones con valor)" "no_secret_literals"
 check "artefactos de produccion presentes (Grafana, runbooks, decisiones)" \
   "test -s ops/deploy/compose.env.example && test -s ops/deploy/backend.common.env.example && test -s ops/monitoring/grafana/provisioning/datasources/prometheus.yml && test -s ops/monitoring/grafana/provisioning/dashboards/dashboards.yml && test -s ops/monitoring/grafana/dashboards/api-overview.json && test -s ops/monitoring/grafana/dashboards/jvm.json && test -s ops/monitoring/grafana/dashboards/dependencies.json && test -s docs/engineering/RUNTIME_DECISIONS.md && test -s docs/engineering/PRODUCTION_RUNBOOK.md && test -s docs/engineering/CLOUDFLARE_RUNBOOK.md"
+# ---------------------------------------------------------------------------------------------------------------------
+# Staging on the production host (ops/deploy/compose.staging.yaml, ops/deploy/staging, ops/caddy/staging, prometheus.staging.yml;
+# runbook docs/engineering/STAGING_ON_PROD_HOST_RUNBOOK.md). Static: no network, no secrets.
+CS=ops/deploy/compose.staging.yaml
+ssvc() { awk -v s="$1" '$0 ~ ("^  " s ":[[:space:]]*$"){f=1;next} f&&/^  [A-Za-z0-9_-]+:/{f=0} f&&/^[A-Za-z#x]/{f=0} f' "$CS"; }
+sxktor() { awk '/^x-ktor:/{f=1;next} f&&/^[A-Za-z#]/{f=0} f' "$CS"; }
+sservices() { awk '/^services:/{f=1;next} f&&/^[A-Za-z#]/{f=0} f&&/^  [A-Za-z0-9_-]+:[[:space:]]*$/' "$CS" | tr -d ' :'; }
+scode() { grep -Ev '^[[:space:]]*#' "$1"; }
+staging_parses() {
+  grep -Eq '^name:[[:space:]]*oposibots-staging[[:space:]]*$' "$CS" || return 1
+  if [ -z "${OPS_SKIP_DOCKER:-}" ] && command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
+    local d; d="$(mktemp -d)"; : >"$d/c"; : >"$d/b"; : >"$d/k"; : >"$d/t"
+    STAGING_COMMON_ENV_FILE="$d/c" STAGING_BOT_ENV_FILE="$d/b" STAGING_CONTROL_ENV_FILE="$d/k" STAGING_METRICS_TOKEN_FILE="$d/t" \
+      BACKEND_IMAGE=x:1 STAGING_VALKEY_PASSWORD=x docker compose -p oposibots-staging -f "$CS" config -q; local rc=$?; rm -rf "$d"; return $rc
+  fi
+  grep -q '^services:' "$CS"
+}
+# Every service: cpus, mem_limit, memswap_limit, pids_limit, cpu_shares 256 (prod keeps 1024), oom_score_adj > 0, rotated logs.
+staging_limits() { local s b n=0
+  for s in $(sservices); do n=$((n + 1)); b="$(ssvc "$s")"; echo "$b" | grep -Eq '<<:[[:space:]]*\*ktor' && b="$b
+$(sxktor)"
+    for k in cpus mem_limit memswap_limit pids_limit logging; do echo "$b" | grep -Eq "^[[:space:]]+$k:" || return 1; done
+    echo "$b" | grep -Eq '^[[:space:]]+cpu_shares:[[:space:]]*256[[:space:]]*$' && echo "$b" | grep -Eq '^[[:space:]]+oom_score_adj:[[:space:]]*[1-9][0-9]*[[:space:]]*$' || return 1
+  done
+  [ "$n" -ge 4 ] && grep -Eq 'max-size:' "$CS" && grep -Eq 'max-file:' "$CS"; }
+# Only the two Ktor publish, only on 127.0.0.1, never production's 18081-18083; one own network, no external join, own subnet.
+staging_network() { local s
+  for s in $(sservices); do
+    if ssvc "$s" | grep -Eq '^[[:space:]]+ports:'; then
+      case "$s" in ktor-bot-1|ktor-control) ;; *) return 1 ;; esac
+      ssvc "$s" | awk '/^    ports:/{f=1;next} f&&/^    [a-z_]+:/{f=0} f' | grep -E '^[[:space:]]+-' | grep -Ev '^[[:space:]]+-[[:space:]]*"127\.0\.0\.1:\$\{STAGING_[A-Z_]+_PORT:-1818[0-9]\}:8080"[[:space:]]*$' | grep -q . && return 1
+    fi
+    ssvc "$s" | grep -Eq '^[[:space:]]+network_mode:' && return 1
+  done
+  ! scode "$CS" | grep -Eq '^[[:space:]]+external:' && ! scode "$CS" | grep -Eq '1808[0-9]' \
+    && test "$(awk '/^networks:/{f=1;next} f&&/^[A-Za-z#]/{f=0} f&&/^  [A-Za-z0-9_-]+:/' "$CS" | wc -l)" = 1 \
+    && grep -Eq 'subnet: \$\{STAGING_SUBNET:-172\.30\.' "$CS" && ! scode "$CS" | grep -Eq '172\.28\.'; }
+staging_env_paths() { local l n=0
+  while IFS= read -r l; do n=$((n + 1)); echo "$l" | grep -Eq '^[[:space:]]+-[[:space:]]+\$\{STAGING_(COMMON|BOT|CONTROL)_ENV_FILE:-/etc/oposibots/staging/backend\.(common|bot|control)\.env\}[[:space:]]*$' || return 1
+  done < <(awk '/^x-env-(bot|control):/{f=1;next} f&&/^[A-Za-z#]/{f=0} f' "$CS" | grep -E '^[[:space:]]+-')
+  [ "$n" = 4 ] && ! scode "$CS" | grep -q '/etc/oposibots/production' && ! ssvc ktor-bot-1 | grep -q 'env-control' && ! ssvc ktor-control | grep -q 'env-bot'; }
+# Payments sandbox only: every store/credit flag false in the bot `environment:`, PKCE required, APP_ENV staging, no sandbox secret.
+staging_safety() { local b; b="$(ssvc ktor-bot-1)"
+  for kv in 'PAYMENTS_STORE_GOOGLE_PLAY_ENABLED: "false"' 'PAYMENTS_STORE_APP_STORE_ENABLED: "false"' 'PAYMENTS_STORE_LIVE_CREDIT_ENABLED: "false"' \
+            'PAYMENTS_STORE_SUBSCRIPTIONS_ENABLED: "false"' 'PAYMENTS_STORE_SANDBOX: reject' 'AUTH_PKCE_MODE: required' 'AUTH_RATE_LIMIT_MODE: valkey'; do
+    echo "$b" | grep -Fq "      $kv" || return 1; done
+  ssvc ktor-control | grep -Fq '      ADMIN_RATE_LIMIT_MODE: valkey' && grep -Eq '^  APP_ENV: staging$' "$CS" \
+    && ssvc ktor-bot-1 | grep -q '<<: \*safety-common' && ssvc ktor-control | grep -q '<<: \*safety-common' \
+    && ! scode "$CS" | grep -q 'PAYMENTS_SANDBOX_SECRET' && ! grep -Eq '^PAYMENTS_SANDBOX_SECRET=' ops/deploy/staging/*.env.example; }
+staging_examples() { local f
+  for f in compose backend.common backend.bot backend.control; do test -s "ops/deploy/staging/$f.env.example" && ! grep -Eq '^[A-Z][A-Z0-9_]*=.+' "ops/deploy/staging/$f.env.example" || return 1; done; }
+staging_prometheus() { local p=ops/monitoring/prometheus/prometheus.staging.yml
+  grep -Eq '^[[:space:]]+env:[[:space:]]*staging$' "$p" && ! scode "$p" | grep -Eq '^[[:space:]]*(alerting|alertmanagers):' \
+    && grep -Eq '^[[:space:]]+credentials_file:[[:space:]]*/etc/prometheus/secrets/metrics_token' "$p" && ! grep -q 'ktor-bot-2' "$p" \
+    && test "$(grep -Ec '^[[:space:]]+env:[[:space:]]*staging$' "$p")" -ge 4 \
+    && ! grep -q 'prometheus.staging' ops/deploy/compose.production.yaml ops/deploy/compose.hostcaddy.override.yaml \
+    && ! scode ops/monitoring/prometheus/prometheus.production.yml | grep -Eq 'oposibots-staging|1818[0-9]|staging'; }
+staging_caddy() { local f=ops/caddy/staging/Caddyfile.staging-hostcaddy
+  grep -Eq '^staging-api\.oposibots\.es \{$' "$f" && grep -Eq '^staging-control\.oposibots\.es \{$' "$f" && ! grep -Eq '^api\.oposibots\.es' "$f" \
+    && ! scode "$f" | grep -Eq '1808[0-9]' && ! scode "$f" | grep -Eq 'health_uri /health/ready' && test "$(grep -c 'health_uri /health/live' "$f")" = 3 \
+    && test "$(grep -c '^	tls /etc/caddy/staging/origin.pem /etc/caddy/staging/origin.key$' "$f")" = 2 \
+    && ! sed -n '/^staging-control/,$p' "$f" | grep -Eq '@bot |127\.0\.0\.1:18181' \
+    && ! grep -q 'staging' ops/caddy/Caddyfile.hostcaddy ops/caddy/Caddyfile.production \
+    && { ! command -v node >/dev/null 2>&1 || node ops/caddy/staging/gen-staging-hostcaddy.mjs --check; }; }
+staging_no_main() { bash ops/deploy/staging/staging-secrets-check.sh --repo; }
+staging_runbook() { local r=docs/engineering/STAGING_ON_PROD_HOST_RUNBOOK.md
+  test -s "$r" && grep -q 'docker system prune' "$r" && grep -q 'stagingctl.sh' "$r" && grep -q 'Control acceptance criteria' "$r" \
+    && ! grep -Eq '^[[:space:]]*(sudo[[:space:]]+)?docker[[:space:]]+compose[[:space:]]' "$r"; }
+check "compose.staging.yaml: proyecto oposibots-staging y parsea (docker compose config -q si hay Docker)" "staging_parses"
+check "compose.staging: cada servicio con cpus, mem_limit, memswap_limit, pids_limit, cpu_shares 256, oom_score_adj > 0 y logs rotados" "staging_limits"
+check "compose.staging: solo los dos Ktor publican y en 127.0.0.1:1818x; una red propia, sin external ni subred de produccion" "staging_network"
+check "compose.staging: env_file solo en /etc/oposibots/staging y por perfil" "staging_env_paths"
+check "compose.staging: APP_ENV=staging, PKCE required, Valkey y pagos de tienda apagados (G1, D8, plataformas) fijados en compose" "staging_safety"
+check "ops/deploy/staging/*.env.example: solo nombres" "staging_examples"
+check "prometheus.staging.yml: env=staging, sin alerting/Alertmanager, con Bearer; produccion no la monta ni raspa staging" "staging_prometheus"
+check "Caddyfile.staging-hostcaddy: hosts staging, upstreams 1818x, /health/live, Origin CA, control sin pool bot, generado y prod intacto" "staging_caddy"
+check "ficheros de staging versionados sin la referencia del proyecto MAIN ni JWT de MAIN" "staging_no_main"
+check "runbook de staging: prohibe prune, usa el wrapper (sin docker compose a pelo) y mapea los criterios de Control" "staging_runbook"
 exit $fail

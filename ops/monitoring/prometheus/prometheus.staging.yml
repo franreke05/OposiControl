@@ -1,0 +1,38 @@
+# Prometheus of the STAGING stack (ops/deploy/compose.staging.yaml). NOT production's: every series carries env="staging".
+# No `alerting:` block on purpose: rules are evaluated (visible at /alerts inside the stack) and NEVER sent to any Alertmanager,
+# so nothing in staging can page or e-mail the on-call. KtorBotPoolDegraded fires by design (staging runs ONE bot replica).
+# Scrape every 60 s: each scrape of a Ktor triggers at most one cached, body-less HEAD to the staging Supabase (30 s cache).
+global:
+  scrape_interval: 60s
+  evaluation_interval: 60s
+  external_labels:
+    env: staging
+
+rule_files:
+  - /etc/prometheus/alert_rules.yml
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets: ["prometheus:9090"]
+        labels:
+          env: staging
+
+  - job_name: ktor
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/secrets/metrics_token
+    static_configs:
+      - targets: ["ktor-bot-1:8080"]
+        labels:
+          env: staging
+          service: oposibots
+          profile: bot
+          replica: bot-1
+      - targets: ["ktor-control:8080"]
+        labels:
+          env: staging
+          service: oposicontrol
+          profile: control
+          replica: control-1
