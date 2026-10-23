@@ -31,7 +31,7 @@ dependencies {
     implementation(platform("io.netty:netty-bom:4.2.17.Final"))
     // CI-OC-DEPS: java-jwt 4.4.0 declara jackson-databind 2.14.2 (avisos HIGH; jackson-core GHSA-h46c/GHSA-r7wm).
     // 2.18.11 es el minimo sin avisos de la linea 2.18; java-jwt solo usa ObjectMapper/JsonNode basicos.
-    implementation(platform("com.fasterxml.jackson:jackson-bom:2.18.11"))
+    implementation(platform("com.fasterxml.jackson:jackson-bom:2.22.4"))
     implementation("io.micrometer:micrometer-registry-prometheus")
     implementation("io.lettuce:lettuce-core:6.5.5.RELEASE")
     // Verificacion de JWT de Supabase (ES256). La clave EC se construye desde el JWKS publico.
