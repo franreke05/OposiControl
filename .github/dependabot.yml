@@ -1,16 +1,29 @@
 # MASTER7-CICD-001: avisos de actualizacion para el catalogo Gradle, las acciones de CI y la herramienta de lint (solo propone PRs;
 # sin secretos). El gate bloqueante es el job `dependency-audit` de ci.yml (OSV sobre el grafo resuelto).
+# Limpieza 2026-10-23 (propietario): UNA vez al mes, todo agrupado en UN PR por ecosistema y contra develop (donde se trabaja).
+# Antes: semanal, hasta 5 PRs por ecosistema y contra main (llegaron a acumularse 11). Cada subida de Gradle exige regenerar
+# gradle/verification-metadata.xml en Linux (docs/engineering/DEPLOYMENT.md) antes de fusionar.
+# Dependabot lee este fichero de la rama por defecto (main): hace efecto cuando develop se fusione en main.
 version: 2
 updates:
   - package-ecosystem: gradle
     directory: /
-    schedule: { interval: weekly }
-    open-pull-requests-limit: 5
+    target-branch: develop
+    schedule: { interval: monthly }
+    open-pull-requests-limit: 1
+    groups:
+      gradle-todo: { patterns: ["*"] }
   - package-ecosystem: github-actions
     directory: /
-    schedule: { interval: weekly }
-    open-pull-requests-limit: 5
+    target-branch: develop
+    schedule: { interval: monthly }
+    open-pull-requests-limit: 1
+    groups:
+      actions-todo: { patterns: ["*"] }
   - package-ecosystem: npm
     directory: /tools/redocly
-    schedule: { interval: weekly }
-    open-pull-requests-limit: 5
+    target-branch: develop
+    schedule: { interval: monthly }
+    open-pull-requests-limit: 1
+    groups:
+      redocly-todo: { patterns: ["*"] }
