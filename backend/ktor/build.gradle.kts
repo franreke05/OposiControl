@@ -41,8 +41,8 @@ dependencies {
     // S1D1/DAY_02 (2026-08-13): sin binding SLF4J los logs (incluidos los
     // errores swallowed en OposiBotsAuthRoutes.authEndpoint) no se veian en
     // ningun lado -- ver auditoria 2026-08-08, riesgo #6 "sin observabilidad".
-    implementation("io.sentry:sentry:8.57.0")
-    implementation("io.sentry:sentry-logback:8.57.0")
+    implementation("io.sentry:sentry:8.61.0")
+    implementation("io.sentry:sentry-logback:8.61.0")
     runtimeOnly(libs.logback.classic)
     testImplementation(kotlin("test"))
     testImplementation(libs.kotlinx.coroutines.test)
