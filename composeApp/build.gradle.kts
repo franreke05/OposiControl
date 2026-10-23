@@ -351,6 +351,11 @@ compose.desktop {
 
             windows {
                 iconFile.set(project.file("packaging/windows/OposiControl.ico"))
+                // Incidente 2026-10-23: el MSI de jpackage BORRA ENTERA la carpeta de instalacion al desinstalar
+                // (RemoveFolderEx sobre [INSTALLDIR]) y el selector de carpeta dejaba instalar en una carpeta con otros
+                // ficheros (se eligio el Escritorio: al desinstalar se perdieron ficheros del usuario). Sin selector, la app
+                // va siempre a su propia carpeta (Archivos de programa\OposiControlAdmin) y el borrado solo toca lo suyo.
+                dirChooser = false
             }
             linux {
                 iconFile.set(project.file("packaging/linux/OposiControl.png"))
