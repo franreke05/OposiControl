@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Genera el panel de escritorio de PRODUCCION a juego con el Ktor de control que corre en el servidor, lo comprueba y
-# deja el instalador .msi en el Escritorio. Con --instalar, ademas actualiza la instalacion local
+# deja los instaladores (.msi y .exe) en Escritorio/OposiBots/Instaladores. Con --instalar, ademas actualiza la instalacion local
 # (%LOCALAPPDATA%\Programs\OposiControl, la del acceso directo), como hacia publicar-oposicontrol.sh.
 #
 # Uso (Git Bash):
@@ -48,10 +48,11 @@ fi
 
 echo "== 3/5 construir (unos minutos)"
 cd "$BUILD_DIR"
-./gradlew :composeApp:createDistributable :composeApp:packageMsi -PoposiProduction=true -PoposiVersion="$VERSION" \
-  -PoposiRelease="control-panel-$VERSION-$SHA" -q --console=plain
+./gradlew :composeApp:createDistributable :composeApp:packageMsi :composeApp:packageExe -PoposiProduction=true \
+  -PoposiVersion="$VERSION" -PoposiRelease="control-panel-$VERSION-$SHA" -q --console=plain
 APP="$BUILD_DIR/composeApp/build/compose/binaries/main/app/OposiControlAdmin"
 MSI="$(ls "$BUILD_DIR"/composeApp/build/compose/binaries/main/msi/OposiControlAdmin-"$VERSION".msi)"
+EXE="$(ls "$BUILD_DIR"/composeApp/build/compose/binaries/main/exe/OposiControlAdmin-"$VERSION".exe)"
 
 echo "== 4/5 comprobar el panel empaquetado"
 CFG="$APP/app/OposiControlAdmin.cfg"
@@ -59,8 +60,12 @@ grep -q "oposi.BASE_URL=https://api.oposibots.es" "$CFG" || { echo "FALLO: el pa
 grep -q "oposi.APP_ENV=prod" "$CFG" || { echo "FALLO: el panel no es de produccion."; exit 1; }
 SECRETAS="$(grep -cE "service_role|sb_secret" "$CFG" || true)"
 [ "$SECRETAS" -eq 0 ] || { echo "FALLO: el panel lleva una clave secreta. No se publica."; exit 1; }
-cp "$MSI" "$DESKTOP/"
-echo "ok: $DESKTOP/$(basename "$MSI")"
+# Los instaladores van a su carpeta del Escritorio (OposiBots/Instaladores), no sueltos.
+DEST="${PANEL_DEST:-$DESKTOP/OposiBots/Instaladores}"
+mkdir -p "$DEST"
+cp "$MSI" "$EXE" "$DEST/"
+echo "ok: $DEST/$(basename "$MSI")"
+echo "ok: $DEST/$(basename "$EXE")"
 
 echo "== 5/5 instalacion local"
 if [ "$INSTALAR" = "--instalar" ]; then

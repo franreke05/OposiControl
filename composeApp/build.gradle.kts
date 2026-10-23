@@ -335,7 +335,7 @@ compose.desktop {
         )
 
         nativeDistributions {
-            targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Deb)
+            targetFormats(TargetFormat.Dmg, TargetFormat.Msi, TargetFormat.Exe, TargetFormat.Deb)
             // CI-OC-RELEASE: el job `desktop-release-linux` comprueba esta lista de modulos con
             // scripts/verify-desktop-runtime-modules.sh.
             // El nombre de la carpeta `.app` sale de ESTE packageName, no del de `macOS {}`:
