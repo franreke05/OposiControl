@@ -61,7 +61,7 @@ grep -q "oposi.APP_ENV=prod" "$CFG" || { echo "FALLO: el panel no es de producci
 SECRETAS="$(grep -cE "service_role|sb_secret" "$CFG" || true)"
 [ "$SECRETAS" -eq 0 ] || { echo "FALLO: el panel lleva una clave secreta. No se publica."; exit 1; }
 # Los instaladores van a su carpeta del Escritorio (OposiBots/Instaladores), no sueltos.
-DEST="${PANEL_DEST:-$DESKTOP/OposiBots/Instaladores}"
+DEST="${PANEL_DEST:-$DESKTOP/OposiBots/Instaladores/Windows}"
 mkdir -p "$DEST"
 cp "$MSI" "$EXE" "$DEST/"
 echo "ok: $DEST/$(basename "$MSI")"

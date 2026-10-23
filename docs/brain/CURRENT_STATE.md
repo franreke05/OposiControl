@@ -1,5 +1,23 @@
 # Current State
 
+## Instaladores del panel y limpieza — 2026-10-23
+
+- **Panel 1.26.29609/29610 para Windows y Mac**, en `Escritorio\OposiBots\Instaladores\{Windows, Mac Arturo (Apple Silicon), Mac Intel}`, con LEEME.
+  - **Windows:** `.exe` y `.msi` (`TargetFormat.Exe`).
+  - **Mac:** `.dmg` arm64 y x64 sin firma, del workflow `macos-desktop-release`, run 39919229400.
+  - Se añadieron a `gradle/verification-metadata.xml` las huellas de compose `desktop-jvm-macos-*` y `skiko-awt-runtime-macos-*`, tomadas de Maven Central con el sha1 contrastado.
+- **INCIDENTE (2026-10-23):** desinstalar el MSI 1.26.29609, instalado por error en `C:\Users\franr\Desktop`, borró esa carpeta entera con ficheros del propietario. El propietario regenera las facturas desde su programa.
+  - **Causa:** el `util:RemoveFolderEx` de jpackage sobre `[INSTALLDIR]`, sumado al selector de carpeta que activa Compose por defecto.
+  - **Arreglo:** `windows { dirChooser = false }` (instalador 1.26.29610, comprobado con `dark.exe`: sin `WixUI_InstallDir`). La segunda barrera queda en DEBT-161.
+  - Panel reinstalado en `C:\Program Files\OposiControlAdmin` con su icono en el Escritorio.
+- **Limpieza:**
+  - los 11 PRs de Dependabot, cerrados (por el propietario);
+  - Dependabot mensual, agrupado y contra develop (efectivo cuando develop pase a main);
+  - solo quedan las ramas locales `develop` y `main` y los worktrees principal, `Lanzamiento` y `PanelBuild`;
+  - borrada la carpeta suelta `OposiControl-mut`;
+  - Escritorio ordenado en `OposiBots\`.
+- GO-6 NO declarado (decisión del propietario, 2026-10-23).
+
 ## Lanzamiento V1 del backend — DESPLEGADO 2026-10-22 — `LIVE_VERIFIED` (humo externo y panel), GO-6 pendiente de la app
 
 - **Producción:**
