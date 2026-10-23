@@ -211,7 +211,7 @@ kotlin {
         jvmMain.dependencies {
             implementation(compose.desktop.currentOs)
             implementation(libs.kotlinx.coroutines.swing)
-            implementation("io.sentry:sentry:8.57.0")
+            implementation("io.sentry:sentry:8.61.0")
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
