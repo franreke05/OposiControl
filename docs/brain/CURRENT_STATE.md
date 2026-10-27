@@ -1,5 +1,9 @@
 # Current State
 
+## Captcha del registro desactivado — 2026-10-27
+
+- `AUTH_CAPTCHA_REQUIRED=false` en `backend.bot.env` del servidor (decision del propietario): la app no tiene captcha y sin la variable produccion lo exige por defecto, asi que el registro desde la app fallaba con INVALID_CAPTCHA. bot-1 y bot-2 recreados en rodante y sanos en `0bb7efe02086`; control sin tocar. Humo externo OK. Deuda: DEBT-162 (captcha en el cliente y volver a `true`).
+
 ## Instaladores del panel y limpieza — 2026-10-23
 
 - **Panel 1.26.29609/29610 para Windows y Mac**, en `Escritorio\OposiBots\Instaladores\{Windows, Mac Arturo (Apple Silicon), Mac Intel}`, con LEEME.
