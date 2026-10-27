@@ -1,5 +1,9 @@
 # Current State
 
+## Redirecciones de autenticacion — 2026-10-27
+
+- `OPOSIBOTS_EMAIL_CONFIRM_REDIRECT_URL=oposibots://auth` y `OPOSIBOTS_PASSWORD_RECOVERY_REDIRECT_URL=oposibots://auth/reset-password` en `backend.bot.env` (faltaban: los correos volvian al Site URL `localhost:3000`). bot-1 y bot-2 recreados y sanos. Pendiente del propietario en Supabase: Redirect URLs con esas dos URLs y Site URL distinto de localhost. El enlace solo verifica en el dispositivo que pidio el registro (PKCE).
+
 ## Captcha del registro desactivado — 2026-10-27
 
 - `AUTH_CAPTCHA_REQUIRED=false` en `backend.bot.env` del servidor (decision del propietario): la app no tiene captcha y sin la variable produccion lo exige por defecto, asi que el registro desde la app fallaba con INVALID_CAPTCHA. bot-1 y bot-2 recreados en rodante y sanos en `0bb7efe02086`; control sin tocar. Humo externo OK. Deuda: DEBT-162 (captcha en el cliente y volver a `true`).
