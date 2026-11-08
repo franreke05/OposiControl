@@ -31,6 +31,8 @@ data class Exam(
     val questionCount: Int,
     val durationMinutes: Int? = null,
     val year: Int? = null,
+    /** FA45 (F15): turno de la convocatoria (`examenes.turno_acceso`: libre, promocion_interna, estabilizacion, discapacidad); `null` = sin indicar. */
+    val accessRoute: String? = null,
     val isOfficial: Boolean = false,
     val coverUrl: String? = null,
     val coverStoragePath: String? = null,

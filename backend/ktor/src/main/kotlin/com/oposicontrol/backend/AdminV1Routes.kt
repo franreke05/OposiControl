@@ -1937,6 +1937,11 @@ data class AdminExamenDto(
     @EncodeDefault val tipoExamen: String = "rafaga",
     @EncodeDefault val tipoAcceso: String = "gratuito",
     val anio: Int? = null,
+    /**
+     * FA45 (F15): turno de la convocatoria (`libre`, `promocion_interna`, `estabilizacion`, `discapacidad`);
+     * `null` = «Sin indicar». NO es [tipoAcceso] (nivel comercial). Ver [canonicalExamAccessRouteOrReject].
+     */
+    val turnoAcceso: String? = null,
     @EncodeDefault val esOficial: Boolean = false,
     @EncodeDefault val activo: Boolean = true,
     val publicadoEn: String? = null,
@@ -2005,6 +2010,7 @@ private val PATCHABLE_EXAMEN_COLUMNS: Map<String, String> = linkedMapOf(
     "tipoExamen" to "tipo_examen",
     "tipoAcceso" to "tipo_acceso",
     "anio" to "anio",
+    "turnoAcceso" to "turno_acceso",
     "esOficial" to "es_oficial",
     "precioTickets" to "precio_tickets",
     "duracionMinutos" to "duracion_minutos",
@@ -2016,7 +2022,7 @@ private val PATCHABLE_EXAMEN_COLUMNS: Map<String, String> = linkedMapOf(
  * clave admitida un `null` es un 400: no hay columna NOT NULL que se pueda vaciar
  * por accidente.
  */
-private val CLEARABLE_EXAMEN_KEYS: Set<String> = setOf("anio", "duracionMinutos")
+private val CLEARABLE_EXAMEN_KEYS: Set<String> = setOf("anio", "duracionMinutos", "turnoAcceso")
 
 /** Mismo 400 y mismo mensaje que daba `call.receive<AdminExamenDto>()`, sin nombres de campo. */
 private fun badExamBody(): Nothing = throw BadRequestException("El cuerpo de la petición no es válido.")
@@ -2049,6 +2055,8 @@ internal fun examenPatchFrom(raw: JsonObject): JsonObject = buildJsonObject {
             "descripcion" -> JsonPrimitive(primitive.textOrBad())
             "tipoExamen" -> JsonPrimitive(canonicalExamTypeOrReject(primitive.textOrBad()))
             "tipoAcceso" -> JsonPrimitive(canonicalExamAccessTypeOrReject(primitive.textOrBad()))
+            // En blanco = «Sin indicar», igual que `null`.
+            "turnoAcceso" -> canonicalExamAccessRouteOrReject(primitive.textOrBad())?.let(::JsonPrimitive) ?: JsonNull
             "anio", "precioTickets", "duracionMinutos" ->
                 JsonPrimitive(primitive.takeUnless { it.isString }?.intOrNull ?: badExamBody())
             "esOficial" -> JsonPrimitive(primitive.takeUnless { it.isString }?.booleanOrNull ?: badExamBody())
@@ -2205,7 +2213,26 @@ private fun canonicalExamAccessTypeOrReject(raw: String): String {
 private fun AdminExamenDto.withCanonicalVocabulary(): AdminExamenDto = copy(
     tipoExamen = canonicalExamTypeOrReject(tipoExamen),
     tipoAcceso = canonicalExamAccessTypeOrReject(tipoAcceso),
+    turnoAcceso = turnoAcceso?.let(::canonicalExamAccessRouteOrReject),
 )
+
+/** FA45 (F15): vocabulario de `examenes.turno_acceso` (`examenes_turno_acceso_check`, 20261108100500). Conjunto cerrado. */
+private val CANONICAL_EXAM_ACCESS_ROUTES: Set<String> = setOf("libre", "promocion_interna", "estabilizacion", "discapacidad")
+
+/**
+ * Normaliza el turno de acceso (recorta, minúsculas) o RECHAZA con 422. En blanco = `null` («Sin indicar»).
+ * Igual que [canonicalExamAccessTypeOrReject]: el mensaje nombra los valores válidos y no devuelve la entrada.
+ */
+internal fun canonicalExamAccessRouteOrReject(raw: String): String? {
+    val normalized = raw.trim().lowercase()
+    if (normalized.isEmpty()) return null
+    if (normalized in CANONICAL_EXAM_ACCESS_ROUTES) return normalized
+    throw BackendDomainException(
+        "EXAM_ACCESS_ROUTE_UNKNOWN",
+        HttpStatusCode.UnprocessableEntity,
+        "El tipo de acceso (turno) no es válido. Los valores admitidos son: libre, promocion_interna, estabilizacion, discapacidad.",
+    )
+}
 
 @Serializable
 private data class AdminExamenRow(
@@ -2219,6 +2246,8 @@ private data class AdminExamenRow(
     val descripcion: String? = null,
     @SerialName("tipo_examen") val tipoExamen: String = "rafaga",
     @SerialName("tipo_acceso") val tipoAcceso: String = "gratuito",
+    // FA45: `null` se omite en el INSERT (`sbJson`, explicitNulls = false): sin valor, la columna no se nombra.
+    @SerialName("turno_acceso") val turnoAcceso: String? = null,
     val anio: Int? = null,
     @SerialName("es_oficial") val esOficial: Boolean = false,
     val activo: Boolean = true,
@@ -2270,6 +2299,7 @@ private fun AdminExamenRow.toDto() = AdminExamenDto(
     descripcion = descripcion.orEmpty(),
     tipoExamen = tipoExamen,
     tipoAcceso = tipoAcceso,
+    turnoAcceso = turnoAcceso,
     anio = anio,
     esOficial = esOficial,
     activo = activo,
@@ -2297,6 +2327,7 @@ private fun AdminExamenDto.toRow(forcedId: String? = null) = AdminExamenRow(
     descripcion = descripcion,
     tipoExamen = tipoExamen,
     tipoAcceso = tipoAcceso,
+    turnoAcceso = turnoAcceso,
     anio = anio,
     esOficial = esOficial,
     activo = activo,

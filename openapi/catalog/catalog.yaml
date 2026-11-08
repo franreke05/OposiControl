@@ -2017,6 +2017,8 @@ components:
           $ref: '../common/identifiers.yaml#/components/schemas/TipoExamen'
         tipoAcceso:
           $ref: '../common/identifiers.yaml#/components/schemas/TipoAcceso'
+        turnoAcceso:
+          $ref: '#/components/schemas/TurnoAcceso'
         especialidadId:
           $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
         comunidadCodigo:
@@ -2037,6 +2039,10 @@ components:
           format: uri
         accessState:
           $ref: '../common/identifiers.yaml#/components/schemas/AccessState'
+    TurnoAcceso:
+      type: [string, 'null']
+      enum: [libre, promocion_interna, estabilizacion, discapacidad, null]
+      description: 'FA45 (2026-11-08, owner decision, additive): the access route (turno) of the official call the exam belongs to. libre = Libre, promocion_interna = Promocion interna, estabilizacion = Estabilizacion, discapacidad = Discapacidad (reserved quota). Null or absent = not set (clients keep their previous subtitle). NOT tipoAcceso (gratuito/premium = commercial tier). Stored in examenes.turno_acceso (CHECK, migration 20261108100500) and set by admins in Control. Clients MUST treat an unknown code as null: the set may grow by a later amendment.'
     AppExamFacets:
       type: [object, 'null']
       description: 'Present only when includeFacets=true.'
@@ -2081,6 +2087,8 @@ components:
           $ref: '../common/identifiers.yaml#/components/schemas/TipoExamen'
         tipoAcceso:
           $ref: '../common/identifiers.yaml#/components/schemas/TipoAcceso'
+        turnoAcceso:
+          $ref: '#/components/schemas/TurnoAcceso'
         especialidadId:
           $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
         comunidadCodigo:
@@ -2142,6 +2150,8 @@ components:
               type: string
             tipoExamen:
               $ref: '../common/identifiers.yaml#/components/schemas/TipoExamen'
+            turnoAcceso:
+              $ref: '#/components/schemas/TurnoAcceso'
             comunidadCodigo:
               type: [string, 'null']
             comunidadNombre:
@@ -2271,6 +2281,8 @@ components:
           minimum: 0
         anio:
           type: [integer, 'null']
+        turnoAcceso:
+          $ref: '#/components/schemas/TurnoAcceso'
         esOficial:
           type: boolean
         demoDisponible:
@@ -2323,6 +2335,8 @@ components:
           minimum: 1
         anio:
           type: integer
+        turnoAcceso:
+          $ref: '#/components/schemas/TurnoAcceso'
         esOficial:
           type: boolean
         demoDisponible:
@@ -2354,6 +2368,9 @@ components:
           minimum: 1
         anio:
           type: [integer, 'null']
+        turnoAcceso:
+          description: 'FA45: null clears it (Sin indicar); absent leaves it unchanged.'
+          $ref: '#/components/schemas/TurnoAcceso'
         esOficial:
           type: boolean
         demoDisponible:

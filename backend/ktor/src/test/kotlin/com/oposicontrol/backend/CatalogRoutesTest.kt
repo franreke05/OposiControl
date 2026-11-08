@@ -186,11 +186,13 @@ class CatalogRoutesTest {
         anio: Int? = 2024,
         penalty: String = "",
         demoListo: Boolean? = null,
+        turno: String? = null,
     ): String =
         """{"id":"$id","codigo_examen":"EX-${id.takeLast(3)}","titulo":"$titulo","descripcion":"desc","tipo_examen":"$tipo","tipo_acceso":"$acceso",""" +
             """"especialidad_id":"$especialidad","total_preguntas":10,"duracion_minutos":60,"anio":${anio ?: "null"},""" +
             """"portada_storage_path":${cover?.let { "\"$it\"" } ?: "null"},"publicado_en":"$publicado","demo_disponible":$demo,$penalty""" +
             (demoListo?.let { """"demo_listo":$it,""" } ?: "") +
+            (turno?.let { """"turno_acceso":"$it",""" } ?: "") +
             """"comunidades_autonomas":${comunidad?.let { """{"codigo":"$it"}""" } ?: "null"}}"""
 
     private fun premiumRow(end: String? = "2099-01-01T00:00:00+00:00", estado: String = "activa", flag: Boolean = true) =
@@ -495,6 +497,41 @@ class CatalogRoutesTest {
             assertTrue(body.contains("UNKNOWN_FIELD"), body)
         }
         assertTrue(upstream.sent.isEmpty(), "un parametro desconocido no debe producir ninguna lectura upstream: ${upstream.urls}")
+    }
+
+    // =================================================================== FA45 (F15): turno de acceso
+
+    @Test
+    fun theAccessRouteIsServedOnListDetailAndCollectionAndADriftedValueIsNull() = testApplication {
+        application { catalogModule() }
+        val e1 = "e1111111-1111-4111-8111-111111111111"
+        val e2 = "e2222222-2222-4222-8222-222222222222"
+        val e3 = "e3333333-3333-4333-8333-333333333333"
+        upstream.exams = { "[${exam(e1, turno = "promocion_interna")},${exam(e2)},${exam(e3, turno = "concurso")}]" }
+        val listBody = client.getAs("/api/v1/app/examenes").bodyAsText()
+        assertConforms("D2-01", listBody)
+        val list = JsonObjectOf(listBody)["items"]!!.jsonArray.map { it.jsonObject }.associateBy { it["id"]!!.jsonPrimitive.content }
+        assertEquals("promocion_interna", list.getValue(e1)["turnoAcceso"]!!.jsonPrimitive.content)
+        assertEquals("gratuito", list.getValue(e1)["tipoAcceso"]!!.jsonPrimitive.content, "tipoAcceso (nivel comercial) no cambia")
+        assertNull(list.getValue(e2)["turnoAcceso"]?.takeUnless { it is kotlinx.serialization.json.JsonNull }, "sin indicar")
+        assertNull(list.getValue(e3)["turnoAcceso"]?.takeUnless { it is kotlinx.serialization.json.JsonNull }, "un valor fuera del conjunto nunca sale")
+        assertTrue(upstream.urls.any { it.contains("select=id,codigo_examen") && it.contains(",turno_acceso,") }, "la lectura pide la columna")
+
+        upstream.examById = { "[${exam(e1, turno = "libre")}]" }
+        val detail = client.getAs("/api/v1/app/examenes/$e1").bodyAsText()
+        assertConforms("D2-02", detail)
+        assertEquals("libre", JsonObjectOf(detail)["examen"]!!.jsonObject["turnoAcceso"]!!.jsonPrimitive.content)
+
+        upstream.collection = collectionOf(
+            listOf(
+                CollectionEntry(e1, "2026-10-07T09:00:00+00:00", exam(e1, turno = "discapacidad")),
+                CollectionEntry(e2, "2026-10-06T09:00:00+00:00", exam(e2)),
+            ),
+        )
+        val mine = client.myExams("vista=COLECCION")
+        val examenes = mine["items"]!!.jsonArray.map { it.jsonObject["examen"]!!.jsonObject }
+        assertEquals("discapacidad", examenes[0]["turnoAcceso"]!!.jsonPrimitive.content)
+        assertNull(examenes[1]["turnoAcceso"]?.takeUnless { it is kotlinx.serialization.json.JsonNull })
     }
 
     // =================================================================== V1 STEP 2: comunidad legible

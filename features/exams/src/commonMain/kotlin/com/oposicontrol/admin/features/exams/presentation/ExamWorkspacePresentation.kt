@@ -796,6 +796,7 @@ fun hasUnsavedExamChanges(state: ExamsState, exam: Exam?): Boolean {
         // «00» y «0» son el mismo precio (D8). Un campo vaciado sí cuenta: no es 0.
         state.editorPriceTickets.trim().toIntOrNull() != exam.priceTickets ||
         state.editorYear != exam.year?.toString().orEmpty() ||
+        state.editorAccessRoute != exam.accessRoute ||
         state.editorDurationMinutes != exam.durationMinutes?.toString().orEmpty() ||
         state.editorIsOfficial != exam.isOfficial
 }

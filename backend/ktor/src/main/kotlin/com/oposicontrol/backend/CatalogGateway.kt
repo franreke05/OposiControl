@@ -86,6 +86,8 @@ internal data class CatalogExamRow(
     val descripcion: String? = null,
     @SerialName("tipo_examen") val tipoExamen: String,
     @SerialName("tipo_acceso") val tipoAcceso: String,
+    /** FA45 (F15): turno de la convocatoria (libre, promocion_interna, estabilizacion, discapacidad); `null` = sin indicar. NO es [tipoAcceso]. */
+    @SerialName("turno_acceso") val turnoAcceso: String? = null,
     @SerialName("especialidad_id") val especialidadId: String,
     @SerialName("total_preguntas") val totalPreguntas: Int = 0,
     @SerialName("duracion_minutos") val duracionMinutos: Int? = null,
@@ -487,7 +489,7 @@ internal class CatalogGateway(
     companion object {
         /** Solo metadatos de examen. NUNCA preguntas, opciones ni soluciones (SEC-004). */
         internal const val EXAM_COLUMNS =
-            "id,codigo_examen,titulo,descripcion,tipo_examen,tipo_acceso,especialidad_id,total_preguntas,duracion_minutos,anio," +
+            "id,codigo_examen,titulo,descripcion,tipo_examen,tipo_acceso,turno_acceso,especialidad_id,total_preguntas,duracion_minutos,anio," +
                 "portada_storage_path,publicado_en,demo_disponible,demo_listo,comprable_con_tickets,precio_tickets,dias_acceso_compra,penalizacion_num,penalizacion_den,penalizacion_racional,comunidades_autonomas(codigo)"
         internal const val LATEST_ATTEMPTS_FETCH_LIMIT = 500
 

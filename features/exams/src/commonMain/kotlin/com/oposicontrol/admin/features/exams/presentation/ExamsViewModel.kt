@@ -283,6 +283,7 @@ class ExamsViewModel(
             is ExamsIntent.UpdateExamStatus -> editExamForm { it.copy(editorStatus = intent.value) }
             is ExamsIntent.UpdateTypeAccess -> editExamForm { it.copy(editorTypeAccess = intent.value) }
             is ExamsIntent.UpdateYear -> editExamForm { it.copy(editorYear = intent.value.filter { c -> c.isDigit() }.take(4)) }
+            is ExamsIntent.UpdateAccessRoute -> editExamForm { it.copy(editorAccessRoute = intent.value) }
             is ExamsIntent.ToggleIsOfficial -> editExamForm { it.copy(editorIsOfficial = intent.value) }
             is ExamsIntent.UpdateDurationMinutes -> editExamForm { it.copy(editorDurationMinutes = intent.value.filter { c -> c.isDigit() }.take(4)) }
             is ExamsIntent.UpdatePriceTickets -> editExamForm { it.copy(editorPriceTickets = intent.value.filter { char -> char.isDigit() }.take(9)) }
@@ -495,6 +496,7 @@ class ExamsViewModel(
             state.editorCode.isNotBlank() ||
             state.editorSpecialtyId.isNotBlank() ||
             state.editorYear.isNotBlank() ||
+            state.editorAccessRoute != null ||
             state.editorDurationMinutes.isNotBlank() ||
             state.editorCommunityId != null ||
             state.editorTypeExam != NewExamDefaults.TYPE_EXAM ||
@@ -742,6 +744,7 @@ class ExamsViewModel(
                 editorPublishFrom = exam.publishFrom?.toString().orEmpty(),
                 editorTypeAccess = exam.typeAccess,
                 editorYear = exam.year?.toString().orEmpty(),
+                editorAccessRoute = exam.accessRoute,
                 editorIsOfficial = exam.isOfficial,
                 editorDurationMinutes = exam.durationMinutes?.toString().orEmpty(),
                 selectedQuestionId = null,
@@ -799,6 +802,7 @@ class ExamsViewModel(
                 editorPublishFrom = rafaga.publishFrom?.toString().orEmpty(),
                 editorTypeAccess = if (rafaga.priceTickets > 0) "premium" else "gratuito",
                 editorYear = "",
+                editorAccessRoute = null,
                 editorIsOfficial = false,
                 editorDurationMinutes = "",
                 questions = UiAsync.Empty,
@@ -943,6 +947,7 @@ class ExamsViewModel(
                 editorPublishFrom = "",
                 editorTypeAccess = NewExamDefaults.TYPE_ACCESS,
                 editorYear = "",
+                editorAccessRoute = null,
                 editorIsOfficial = NewExamDefaults.IS_OFFICIAL,
                 editorDurationMinutes = "",
                 questions = UiAsync.Empty,
@@ -1115,6 +1120,7 @@ class ExamsViewModel(
             questionCount = currentQuestions.size,
             durationMinutes = durationMinutes,
             year = year,
+            accessRoute = currentState().editorAccessRoute,
             isOfficial = currentState().editorIsOfficial,
             // La portada ya no se sube ni se elige: se deduce del tipo y de la comunidad
             // (`ExamCoverResolver`). Las columnas legacy de Storage se conservan tal cual.

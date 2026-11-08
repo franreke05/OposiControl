@@ -24,6 +24,14 @@
 - No cambiado a propósito: `reto_pool` sigue usando solo las marcas explícitas para la inmersiva del reto diario.
 - Contrato: FA44 solo texto (`attempts.yaml` D2-03 / `esDemo`), sin cambio de forma; registro en CONTRACT_FREEZE.md (repo OposiBot) PENDING_OWNER. La app no necesita cambio (lee `accessState == DEMO`).
 
+## Turno de acceso del examen — 2026-11-08 (rama local `f15/exam-access-type` desde develop `04e5eb5e`, sin push) — `CURRENT_IMPLEMENTATION`, `LIVE_VERIFIED: NO`
+
+- Decision del propietario 2026-11-08 (F15), enmienda FA45 (`openapi/catalog/catalog.yaml`, aditiva): nuevo dato OPCIONAL del examen `turnoAcceso` = `libre | promocion_interna | estabilizacion | discapacidad | null` ("Sin indicar"). NO es `tipoAcceso` (gratuito/premium). Ningun documento de dominio del repo definia este vocabulario; el conjunto cerrado viene del brief del propietario. Un sistema selectivo (oposicion / concurso-oposicion) es otro eje y NO se modela.
+- Migracion PENDIENTE `20261108100500_v1_exam_turno_acceso` (columna + CHECK, sin relleno; `app_my_exams_collection` sirve el dato). No aplicada a MAIN; no anadida a `ops/deploy/v1/main-migrations.manifest`.
+- Ktor: D2-01, D2-02 y D2-13 (las tres vistas) sirven `turnoAcceso` (un valor fuera del conjunto sale `null`); admin `POST/PATCH /api/v1/admin/examenes` acepta `turnoAcceso` (normaliza; vacio o `null` = borrar; otro valor 422 `EXAM_ACCESS_ROUTE_UNKNOWN`; ausente = intacto; en el INSERT sin valor la columna no se nombra). Sin rutas nuevas.
+- Control: editor de examen, pestana Basica > Ambito y clasificacion, desplegable "Tipo de acceso" (Sin indicar / Libre / Promocion interna / Estabilizacion / Discapacidad). La importacion (PDF de preguntas) no escribe metadatos de examen: sin cambio. El editor movil no lo muestra (conserva el valor al guardar).
+- ORDEN DE DESPLIEGUE: migracion antes del Ktor (ver `docs/engineering/DEPLOYMENT.md`).
+
 ## Redirecciones de autenticacion — 2026-10-27
 
 - `OPOSIBOTS_EMAIL_CONFIRM_REDIRECT_URL=oposibots://auth` y `OPOSIBOTS_PASSWORD_RECOVERY_REDIRECT_URL=oposibots://auth/reset-password` en `backend.bot.env` (faltaban: los correos volvian al Site URL `localhost:3000`). bot-1 y bot-2 recreados y sanos. Pendiente del propietario en Supabase: Redirect URLs con esas dos URLs y Site URL distinto de localhost. El enlace solo verifica en el dispositivo que pidio el registro (PKCE).

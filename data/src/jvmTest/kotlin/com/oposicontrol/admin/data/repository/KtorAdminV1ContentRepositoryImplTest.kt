@@ -624,7 +624,7 @@ class KtorAdminV1ContentRepositoryImplTest {
         assertEquals(
             setOf(
                 "codigoExamen", "especialidadId", "comunidadId", "titulo", "descripcion", "tipoExamen",
-                "tipoAcceso", "anio", "esOficial", "precioTickets", "duracionMinutos",
+                "tipoAcceso", "anio", "turnoAcceso", "esOficial", "precioTickets", "duracionMinutos",
             ),
             patch.keys,
         )
@@ -632,6 +632,7 @@ class KtorAdminV1ContentRepositoryImplTest {
         assertEquals("0", patch.getValue("precioTickets").toString())
         assertEquals("\"rafaga\"", patch.getValue("tipoExamen").toString())
         assertEquals("\"gratuito\"", patch.getValue("tipoAcceso").toString())
+        assertEquals("null", patch.getValue("turnoAcceso").toString(), "FA45: Sin indicar viaja como null explicito")
         assertEquals("\"\"", patch.getValue("descripcion").toString())
         assertEquals("\"EX-1\"", patch.getValue("codigoExamen").toString())
         listOf(
