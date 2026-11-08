@@ -1,5 +1,17 @@
 # Current State
 
+## Demo automática (F14) — 2026-11-08 — local, sin push, NO aplicada a MAIN
+
+- Decisión del propietario (del cliente vía el propietario, 2026-11-08): quien no tiene acceso puede probar siempre ~5 preguntas de cualquier examen publicado sin que Control marque nada.
+- Rama local `f14/auto-demo` (desde develop `04e5eb5e`). Migración pendiente `20261108100300_v1_auto_demo`:
+  - conjunto efectivo = el explícito si está completo (siempre gana); si no, los N primeros principales (no reserva) por `posicion`, no anulados y con la pregunta activa (N = `demo_preguntas`, 5); menos de N = sin demo (falla cerrado);
+  - `examenes.demo_disponible` pasa a defecto `true` con exclusión explícita (`false`), y se encienden todos los existentes (ni el panel ni el Ktor escribían la columna). `DEMO_SET_INCOMPLETE` deja de aplicarse (el disparador queda como paso libre); `DEMO_SET_FULL` sigue;
+  - `exam_start_verdict`, `app_start_exam_attempt` y `app_congelar_preguntas_intento(..., true)` usan el conjunto efectivo; el intento nunca alcanza una pregunta de fuera, la demo no cuenta y los límites por usuario/IP siguen;
+  - columna calculada `public.demo_listo(examenes)` (solo `service_role`): el Ktor anuncia DEMO solo si la base puede servir el conjunto. ORDEN de despliegue: migración ANTES de la imagen.
+- El veredicto de acceso (SQL y `EntitlementPolicy`) no cambia: la paridad se mantiene. `permite_demos` de la especialidad SÍ se aplica (en `exam_gate`/`exam_access_verdict` y en el gemelo Kotlin).
+- No cambiado a propósito: `reto_pool` sigue usando solo las marcas explícitas para la inmersiva del reto diario.
+- Contrato: FA44 solo texto (`attempts.yaml` D2-03 / `esDemo`), sin cambio de forma; registro en CONTRACT_FREEZE.md (repo OposiBot) PENDING_OWNER. La app no necesita cambio (lee `accessState == DEMO`).
+
 ## Redirecciones de autenticacion — 2026-10-27
 
 - `OPOSIBOTS_EMAIL_CONFIRM_REDIRECT_URL=oposibots://auth` y `OPOSIBOTS_PASSWORD_RECOVERY_REDIRECT_URL=oposibots://auth/reset-password` en `backend.bot.env` (faltaban: los correos volvian al Site URL `localhost:3000`). bot-1 y bot-2 recreados y sanos. Pendiente del propietario en Supabase: Redirect URLs con esas dos URLs y Site URL distinto de localhost. El enlace solo verifica en el dispositivo que pidio el registro (PKCE).
