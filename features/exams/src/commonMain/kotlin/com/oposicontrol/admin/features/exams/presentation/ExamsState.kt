@@ -70,6 +70,8 @@ data class ExamsState(
     val editorPublishFrom: String = "",
     val editorTypeAccess: String = NewExamDefaults.TYPE_ACCESS,
     val editorYear: String = "",
+    /** FA45 (F15): código del turno de acceso (`examenes.turno_acceso`); `null` = «Sin indicar». */
+    val editorAccessRoute: String? = null,
     val editorIsOfficial: Boolean = NewExamDefaults.IS_OFFICIAL,
     val editorDurationMinutes: String = "",
     /**

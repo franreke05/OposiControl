@@ -116,6 +116,9 @@ sealed interface ExamsIntent {
     data class UpdatePublishFrom(val value: String) : ExamsIntent
     data class UpdateTypeAccess(val value: String) : ExamsIntent
     data class UpdateYear(val value: String) : ExamsIntent
+
+    /** FA45 (F15): `null` = «Sin indicar». */
+    data class UpdateAccessRoute(val value: String?) : ExamsIntent
     data class ToggleIsOfficial(val value: Boolean) : ExamsIntent
     data class UpdateDurationMinutes(val value: String) : ExamsIntent
     data class UpdateQuestionTitle(val value: String) : ExamsIntent

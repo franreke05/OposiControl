@@ -138,6 +138,25 @@ fun examHeaderCode(state: ExamsState, exam: Exam?): String? =
  */
 const val EXAM_NO_YEAR: String = "Sin año"
 
+/** FA45 (F15): el turno vacío. Es la primera opción del desplegable y lo que dice cuando no hay valor. */
+const val EXAM_NO_ACCESS_ROUTE: String = "Sin indicar"
+
+/**
+ * FA45 (F15): los turnos de acceso, código de `examenes.turno_acceso` → etiqueta. Mismo conjunto cerrado que el CHECK
+ * `examenes_turno_acceso_check` y que el servidor (`canonicalExamAccessRouteOrReject`). NO es el tipo de acceso comercial
+ * (gratuito/premium). Las etiquetas son las que enseña OposiBot bajo el título de la tarjeta.
+ */
+val EXAM_ACCESS_ROUTE_OPTIONS: List<Pair<String, String>> = listOf(
+    "libre" to "Libre",
+    "promocion_interna" to "Promoción interna",
+    "estabilizacion" to "Estabilización",
+    "discapacidad" to "Discapacidad",
+)
+
+/** La etiqueta del turno del editor; un código desconocido (deriva) se enseña tal cual para no ocultarlo. */
+fun examAccessRouteLabel(code: String?): String =
+    code?.let { value -> EXAM_ACCESS_ROUTE_OPTIONS.firstOrNull { it.first == value }?.second ?: value } ?: EXAM_NO_ACCESS_ROUTE
+
 fun examYearLabel(state: ExamsState): ExamFieldLabel =
     state.editorYear.trim().takeIf { it.isNotEmpty() }
         ?.let { ExamFieldLabel(it, ExamFieldOrigin.VALUE) }

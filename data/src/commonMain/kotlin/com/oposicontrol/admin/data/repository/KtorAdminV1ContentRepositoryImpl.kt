@@ -1067,6 +1067,8 @@ private data class AdminExamenDto(
     val tipoExamen: String = "rafaga",
     val tipoAcceso: String = "gratuito",
     val anio: Int? = null,
+    /** FA45 (F15): turno de acceso; `null` = sin indicar (o un backend anterior que no lo sirve). */
+    val turnoAcceso: String? = null,
     val esOficial: Boolean = false,
     val activo: Boolean = true,
     val publicadoEn: String? = null,
@@ -1386,6 +1388,7 @@ private fun AdminExamenDto.toExam(specialtyName: String) = Exam(
     questionCount = totalPreguntas ?: 0,
     durationMinutes = duracionMinutos,
     year = anio,
+    accessRoute = turnoAcceso,
     isOfficial = esOficial,
     coverUrl = portadaUrl,
     coverStoragePath = portadaStoragePath,
@@ -1445,6 +1448,7 @@ private fun Exam.toDto(typeExam: String) = AdminExamenDto(
     tipoExamen = typeExam,
     tipoAcceso = typeAccess,
     anio = year,
+    turnoAcceso = accessRoute,
     esOficial = isOfficial,
     activo = status != ExamStatus.ARCHIVED,
     publicadoEn = publishedAt?.toString(),
@@ -1473,6 +1477,8 @@ private fun AdminExamenDto.toExamPatchBody(): JsonObject = buildJsonObject {
     put("tipoExamen", JsonPrimitive(tipoExamen))
     put("tipoAcceso", JsonPrimitive(tipoAcceso))
     put("anio", JsonPrimitive(anio))
+    // FA45: `null` explícito = «Sin indicar» (merge-patch); un backend anterior ignora la clave.
+    put("turnoAcceso", JsonPrimitive(turnoAcceso))
     put("esOficial", JsonPrimitive(esOficial))
     put("precioTickets", JsonPrimitive(precioTickets))
     put("duracionMinutos", JsonPrimitive(duracionMinutos))

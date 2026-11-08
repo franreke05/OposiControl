@@ -7,6 +7,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.Dp
 import com.oposicontrol.admin.core.ui.components.AppIcon
+import com.oposicontrol.admin.core.ui.components.DropdownField
 import com.oposicontrol.admin.core.ui.components.FormSection
 import com.oposicontrol.admin.core.ui.components.Help
 import com.oposicontrol.admin.core.ui.components.LabeledField
@@ -137,55 +138,74 @@ internal fun ExamBasicInfoSection(
         // -------------------------------------------------------------------
         FormSection(
             title = "Ámbito y clasificación",
-            description = "Define la especialidad, el ámbito geográfico y el año del examen.",
+            description = "Define la especialidad, el ámbito geográfico, el año y el tipo de acceso del examen.",
             icon = AppIcon.LOCATION,
             iconRole = SemanticRole.INFO,
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+            Column(verticalArrangement = Arrangement.spacedBy(Spacing.field)) {
+                Column(verticalArrangement = Arrangement.spacedBy(Spacing.xs)) {
+                    ExamFieldRow(
+                        {
+                            ExamSpecialtyPicker(
+                                state = state,
+                                exam = exam,
+                                onSelected = { value -> onIntent(ExamsIntent.UpdateSpecialtyId(value)) },
+                                onRetry = retry,
+                                modifier = it,
+                            )
+                        },
+                        {
+                            ExamCommunityPicker(
+                                communities = state.communities,
+                                selectedId = state.editorCommunityId,
+                                isNew = isNew,
+                                onSelected = { value -> onIntent(ExamsIntent.UpdateCommunityId(value)) },
+                                isError = examFieldError(state)?.field == ExamField.COMMUNITY,
+                                onRetry = retry,
+                                modifier = it,
+                            )
+                        },
+                        {
+                            LabeledField(
+                                label = "Año",
+                                value = state.editorYear,
+                                onValueChange = { value -> onIntent(ExamsIntent.UpdateYear(value)) },
+                                // «Sin año», y no un «2026» gris: un placeholder con forma
+                                // de valor se leía como el año del examen mientras la ficha
+                                // del resumen decía «Sin año» — la misma pantalla
+                                // contradiciéndose. Es el mismo texto que la ficha (D6).
+                                placeholder = EXAM_NO_YEAR,
+                                modifier = it,
+                                maxWidth = Dp.Unspecified,
+                            )
+                        },
+                        spans = ExamBasicInfoSizing.scopeSpans,
+                    )
+                    // El porqué de un selector sin catálogo, debajo de la fila y no
+                    // dentro de su celda: las tres celdas miden lo mismo (P2-1).
+                    ExamPickerNotices(
+                        listOfNotNull(
+                            specialtyPickerNotice(state.specialties, isNew = isNew),
+                            communityPickerNotice(state.editorCommunityId, state.communities, isNew = isNew),
+                        ),
+                    )
+                }
+                // FA45 (F15): el turno de la convocatoria. OposiBot lo enseña bajo el título de la tarjeta
+                // («Promoción interna»); «Sin indicar» deja la tarjeta como estaba. Una celda de la misma
+                // rejilla (2 de 6), alineada con Especialidad; el resto de la fila queda libre.
                 ExamFieldRow(
                     {
-                        ExamSpecialtyPicker(
-                            state = state,
-                            exam = exam,
-                            onSelected = { value -> onIntent(ExamsIntent.UpdateSpecialtyId(value)) },
-                            onRetry = retry,
-                            modifier = it,
-                        )
-                    },
-                    {
-                        ExamCommunityPicker(
-                            communities = state.communities,
-                            selectedId = state.editorCommunityId,
-                            isNew = isNew,
-                            onSelected = { value -> onIntent(ExamsIntent.UpdateCommunityId(value)) },
-                            isError = examFieldError(state)?.field == ExamField.COMMUNITY,
-                            onRetry = retry,
-                            modifier = it,
-                        )
-                    },
-                    {
-                        LabeledField(
-                            label = "Año",
-                            value = state.editorYear,
-                            onValueChange = { value -> onIntent(ExamsIntent.UpdateYear(value)) },
-                            // «Sin año», y no un «2026» gris: un placeholder con forma
-                            // de valor se leía como el año del examen mientras la ficha
-                            // del resumen decía «Sin año» — la misma pantalla
-                            // contradiciéndose. Es el mismo texto que la ficha (D6).
-                            placeholder = EXAM_NO_YEAR,
+                        DropdownField(
+                            label = "Tipo de acceso",
+                            selectedLabel = examAccessRouteLabel(state.editorAccessRoute),
+                            options = listOf<Pair<String?, String>>(null to EXAM_NO_ACCESS_ROUTE) + EXAM_ACCESS_ROUTE_OPTIONS,
+                            onSelect = { value -> onIntent(ExamsIntent.UpdateAccessRoute(value)) },
                             modifier = it,
                             maxWidth = Dp.Unspecified,
                         )
                     },
-                    spans = ExamBasicInfoSizing.scopeSpans,
-                )
-                // El porqué de un selector sin catálogo, debajo de la fila y no
-                // dentro de su celda: las tres celdas miden lo mismo (P2-1).
-                ExamPickerNotices(
-                    listOfNotNull(
-                        specialtyPickerNotice(state.specialties, isNew = isNew),
-                        communityPickerNotice(state.editorCommunityId, state.communities, isNew = isNew),
-                    ),
+                    { },
+                    spans = ExamBasicInfoSizing.accessRouteSpans,
                 )
             }
         }
@@ -219,6 +239,9 @@ private object ExamBasicInfoSizing {
 
     /** Especialidad 2 + Comunidad 2 + Año 2: los tres a igual ancho y en la misma rejilla. */
     val scopeSpans: List<Int> = listOf(2, 2, 2)
+
+    /** Tipo de acceso 2 + hueco 4: la celda mide y empieza exactamente como Especialidad. */
+    val accessRouteSpans: List<Int> = listOf(2, 4)
 
     /** Tres líneas: lo justo para que el hueco se lea como un área de texto y no como un input. */
     const val descriptionMinLines: Int = 3
