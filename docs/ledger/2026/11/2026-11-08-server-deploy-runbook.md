@@ -10,10 +10,12 @@ Decision del propietario 2026-11-08: desplegar estos cambios de servidor ANTES d
 | `f3/avatar` | `20261108100000_v1_avatar` | FA42 | D1-14 `PUT` / D1-15 `DELETE /api/v1/app/me/avatar` (bytes crudos jpeg/png, 1..2.000.000 B); `avatarUrl` firmada (1 h) en `/me`, ranking top3 y autores del foro; bucket PRIVADO `avatars` |
 | `f3/avatar` | `20261108100200_v1_onboarding_display_name` | — | `app_completar_onboarding` escribe `nombre_mostrar = username` (sin backfill) |
 | `f2/level-ot-today` | `20261108100100_v1_home_level_ot_today` | FA43 | `GET /api/v1/app/racha` anade `liga` y `otHoy` |
-| `f14/auto-demo` | `20261108100300_v1_auto_demo` | FA44 (solo texto) | *(pendiente de integrar; ver seccion 9)* |
-| `f15/exam-access-type` | `20261108100500_v1_exam_turno_acceso` | FA45 | *(pendiente de integrar; ver seccion 9)* |
+| `f14/auto-demo` | `20261108100300_v1_auto_demo` | FA44 (solo texto) | Demo automatica: todo examen publicado ofrece ~5 preguntas (`demo_preguntas`) a quien no tiene acceso. **Cambia DATOS**: `examenes.demo_disponible` pasa a defecto `true` y se ENCIENDE en todos los examenes existentes (exclusion explicita = `false` desde Control). Columna calculada `demo_listo` |
+| `f15/exam-access-type` | `20261108100500_v1_exam_turno_acceso` | FA45 | `examenes.turno_acceso` (nullable, CHECK `libre/promocion_interna/estabilizacion/discapacidad`) en D2-01/D2-02/D2-13 (`turnoAcceso`) y en el guardado admin de examen; desplegable "Tipo de acceso" del panel |
 
-Sin variables de entorno nuevas, sin cambios en `ops/deploy/*` ni en Caddy. Imagen nueva para bot-1, bot-2 y control (la misma).
+Sin variables de entorno nuevas, sin cambios en `ops/deploy/*` ni en Caddy. Imagen nueva para bot-1, bot-2 y control (la misma). Panel de Control nuevo DESPUES de la imagen (F15).
+
+Orden obligatorio: las 5 migraciones ANTES de la imagen. La imagen nueva selecciona `demo_listo` (F14) y `turno_acceso` (F15) por PostgREST: contra una base sin ellas, las lecturas de catalogo D2-01/D2-02/D2-13 fallan (400 de PostgREST -> error del catalogo). La imagen vieja `0bb7efe0` no nombra ninguna de las dos, asi que aplicar primero es seguro.
 Produccion hoy (CURRENT_STATE, 2026-10-22/27): los tres Ktor en `oposicontrol-backend:0bb7efe02086`, `CONTROL_IMAGE=` vacio; Caddy del host 2.6.2; MAIN con las 40 de la ventana V1 registradas (ultima de la cadena: `20261023100600`).
 
 ## 1. Antes del dia (C, local — hecho en esta rama)
@@ -38,7 +40,7 @@ Docker Desktop arrancado (psql corre en la imagen local `public.ecr.aws/supabase
 1. `bash ops/deploy/release.sh preflight` -> `PREFLIGHT OK: oposicontrol-backend:<sha12>`. Anotar `<sha12>`.
 2. Historial de MAIN (SQL Editor, solo lectura) guardado como `main-history.txt`:
    `select version from supabase_migrations.schema_migrations order by version;`
-   Esperado: contiene `20261023100600`; NO contiene ninguna `20261108*`.
+   Esperado: contiene `20261023100600`; NO contiene ninguna `20261108*` (las cinco del manifiesto: 100000, 100100, 100200, 100300, 100500).
    `bash ops/deploy/release.sh preflight --applied-list main-history.txt` -> pendientes = las `20261108*` del manifiesto. Lineas `<-- ANTERIOR` esperadas y NO se aplican: `20260730120000`, `20260923103000` (divergencias conocidas de historial) y `20261023100100` (RB-16, clase `never`). Cualquier otra = parar.
 3. Bucket `avatars` (Storage, SQL Editor, solo lectura):
    ```sql
@@ -65,13 +67,18 @@ V1_SHA=<sha12> bash ops/deploy/v1/lanzar-v1.sh backup     # volcado logico de MA
 
 ## 5. Migraciones a MAIN (P, GO expreso) — ANTES de la imagen
 
-Orden obligatorio: migraciones primero. Las tres de F3/F2 son aditivas (create or replace de funciones, sin DDL de tablas, sin datos): la imagen vieja `0bb7efe0` sigue funcionando con ellas. Entre este paso y el 6 la imagen vieja reenvia tal cual los campos nuevos (`liga`/`otHoy` en racha y `avatarPath` en ranking/foro, siempre null porque nadie tiene aun avatar propio): inocuo, pero hacer el paso 6 justo despues.
-No hace falta parar los Ktor (no es CONTRACT). Cada una en su transaccion, `lock_timeout 5s`.
+Orden obligatorio: migraciones primero, en este orden (cadena del manifiesto). Ninguna es CONTRACT; la imagen vieja `0bb7efe0` sigue funcionando con las cinco:
+- F3/F2 (100000/100100/100200): create or replace de funciones, sin DDL de tablas ni datos. Entre este paso y el 6 la imagen vieja reenvia tal cual los campos nuevos (`liga`/`otHoy` en racha, `avatarPath` null en ranking/foro): inocuo.
+- F14 (100300): ADEMAS de funciones, `alter column demo_disponible set default true` y `update` que enciende la demo en TODOS los examenes. Efecto inmediato incluso con la imagen vieja: los examenes pasan a anunciar DEMO a quien no tiene acceso; la imagen vieja no lee `demo_listo`, asi que un examen con menos de 5 preguntas validas anunciaria DEMO y su arranque fallaria cerrado (sin servir nada) hasta el paso 6. Minimizar la ventana. Antes de aplicar, guardar la foto: `select id, codigo_examen, demo_disponible from public.examenes order by codigo_examen;` (es la unica forma de volver a los valores previos; ver 9).
+- F15 (100500): `ADD COLUMN turno_acceso` + CHECK (ACCESS EXCLUSIVE de milisegundos sobre `examenes`, `lock_timeout 5s`: si hay trafico y no obtiene el cerrojo, aborta sin cambios y se reintenta) y re-crea `app_my_exams_collection` con `turno_acceso` (verificado en el ensayo: ninguna migracion posterior redefine esa funcion; el cuerpo final la lleva).
+No hace falta parar los Ktor. Cada una en su transaccion, `lock_timeout 5s`.
 
 ```bash
 for f in supabase/migrations/20261108100000_v1_avatar.sql \
          supabase/migrations/20261108100100_v1_home_level_ot_today.sql \
-         supabase/migrations/20261108100200_v1_onboarding_display_name.sql; do
+         supabase/migrations/20261108100200_v1_onboarding_display_name.sql \
+         supabase/migrations/20261108100300_v1_auto_demo.sql \
+         supabase/migrations/20261108100500_v1_exam_turno_acceso.sql; do
   bash ops/deploy/v1/apply-main-migration.sh --verify-only "$f"    # antes: informativo (lo normal es != 0)
   bash ops/deploy/v1/apply-main-migration.sh "$f" || break         # teclear la version; aplica, VERIFY = 0, registra
 done
@@ -87,6 +94,7 @@ Despues: repetir la exportacion del historial y `release.sh preflight --applied-
 3. `bash ops/deploy/release.sh ship --i-have-the-go` y teclear `<sha12>` -> `~/redeploy-rolling.sh` (bot-1, sano, bot-2, sano, control).
 4. Version: `ssh "$OPOSI_SSH_HOST" 'docker inspect bot-1 bot-2 control --format "{{.Name}} {{.Config.Image}}"'` (nombres reales segun `docker ps`) -> los tres en `<sha12>`.
 5. `compose.env` del servidor: `BACKEND_IMAGE=oposicontrol-backend:<sha12>` y `CONTROL_IMAGE=` vacio, para que un `compose up` posterior no devuelva la imagen vieja (si `redeploy-rolling.sh` no lo actualiza, lo edita el propietario; copia del paso 4).
+6. Panel de Control (F15, desplegable "Tipo de acceso"), SOLO cuando control ya corre `<sha12>`: `bash scripts/publicar-panel-produccion.sh` (por defecto `origin/develop`, que debe ser el mismo SHA) y repartir el instalador. Un panel viejo contra el control nuevo sigue funcionando (no envia `turnoAcceso`); un panel nuevo contra un control viejo recibiria rechazo de clave desconocida al guardar con turno.
 
 ## 6b. Datos: canal unico del foro (P, GO expreso) — decision del propietario 2026-11-08
 
@@ -137,6 +145,10 @@ Generales: `bash ops/deploy/release.sh verify` (health/live 200, health/ready 20
 | 11 | Tras 6b: `GET /api/v1/app/oposired/categorias` (A) -> `General`; A publica un texto en `General` (puede quedar en revision: aprobarlo en el panel); `GET /api/v1/app/oposired/publicaciones` (B), con A teniendo avatar | `autor.avatarUrl` firmada para A; nunca `avatarPath`; cuenta B ve la foto de A |
 | 12 | Onboarding de una cuenta nueva de prueba | `nombre_mostrar` = username elegido (SQL de solo lectura sobre esa cuenta) |
 | 13 | Panel de Control: login y abrir un listado | 200 (control tambien cambio de imagen) |
+| 15 | `GET /api/v1/app/examenes` (A, sin acceso a un examen de pago con >= 5 preguntas validas de su especialidad, especialidad con `permite_demos`) | 200; ese examen con `accessState: DEMO`; un examen con < 5 preguntas validas sale `LOCKED`, no DEMO |
+| 16 | Arranque de demo: `POST /api/v1/app/examenes/{id}/intentos` (D2-03) con `Idempotency-Key: <uuid nuevo>` y cuerpo `{"modo":"DEMO"}` | 200/201 con `esDemo: true` y `totalPreguntas` = 5 (o el `demo_preguntas` de produccion); nunca preguntas fuera del conjunto; no cuenta para ranking/racha |
+| 17 | Panel: Examenes > Ambito y clasificacion > "Tipo de acceso" = Promocion interna en un examen de prueba; guardar | 200; `GET /api/v1/app/examenes/{id}` (A) -> `turnoAcceso: "promocion_interna"`; `GET /api/v1/app/examenes` y `/api/v1/app/me/examenes` lo traen igual; volver a "Sin indicar" -> campo ausente/null |
+| 18 | Guardado admin con `turnoAcceso: "otro"` | 422 `EXAM_ACCESS_ROUTE_UNKNOWN` |
 | 14 | Logs (`docker logs --since 15m bot-1 | grep -E 'OC-KTOR-AVATAR|ERROR'`) | sin `avatar signing failed` repetidos ni 5xx |
 
 Abortar y revertir (8) si: `ready` != 200 sostenido, 5xx en `/v1/auth/*` o en las rutas de arriba, o el bucket queda publico.
@@ -150,8 +162,11 @@ Abortar y revertir (8) si: `ready` != 200 sostenido, 5xx en `/v1/auth/*` o en la
 
 ## 9. Rollback
 
-Imagen: `ssh "$OPOSI_SSH_HOST" 'bash ~/redeploy-rolling.sh oposicontrol-backend:0bb7efe02086'` y `release.sh verify`; restaurar `env.bak-*` si se toco `compose.env`. Valido con las tres migraciones aplicadas (son aditivas; la imagen vieja ignora/reenvia los campos nuevos y no tiene las rutas de avatar: 404).
-Migraciones (solo si hiciera falta, con GO, en orden INVERSO, despues de volver a la imagen vieja): el bloque `ROLLBACK-BEGIN/END` de cada fichero (ensayado: devuelve el catalogo exacto, cuerpos incluidos) y borrar su fila de `supabase_migrations.schema_migrations`. Lo que NO se deshace (datos): `avatar_url` guardados y objetos del bucket (nadie los sirve tras el rollback), `nombre_mostrar` escritos por onboardings nuevos.
+Imagen: `ssh "$OPOSI_SSH_HOST" 'bash ~/redeploy-rolling.sh oposicontrol-backend:0bb7efe02086'` y `release.sh verify`; restaurar `env.bak-*` si se toco `compose.env`; volver al panel anterior si se repartio el nuevo. Valido con las cinco migraciones aplicadas (ninguna es CONTRACT; la imagen vieja no tiene las rutas de avatar (404), no lee `demo_listo` ni `turno_acceso`, y la demo encendida por F14 sigue anunciandose con la caveat de < 5 preguntas del paso 5).
+Migraciones (solo si hiciera falta, con GO, en orden INVERSO 100500 -> 100000, DESPUES de volver a la imagen vieja: la imagen nueva contra una base sin `demo_listo`/`turno_acceso` rompe el catalogo): el bloque `ROLLBACK-BEGIN/END` de cada fichero y borrar su fila de `supabase_migrations.schema_migrations`.
+- 100500 (F15): su bloque restaura el cuerpo de `app_my_exams_collection` y BORRA la columna: se pierden los turnos puestos en Control. Exportar antes: `select id, codigo_examen, turno_acceso from public.examenes where turno_acceso is not null;`.
+- 100300 (F14): **NO usar el procedimiento de su cabecera** (bloque + re-aplicar `20261022101000` y `20261022101300` enteras): ensayado, deja `app_record_attempt_answer` con el cuerpo de 101300 y pierde el de `20261022101600` (estadisticas). Usar `docs/ledger/2026/11/rollback-20261108100300-complete.sql` (bloque + solo los cuatro cuerpos sustituidos, copiados de su ultima version; ensayado: huella == punto de partida, cuerpos incluidos). NO apaga la demo encendida: `update public.examenes set demo_disponible = <valor de la foto del paso 5>` (o `false` en todos) con GO.
+- 100000/100100/100200: bloques ensayados, devuelven el catalogo exacto (cuerpos incluidos). No se deshace (datos): `avatar_url` guardados y objetos del bucket (nadie los sirve tras el rollback), `nombre_mostrar` de onboardings nuevos.
 Forma: extraer el bloque con el mismo `awk` de `apply-main-migration.sh` o copiarlo del fichero quitando el `-- ` inicial; ejecutarlo en el SQL Editor.
 
 ## 10. Hallazgos que afectan al despliegue (revision Control)
@@ -159,6 +174,8 @@ Forma: extraer el bloque con el mismo `awk` de `apply-main-migration.sh` o copia
 - Caddy 2.6.2: el avatar va en el pool `@bot` y bajo `@bounded` (`max_size 2MB` = 2.000.000 B, unidades SI, igual que `AVATAR_MAX_BYTES`). Sin cambio de configuracion. En 2.6.x el exceso con `buffer_requests` puede responder 502 en vez de 413 (el mapeo a 413 llego en versiones posteriores): no es un riesgo de seguridad, pero la APK debe comprobar el tamano antes de subir (ya re-escala). Anotar el codigo real en el humo 6.
 - Ktor exige `Content-Length` en el PUT (Caddy con `buffer_requests` lo pone); un cliente chunked sin Caddy recibiria 400.
 - Si el bucket `avatars` existiera publico, `ensureBucket` no lo corrige (paso 3.3).
+- F14 es un cambio de producto visible al aplicar la migracion (todas las demos encendidas), no al desplegar la imagen. Si el propietario quiere excluir algun examen, se marca `demo_disponible = false` en Control despues del paso 5.
+- `ops/local-exam/*` (recorridos E2E locales, fuera del gate de CI) siembran examenes sin `demo_disponible` y pueden ver DEMO donde esperaban LOCKED tras F14; no forman parte de la verificacion de este despliegue. Ajustarlos en una tarea aparte.
 
 ## 11. Cierre
 

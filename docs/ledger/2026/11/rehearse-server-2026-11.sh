@@ -107,8 +107,31 @@ fingerprint "$OUT/fp_applied.txt"
 say "ok:   cambios de catalogo de la ventana: $(diff "$OUT/fp_start.txt" "$OUT/fp_applied.txt" | grep -c '^[<>]') lineas (fp_start.txt vs fp_applied.txt)"
 
 # ---- ROLLBACK en orden inverso -> huella == punto de partida; re-aplicar -> huella == primera aplicacion ----
+# F15: el cuerpo FINAL de la lectura de coleccion (D2-13) debe llevar turno_acceso (ninguna migracion posterior la redefine)
+if printf '%s\n' "$NEW" | grep -qx 20261108100500; then
+  # la firma que llama el Ktor (la de 20261022101000 / VERIFY de 100500); otras sobrecargas antiguas, si las hay, no se llaman
+  sig="public.app_my_exams_collection(uuid,text,uuid,integer,timestamp with time zone,uuid,integer,boolean,uuid)"
+  [ "$(p -At -c "select pg_get_functiondef('$sig'::regprocedure) like '%turno_acceso%'")" = t ] || fail "app_my_exams_collection final sin turno_acceso"
+  say "ok:   cuerpo final de $sig con turno_acceso (sobrecargas en public: $(p -At -c "select string_agg(oid::regprocedure::text, ' ; ') from pg_proc where proname = 'app_my_exams_collection' and pronamespace = 'public'::regnamespace"))"
+fi
+# ROLLBACK documentado de cada una. 20261108100300 (F14) declara que su bloque NO restaura los cuerpos de exam_start_verdict,
+# app_congelar_preguntas_intento, app_start_exam_attempt y tg_examenes_demo_completo: se restauran re-aplicando 20261022101000 y 20261022101300.
+# Ese procedimiento se ensayo el 2026-11-08 y NO devuelve el punto de partida: re-aplicar 101300 deja app_record_attempt_answer con el cuerpo
+# de 101300 y pierde el de 20261022101600 (stats). Para MAIN se usa rollback-20261108100300-complete.sql (bloque + solo los cuatro cuerpos).
+# F14_ROLLBACK=header reproduce el procedimiento de la cabecera (debe FALLAR en la huella).
 for f in $(echo "$files" | sort -r); do
-  block "$f" ROLLBACK | p >/dev/null 2>"$TMPD/err" || { cat "$TMPD/err"; fail "ROLLBACK de $(basename "$f")"; }
+  if [ "$(basename "$f" | cut -c1-14)" = 20261108100300 ] && [ "${F14_ROLLBACK:-complete}" = complete ]; then
+    p < docs/ledger/2026/11/rollback-20261108100300-complete.sql >/dev/null 2>"$TMPD/err" || { cat "$TMPD/err"; fail "rollback-20261108100300-complete.sql"; }
+    say "info: ROLLBACK F14 con docs/ledger/2026/11/rollback-20261108100300-complete.sql"
+  else
+    block "$f" ROLLBACK | p >/dev/null 2>"$TMPD/err" || { cat "$TMPD/err"; fail "ROLLBACK de $(basename "$f")"; }
+    if [ "$(basename "$f" | cut -c1-14)" = 20261108100300 ]; then
+      for r in 20261022101000 20261022101300; do
+        p < supabase/migrations/${r}_*.sql >/dev/null 2>"$TMPD/err" || { grep -E 'ERROR|HINT' "$TMPD/err"; fail "ROLLBACK F14: re-aplicar $r falla"; }
+      done
+      say "info: ROLLBACK F14 = bloque + re-aplicar 20261022101000 y 20261022101300 (procedimiento de su cabecera)"
+    fi
+  fi
   echo "delete from supabase_migrations.schema_migrations where version = '$(basename "$f" | cut -c1-14)';" | p >/dev/null
 done
 fingerprint "$OUT/fp_rolledback.txt"
