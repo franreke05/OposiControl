@@ -1678,6 +1678,31 @@ class AttemptRoutesTest {
     }
 
     @Test
+    fun f14DemoStartNeedsAServableEffectiveSetAndAUserWithAccessGetsANormalAttempt() = testApplication {
+        application { attemptModule() }
+        upstream.attemptRow = attemptRow()
+        // demo on but the database cannot serve N questions (demo_listo false): locked, accessState LOCKED, no command sent
+        upstream.examById = examRow(acceso = "premium", demo = true).replace("\"demo_disponible\":true,", "\"demo_disponible\":true,\"demo_listo\":false,")
+        val notReady = client.call(HttpMethod.Post, start, body = """{"modo":"DEMO"}""", key = key1)
+        assertEquals("EXAM_LOCKED", code(notReady.bodyAsText()))
+        assertEquals("LOCKED", obj(notReady.bodyAsText())["details"]!!.jsonObject["accessState"]!!.jsonPrimitive.content)
+        assertTrue(upstream.rpcBodies("app_start_exam_attempt").isEmpty())
+        // ready (the automatic set): the DEMO command goes to the database
+        upstream.examById = examRow(acceso = "premium", demo = true).replace("\"demo_disponible\":true,", "\"demo_disponible\":true,\"demo_listo\":true,")
+        upstream.startOutcome = """{"outcome":"CREATED","intento_id":"$attempt","es_demo":true}"""
+        val ready = client.call(HttpMethod.Post, start, body = """{"modo":"DEMO"}""", key = key2)
+        assertEquals(HttpStatusCode.Created, ready.status, ready.bodyAsText())
+        assertEquals("DEMO", upstream.rpcBodies("app_start_exam_attempt").single()["p_modo"]!!.jsonPrimitive.content)
+        // a user WITH access (free exam) that sends DEMO: normal start (the database turns it into a normal attempt)
+        upstream.sent.clear()
+        upstream.examById = examRow(acceso = "gratuito", demo = true)
+        upstream.startOutcome = """{"outcome":"CREATED","intento_id":"$attempt","es_demo":false}"""
+        val withAccess = client.call(HttpMethod.Post, start, body = """{"modo":"DEMO"}""", key = "0a0a0a0a-0000-4000-8000-0000000000d2")
+        assertEquals(HttpStatusCode.Created, withAccess.status, withAccess.bodyAsText())
+        assertEquals("NORMAL", upstream.rpcBodies("app_start_exam_attempt").single()["p_modo"]!!.jsonPrimitive.content)
+    }
+
+    @Test
     fun theQuestionPageRegistersWhatItRevealsAndTheDailyLimitIs429WithRetryAfter() = testApplication {
         application { attemptModule() }
         upstream.attemptRow = attemptRow()

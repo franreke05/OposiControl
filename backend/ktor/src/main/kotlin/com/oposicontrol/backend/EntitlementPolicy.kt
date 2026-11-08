@@ -15,6 +15,8 @@ import java.time.Instant
 //   2. concesion vigente (`contenido_desbloqueado_usuario`, ANY motivo) -> ALLOW_PURCHASED / GRANTED
 //   3. premium vigente (re-comprobando `fin_en`, Q-04)             -> ALLOW_PREMIUM   / SUBSCRIPTION
 //   4. `demo_disponible` y la especialidad `permite_demos`         -> DENY            / DEMO (solo demo)
+//      F14 (20261108100300): `demo_disponible` es por defecto true (exclusion explicita); el servicio pasa como `demoAvailable`
+//      `demo_disponible && demo_listo` (la base puede servir el conjunto efectivo). La regla SQL gemela no cambia (paridad intacta).
 //   5. cualquier otra cosa                                         -> DENY            / LOCKED
 // ALLOW_CREDIT existe en el enum del contrato pero NO es alcanzable en SLICE 2 (Q-03): `creditos_inmersivos_necesarios`
 // y `requiere_plan_codigo` se ignoran a proposito hasta que producto decida su semantica.

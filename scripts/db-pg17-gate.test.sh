@@ -9,7 +9,7 @@
 #   (c) error de sintaxis en la pendiente -> ON_ERROR_STOP
 #   (d) ROLLBACK de la pendiente sin borrar revisiones_pregunta -> la huella tras el rollback no es la del bootstrap
 #   (e) SELECT de cliente sobre revisiones_pregunta -> su VERIFY
-#   (f) el congelado VIGENTE (app_congelar_preguntas_intento de 3 argumentos, 20261022101300) deja de ligar las preguntas a su revision
+#   (f) el congelado VIGENTE (app_congelar_preguntas_intento de 3 argumentos, 20261108100300 desde F14) deja de ligar las preguntas a su revision
 #       -> la asercion de comportamiento de assertions.sql
 #   (g) N3-3 / tarea 4: el cerrojo por clave de tienda MOVIDO por debajo de la busqueda (el texto sigue, el VERIFY de 102900 pasa) en la reversion
 #       (mutA), el reembolso (mutA2) y el credito -> la carrera REAL de dos conexiones del paso 6 (R1 / R2 / R3-R4)
@@ -74,7 +74,7 @@ expect_fail "(d) rollback incompleto" "el ROLLBACK falla\|tras los ROLLBACK el c
 fresh; echo 'grant select on table public.revisiones_pregunta to authenticated;' >> "$w/$rev"; mutated "$w/$rev"
 expect_fail "(e) SELECT de cliente sobre las revisiones" "20261022100000_slice3_attempt_content_revisions: VERIFY con contadores distintos de 0"
 grep -q 'VERIFY revisions_client_privileges = 1' "$tmp/out" || { echo "TEST FAIL: (e) sin el contador"; exit 1; }
-off=supabase/migrations/20261022101300_v1_official_rules.sql
+off=supabase/migrations/20261108100300_v1_auto_demo.sql  # F14: el congelado vigente vive ahora en 20261108100300 (antes 20261022101300)
 fresh; sed -i 's/^      insert into public.preguntas_intento (intento_id, pregunta_id, posicion, revision_pregunta_id, rol, anulada_al_inicio, sustituye_a_posicion)$/      insert into public.preguntas_intento (intento_id, pregunta_id, posicion, rol, anulada_al_inicio, sustituye_a_posicion)/; s/^      select p_intento_id, u.pregunta_id, u.ord::integer, r.id, u.rol, u.anul, u.sust$/      select p_intento_id, u.pregunta_id, u.ord::integer, u.rol, u.anul, u.sust/' "$w/$off"; mutated "$w/$off"
 [ "$(grep -c '^      select p_intento_id, u.pregunta_id, u.ord::integer, u.rol, u.anul, u.sust$' "$w/$off")" = 1 ] || { echo "TEST FAIL: (f) la mutacion no toca exactamente el congelado vigente"; exit 1; }
 expect_fail "(f) el congelado no liga la revision" "assertions.sql"
