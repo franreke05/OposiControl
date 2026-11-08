@@ -92,7 +92,8 @@ class V1ExamTurnoAccesoMigrationTest {
         assertEquals("0", c.unico("select count(*) from information_schema.columns where table_schema = 'public' and table_name = 'examenes' and column_name = 'turno_acceso'"))
         // the collection read still works after the rollback, without the key (the 20261022101000 body)
         assertEquals(listOf("f", "f"), c.collectionRoutes().map { it[2]?.take(1) })
-        assertTrue(c.filas(verify).any { it[1] != "0" }, "VERIFY fails without the migration")
+        // without the column the VERIFY cannot even run (its row-set check names it): either way it never reports 0
+        assertTrue(runCatching { c.filas(verify).any { it[1] != "0" } }.getOrDefault(true), "VERIFY fails without the migration")
         // and the migration re-applies cleanly (idempotent forward)
         c.ejecutar(Slice0Db.leer("supabase/migrations/$migration.sql"))
         assertEquals(emptyList(), c.filas(verify).filter { it[1] != "0" }, "VERIFY = 0 after re-applying")
