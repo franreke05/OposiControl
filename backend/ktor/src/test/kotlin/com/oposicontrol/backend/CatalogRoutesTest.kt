@@ -185,10 +185,12 @@ class CatalogRoutesTest {
         demo: Boolean = false,
         anio: Int? = 2024,
         penalty: String = "",
+        demoListo: Boolean? = null,
     ): String =
         """{"id":"$id","codigo_examen":"EX-${id.takeLast(3)}","titulo":"$titulo","descripcion":"desc","tipo_examen":"$tipo","tipo_acceso":"$acceso",""" +
             """"especialidad_id":"$especialidad","total_preguntas":10,"duracion_minutos":60,"anio":${anio ?: "null"},""" +
             """"portada_storage_path":${cover?.let { "\"$it\"" } ?: "null"},"publicado_en":"$publicado","demo_disponible":$demo,$penalty""" +
+            (demoListo?.let { """"demo_listo":$it,""" } ?: "") +
             """"comunidades_autonomas":${comunidad?.let { """{"codigo":"$it"}""" } ?: "null"}}"""
 
     private fun premiumRow(end: String? = "2099-01-01T00:00:00+00:00", estado: String = "activa", flag: Boolean = true) =
@@ -252,6 +254,30 @@ class CatalogRoutesTest {
         assertNull(JsonObjectOf(body)["facets"], "sin includeFacets no hay facets")
         assertFalse(body.contains("\"data\""), "sin envoltorio legacy")
         assertNoQuestionTables()
+    }
+
+    @Test
+    fun f14DemoIsAdvertisedOnlyWhenTheDatabaseCanServeTheEffectiveSet() = testApplication {
+        application { catalogModule() }
+        upstream.exams = {
+            "[" + listOf(
+                exam(e1, acceso = "premium", demo = true, demoListo = true),
+                exam(e2, acceso = "premium", publicado = "2026-09-29T10:00:00+00:00", demo = true, demoListo = false),
+                exam(e3, acceso = "premium", publicado = "2026-09-28T10:00:00+00:00", demo = false, demoListo = false),
+                exam(e4, acceso = "gratuito", publicado = "2026-09-27T10:00:00+00:00", demo = true, demoListo = false),
+            ).joinToString(",") + "]"
+        }
+        val response = client.getAs("/api/v1/app/examenes")
+        val body = response.bodyAsText()
+        assertEquals(HttpStatusCode.OK, response.status, body)
+        assertConforms("D2-01", body)
+        assertEquals(
+            listOf("DEMO", "LOCKED", "LOCKED", "FREE"),
+            JsonObjectOf(body)["items"]!!.jsonArray.map { it.jsonObject["accessState"]!!.jsonPrimitive.content },
+            "demo ready / fewer than N servable questions (no demo, fail closed) / opted out / with access the demo is irrelevant",
+        )
+        assertTrue(upstream.urls.any { it.contains("/rest/v1/examenes?select=") && it.contains("demo_disponible,demo_listo,") }, "the computed field is read: ${upstream.urls}")
+        assertFalse(body.contains("demo_listo") || body.contains("demoListo"), "no new wire field (semantics only)")
     }
 
     @Test

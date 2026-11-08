@@ -93,6 +93,12 @@ internal data class CatalogExamRow(
     @SerialName("portada_storage_path") val portadaStoragePath: String? = null,
     @SerialName("publicado_en") val publicadoEn: String? = null,
     @SerialName("demo_disponible") val demoDisponible: Boolean = false,
+    /**
+     * F14 (20261108100300, columna calculada `public.demo_listo(examenes)`): `demo_disponible` Y la base puede servir un conjunto de demo (el explicito
+     * completo o, si no, los N primeros principales validos). Ausente (la RPC de Mis examenes no la trae) = `true`: se anuncia por `demo_disponible` y el
+     * arranque decide (falla cerrado en la base).
+     */
+    @SerialName("demo_listo") val demoListo: Boolean = true,
     @SerialName("comunidades_autonomas") val comunidad: CommunityRef? = null,
     /** V1: el precio en OposiTickets SALE de la base (nunca se inventa). Sin valor fijado, el examen no es comprable. */
     @SerialName("comprable_con_tickets") val comprableConTickets: Boolean = false,
@@ -482,7 +488,7 @@ internal class CatalogGateway(
         /** Solo metadatos de examen. NUNCA preguntas, opciones ni soluciones (SEC-004). */
         internal const val EXAM_COLUMNS =
             "id,codigo_examen,titulo,descripcion,tipo_examen,tipo_acceso,especialidad_id,total_preguntas,duracion_minutos,anio," +
-                "portada_storage_path,publicado_en,demo_disponible,comprable_con_tickets,precio_tickets,dias_acceso_compra,penalizacion_num,penalizacion_den,penalizacion_racional,comunidades_autonomas(codigo)"
+                "portada_storage_path,publicado_en,demo_disponible,demo_listo,comprable_con_tickets,precio_tickets,dias_acceso_compra,penalizacion_num,penalizacion_den,penalizacion_racional,comunidades_autonomas(codigo)"
         internal const val LATEST_ATTEMPTS_FETCH_LIMIT = 500
 
         /** `supabase/migrations/20261008100300_slice2_my_exams_read_rpc.sql` (STABLE, EXECUTE solo `service_role`). */

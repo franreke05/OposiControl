@@ -570,7 +570,7 @@ internal class CatalogService(
         exams.associate { exam ->
             val examGrants = inputs.grants[exam.id].orEmpty()
             val verdict = EntitlementPolicy.check(
-                exam = ExamAccessSubject(exam.id, exam.kind(), free = exam.accessType() == "gratuito", demoAvailable = exam.demoDisponible, specialtyId = exam.especialidadId),
+                exam = ExamAccessSubject(exam.id, exam.kind(), free = exam.accessType() == "gratuito", demoAvailable = exam.demoDisponible && exam.demoListo, specialtyId = exam.especialidadId),
                 capabilities = inputs.capabilities[exam.especialidadId] ?: SpecialtyAccessCapabilities.OPEN,
                 user = UserAccessFacts(premium = inputs.premium, grants = examGrants, specialtyId = inputs.userSpecialty),
                 now = now,
