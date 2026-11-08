@@ -23,6 +23,7 @@ DELETE	/api/v1/admin/preguntas/{}	CONTROL	admin	Admin v1: preguntas/{}	OposiCont
 DELETE	/api/v1/admin/preguntas/{}/examenes/{}	CONTROL	admin	Admin v1: preguntas/{}/examenes/{}	OposiControl
 DELETE	/api/v1/admin/preguntas/{}/recursos/{}	CONTROL	admin	Admin v1: preguntas/{}/recursos/{}	OposiControl
 DELETE	/api/v1/app/me	AUTH	user-jwt	Canonical profile/account: DELETE me	OposiBot
+DELETE	/api/v1/app/me/avatar	AUTH	user-jwt	Canonical profile/account: DELETE me/avatar (D1-15, FA42)	OposiBot
 DELETE	/api/v1/app/opositeca/guardados/{}/{}	BOT	user-jwt	Consumer OposiTeca: unsave a question (D4-21)	OposiBot
 DELETE	/content/comunidades/{}	CONTROL	admin	Legacy content: comunidades/{}	OposiControl
 DELETE	/content/especialidades/{}	CONTROL	admin	Legacy content: especialidades/{}	OposiControl
@@ -308,6 +309,7 @@ PUT	/api/v1/admin/especialidades/{}/capacidades	CONTROL	admin	Admin v1: especial
 PUT	/api/v1/admin/planes/{}	CONTROL	admin	Admin v1: alta o cambio de un plan por codigo	OposiControl
 PUT	/api/v1/admin/preguntas/{}/etiquetas	CONTROL	admin	Admin v1: fija el conjunto de etiquetas de una pregunta (diff + auditoria)	OposiControl
 PUT	/api/v1/admin/tipos-noticia/{}	CONTROL	admin	Admin news: type upsert	OposiControl
+PUT	/api/v1/app/me/avatar	AUTH	user-jwt	Canonical profile/account: PUT me/avatar, raw JPEG/PNG upload (D1-14, FA42)	OposiBot
 PUT	/api/v1/app/intentos/{}/respuestas/{}	BOT	user-jwt	Consumer app API: intentos/{}/respuestas/{} (D2-09)	OposiBot
 PUT	/api/v1/app/opositeca/guardados/{}/{}	BOT	user-jwt	Consumer OposiTeca: save a question (D4-20)	OposiBot
 PUT	/api/v1/app/plan/cupo/{}	BOT	user-jwt	Consumer plan: choose an immersive with the quota (D7-32)	OposiBot

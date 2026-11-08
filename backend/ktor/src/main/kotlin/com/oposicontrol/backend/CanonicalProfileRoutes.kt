@@ -5,6 +5,7 @@ import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.call
 import io.ktor.server.request.header
+import io.ktor.server.request.receive
 import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
@@ -12,6 +13,7 @@ import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
 import io.ktor.server.routing.patch
 import io.ktor.server.routing.post
+import io.ktor.server.routing.put
 import io.ktor.server.routing.route
 import kotlinx.serialization.SerializationException
 import java.time.OffsetDateTime
@@ -26,6 +28,8 @@ internal class CanonicalProfileRuntime(
     val profiles: CanonicalProfileService,
     val deletion: AccountDeletionService,
     val legacy: LegacyProfileAdapter,
+    /** D1-14/D1-15 (FA42). `null` = no cableado: las rutas responden 503 UPSTREAM_UNAVAILABLE. */
+    val avatars: AvatarService? = null,
 )
 
 /**
@@ -103,6 +107,31 @@ internal fun Route.canonicalProfileRoutes(runtime: OposiBotsAuthRuntime) {
                 val identity = canonical.resolver.activeIdentity(call) { call.limitUser(runtime, OposiBotsAuthOperation.PROFILE_WRITE, it) }
                 val request = call.receiveCanonicalCommand<LegalAcceptanceRequest>()
                 call.respond(canonical.profiles.acceptLegalDocuments(identity, request))
+            }
+            // D1-14 / D1-15 (FA42): bytes crudos image/jpeg|image/png de 1..AVATAR_MAX_BYTES; sin multipart (cabe bajo el tope global de 2 MiB
+            // de Ktor y el `max_size 2MB` de Caddy, sin excepciones nuevas).
+            put("/avatar") {
+                call.privateNoStore()
+                val identity = canonical.resolver.activeIdentity(call) { call.limitUser(runtime, OposiBotsAuthOperation.PROFILE_WRITE, it) }
+                requireOnlyKnownQueryParams(call.request.queryParameters, emptySet())
+                val avatars = canonical.avatars ?: throw CanonicalErrorCode.UPSTREAM_UNAVAILABLE.exception()
+                val contentType = call.request.header(HttpHeaders.ContentType)
+                val declaredType = contentType?.substringBefore(';')?.trim()?.lowercase()
+                if (declaredType != "image/jpeg" && declaredType != "image/png") throw CanonicalErrorCode.UNSUPPORTED_MEDIA_TYPE.exception()
+                val declared = call.request.header(HttpHeaders.ContentLength)?.trim()?.toLongOrNull()
+                    ?: throw validationError(ErrorIssue("Content-Length", CanonicalIssue.REQUIRED))
+                if (declared < 1) throw validationError(ErrorIssue("body", CanonicalIssue.REQUIRED))
+                if (declared > AVATAR_MAX_BYTES) throw CanonicalErrorCode.PAYLOAD_TOO_LARGE.exception()
+                val body = call.receive<ByteArray>()
+                call.respond(avatars.replace(identity, contentType, body))
+            }
+            delete("/avatar") {
+                call.privateNoStore()
+                val identity = canonical.resolver.activeIdentity(call) { call.limitUser(runtime, OposiBotsAuthOperation.PROFILE_WRITE, it) }
+                requireOnlyKnownQueryParams(call.request.queryParameters, emptySet())
+                val avatars = canonical.avatars ?: throw CanonicalErrorCode.UPSTREAM_UNAVAILABLE.exception()
+                avatars.delete(identity)
+                call.respond(HttpStatusCode.NoContent)
             }
         }
     }

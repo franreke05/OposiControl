@@ -92,7 +92,7 @@ import kotlin.test.fail
  * una divergencia es un defecto del producto.
  *
  * Alcance (las 20 operaciones `x-slice: 1`): D1-01..D1-10 (auth), D1-11/12/13/16/17/19 (perfil, legal y borrado)
- * y D1-22/23/24/26 (admin). Las aplazadas (D1-14/15/18/21/25/27..30) no deben estar registradas.
+ * y D1-22/23/24/26 (admin). Las aplazadas (D1-18/21/25/27..30) no deben estar registradas; D1-14/15 (avatar) se implementaron con FA42 (x-slice 5).
  */
 class Slice1ContractConformanceTest {
 
@@ -104,7 +104,7 @@ class Slice1ContractConformanceTest {
     private val appIds = listOf("D1-11", "D1-12", "D1-13", "D1-16", "D1-17", "D1-19")
     private val adminIds = listOf("D1-22", "D1-23", "D1-24", "D1-26")
     private val slice1Ids = authIds + appIds + adminIds
-    private val deferredIds = listOf("D1-14", "D1-15", "D1-18", "D1-21", "D1-25", "D1-27", "D1-28", "D1-29", "D1-30")
+    private val deferredIds = listOf("D1-18", "D1-21", "D1-25", "D1-27", "D1-28", "D1-29", "D1-30")
     private val slice1 get() = slice1Ids.map { op(it) }
 
     private fun op(id: String): OpenApiDocs.Operation = byId[id] ?: fail("contract $id is not in openapi/root.yaml")

@@ -101,6 +101,8 @@ internal class SupabaseCanonicalProfileService(
     private val upstream: CanonicalUpstream,
     private val authProvider: AuthProviderClient,
     private val json: Json = Json { ignoreUnknownKeys = true },
+    /** FA42: firma la ruta PROPIA del avatar; `null` (pruebas, Storage no configurado) = `avatarUrl` siempre `null`. */
+    private val avatarSigner: AvatarUrlSigner? = null,
 ) : CanonicalProfileService {
 
     override suspend fun me(identity: CanonicalUserIdentity, accessToken: String, context: OposiBotsAuthContext): MeResult {
@@ -297,10 +299,13 @@ internal class SupabaseCanonicalProfileService(
         null
     }
 
-    private fun buildMe(snapshot: ProfileSnapshot, user: AuthProviderUser?): MeResult {
+    private suspend fun buildMe(snapshot: ProfileSnapshot, user: AuthProviderUser?): MeResult {
         val status = AccountStatus.fromWire(snapshot.estadoCuenta)
         if (status == AccountStatus.UNRECOGNIZED) throw CanonicalErrorCode.FORBIDDEN.exception()
         val registeredAt = user?.createdAt ?: snapshot.creadoEn ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+        // FA42: solo el objeto propio del servidor (avatars/{uid}/{sha256}.jpg) se firma; una URL externa de OAuth nunca sale
+        val avatarUrl = AvatarPaths.ownObjectPath(snapshot.usuarioId, snapshot.avatarUrl)
+            ?.let { path -> avatarSigner?.signOne(path)?.url }
         val me = Me(
             id = snapshot.usuarioId,
             email = user?.email,
@@ -313,7 +318,7 @@ internal class SupabaseCanonicalProfileService(
                 apellidos = snapshot.apellidos,
                 especialidadPrincipalId = snapshot.especialidadPrincipalId,
                 comunidadPrincipalId = snapshot.comunidadPrincipalId,
-                avatarUrl = null,
+                avatarUrl = avatarUrl,
                 onboardingCompleted = snapshot.onboardingCompleted,
                 accountStatus = status.wire,
                 introSeenAt = snapshot.introSeenAt?.let(::normalizeInstant),
@@ -367,6 +372,8 @@ internal class SupabaseCanonicalProfileService(
         val creadoEn: String? = null,
         val actualizadoEn: String? = null,
         val replay: Boolean = false,
+        /** Valor CRUDO de `perfiles_usuario.avatar_url` (puede ser una URL externa de OAuth): nunca se reenvia tal cual. */
+        val avatarUrl: String? = null,
     )
 
     @Serializable
@@ -383,10 +390,11 @@ internal class SupabaseCanonicalProfileService(
         @SerialName("perfil_intro_visto_en") val introSeenAt: String? = null,
         @SerialName("creado_en") val creadoEn: String? = null,
         @SerialName("actualizado_en") val actualizadoEn: String? = null,
+        @SerialName("avatar_url") val avatarUrl: String? = null,
     ) {
         fun toSnapshot() = ProfileSnapshot(
             usuarioId, username, nombreMostrar, nombre, apellidos, especialidadPrincipalId, comunidadPrincipalId,
-            onboardingCompletado, estadoCuenta, introSeenAt, creadoEn, actualizadoEn,
+            onboardingCompletado, estadoCuenta, introSeenAt, creadoEn, actualizadoEn, avatarUrl = avatarUrl,
         )
     }
 
@@ -403,7 +411,7 @@ internal class SupabaseCanonicalProfileService(
     companion object {
         private const val PROFILE_COLUMNS =
             "usuario_id,username,nombre_mostrar,nombre,apellidos,especialidad_principal_id,comunidad_principal_id," +
-                "onboarding_completado,estado_cuenta,perfil_intro_visto_en,creado_en,actualizado_en"
+                "onboarding_completado,estado_cuenta,perfil_intro_visto_en,creado_en,actualizado_en,avatar_url"
         const val MAX_LEGAL_DOCUMENTS = 20
         private const val MAX_ACCEPTANCE_DOCUMENTS = 5
         private const val MAX_ONBOARDING_DOCUMENTS = 10

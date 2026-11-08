@@ -58,11 +58,12 @@ internal class ForoRuntime(
             auth: OposiBotsAuthRuntime?,
             environment: (String) -> String? = System::getenv,
         ): ForoRuntime? {
-            val upstream = TransportEconomyUpstream.fromEnvironment(environment) ?: return null
+            val transport = SupabaseRequestTransport.fromEnvironment(environment) ?: return null
+            val upstream = TransportEconomyUpstream(transport)
             val limiter = auth?.rateLimiter
             return ForoRuntime(
                 resolver = resolver,
-                service = ForoService(upstream),
+                service = ForoService(upstream, avatarSigner = AvatarUrlSigner(TransportAvatarStorage(transport))),
                 images = ForoImageService.fromEnvironment(environment),
                 limit = { operation, userId ->
                     if (limiter != null) {
@@ -94,6 +95,7 @@ internal data class ForoReportRequest(val entidadTipo: String, val entidadId: St
 internal class ForoService(
     private val upstream: EconomyUpstream,
     private val json: Json = Json { ignoreUnknownKeys = true },
+    private val avatarSigner: AvatarUrlSigner? = null,
 ) {
     suspend fun channels(user: CanonicalUserId): JsonElement = rpc("app_foro_categorias", buildJsonObject { put("p_usuario", user.value) })
 
@@ -180,7 +182,9 @@ internal class ForoService(
     private suspend fun rpc(function: String, body: JsonObject): JsonElement {
         val response = canonicalUpstreamIo { upstream.rpc(function, body.toString()) }
         if (!response.ok) throw EconomyRpcErrors.failure(function, response)
-        return runCatching { json.parseToJsonElement(response.body) }.getOrElse { throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception(cause = it) }
+        val parsed = runCatching { json.parseToJsonElement(response.body) }.getOrElse { throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception(cause = it) }
+        // FA42: cada `autor.avatarPath` de la base sale como `autor.avatarUrl` firmada (o null); la ruta nunca llega al cliente
+        return rewriteAvatarPaths(parsed, avatarSigner)
     }
 
     companion object {

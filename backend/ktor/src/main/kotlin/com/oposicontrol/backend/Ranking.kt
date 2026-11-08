@@ -11,7 +11,10 @@ import io.ktor.server.routing.put
 import io.ktor.util.AttributeKey
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
@@ -39,11 +42,12 @@ internal class RankingRuntime(
             auth: OposiBotsAuthRuntime?,
             environment: (String) -> String? = System::getenv,
         ): RankingRuntime? {
-            val upstream = TransportEconomyUpstream.fromEnvironment(environment) ?: return null
+            val transport = SupabaseRequestTransport.fromEnvironment(environment) ?: return null
+            val upstream = TransportEconomyUpstream(transport)
             val limiter = auth?.rateLimiter
             return RankingRuntime(
                 resolver = resolver,
-                service = RankingService(upstream),
+                service = RankingService(upstream, avatarSigner = AvatarUrlSigner(TransportAvatarStorage(transport))),
                 limit = { operation, userId ->
                     if (limiter != null) {
                         val decision = limiter.checkSubject(operation.limit, userId.value)
@@ -62,8 +66,24 @@ internal data class RankingVisibilityRequest(val publico: Boolean)
 internal class RankingService(
     private val upstream: EconomyUpstream,
     private val json: Json = Json { ignoreUnknownKeys = true },
+    /** FA42: firma el `avatarPath` de cada entrada del top3 (la base solo lo pone si el usuario sigue publico y activo). */
+    private val avatarSigner: AvatarUrlSigner? = null,
 ) {
-    suspend fun view(userId: CanonicalUserId): JsonElement = rpc("app_ranking_me", buildJsonObject { put("p_usuario", userId.value) }.toString())
+    suspend fun view(userId: CanonicalUserId): JsonElement {
+        val raw = rpc("app_ranking_me", buildJsonObject { put("p_usuario", userId.value) }.toString())
+        // la ruta nunca sale; cada entrada del top3 lleva `avatarUrl` (firmada o null) aunque la base haya omitido el null (jsonb_strip_nulls)
+        return withTop3AvatarUrl(rewriteAvatarPaths(raw, avatarSigner))
+    }
+
+    private fun withTop3AvatarUrl(view: JsonElement): JsonElement {
+        val obj = view as? JsonObject ?: return view
+        val top3 = obj["top3"] as? JsonArray ?: return view
+        val items = top3.map { item ->
+            val entry = item as? JsonObject ?: return@map item
+            if (entry.containsKey("avatarUrl")) entry else JsonObject(entry + ("avatarUrl" to JsonNull))
+        }
+        return JsonObject(obj + ("top3" to JsonArray(items)))
+    }
 
     suspend fun setVisibility(userId: CanonicalUserId, publico: Boolean): JsonElement =
         rpc("app_set_ranking_visibility", buildJsonObject { put("p_usuario", userId.value); put("p_publico", publico) }.toString())

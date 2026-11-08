@@ -163,6 +163,8 @@ internal fun testCanonicalConfiguration() = OposiBotsAuthConfiguration(
 internal class CanonicalTestEnv(
     var limiter: OposiBotsAuthRateLimiter = TestAllowAllLimiter,
     var gateway: OposiBotsAuthGateway = NoAuthGateway,
+    /** FA42: Storage falso del avatar; `null` = sin firmante ni rutas de avatar cableadas (503). */
+    val avatarStorage: AvatarStorage? = null,
 ) {
     val upstream = FakeUpstream()
     val auth = FakeAuthProvider()
@@ -176,7 +178,9 @@ internal class CanonicalTestEnv(
     var authTimes: List<Long> = emptyList()
     var now: Instant = Instant.parse("2026-09-30T12:00:00Z")
 
-    val profiles: CanonicalProfileService = SupabaseCanonicalProfileService(upstream, auth, testJson)
+    val avatarSigner: AvatarUrlSigner? = avatarStorage?.let { AvatarUrlSigner(it, clock = { now }) }
+    val profiles: CanonicalProfileService = SupabaseCanonicalProfileService(upstream, auth, testJson, avatarSigner)
+    val avatars: AvatarService? = avatarStorage?.let { AvatarService({ f, b -> upstream.rpc(f, b) }, it, avatarSigner!!, testJson) }
     val deletion = AccountDeletionService(upstream, auth, clock = { now }, json = testJson)
 
     private val resolver = CanonicalIdentityResolver(
@@ -197,7 +201,7 @@ internal class CanonicalTestEnv(
         gateway = gateway,
         rateLimiter = limiter,
         json = testJson,
-        canonical = CanonicalProfileRuntime(resolver, profiles, deletion, LegacyProfileAdapter(profiles, referral, specialties)),
+        canonical = CanonicalProfileRuntime(resolver, profiles, deletion, LegacyProfileAdapter(profiles, referral, specialties), avatars),
         accessRequestMailGuard = NoAccessRequestsMailGuard,
     )
 

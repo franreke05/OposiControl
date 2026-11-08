@@ -1,5 +1,13 @@
 # Current State
 
+## Foto de perfil y nombre visible — 2026-11-08 (rama local `f3/avatar` desde develop `04e5eb5e`, sin push) — `CURRENT_IMPLEMENTATION`, `LIVE_VERIFIED: NO`
+
+- Decision del propietario 2026-11-08, enmienda FA42. D1-14 `PUT /api/v1/app/me/avatar` (bytes crudos `image/jpeg|image/png`, 1..2.000.000 bytes, sin multipart; saneado con `ForoImageSanitizer`: bytes magicos, sin animadas, cabecera antes de decodificar, orientacion EXIF aplicada, recorte cuadrado <= 512 px, JPEG sin metadatos) y D1-15 `DELETE` (204 idempotente). Objeto `avatars/{uid}/{sha256}.jpg` en el bucket PRIVADO `avatars` (`ensureBucket` en Ktor, como el foro); URLs firmadas de 1 h.
+- Solo se firma una ruta propiedad del servidor de una cuenta activa (`private.avatar_visible_path`); la URL externa de OAuth que copia `handle_new_auth_user` nunca se firma ni se reenvia. `/me`, ranking top3 (solo si sigue publico) y autores del foro (`list/post/comments`) llevan `avatarUrl` nullable.
+- `app_completar_onboarding` escribe `nombre_mostrar = username` (sin backfill de usuarios ya dados de alta).
+- Migraciones PENDIENTES `20261108100000_v1_avatar` y `20261108100200_v1_onboarding_display_name` (no aplicadas a MAIN; no anadidas a `ops/deploy/v1/main-migrations.manifest`).
+- Pendiente: la purga de cuentas borradas debe borrar `avatars/{uid}/`; el detalle admin (`AdminUserDetail`) sigue mostrando el valor crudo de `avatar_url`.
+
 ## Redirecciones de autenticacion — 2026-10-27
 
 - `OPOSIBOTS_EMAIL_CONFIRM_REDIRECT_URL=oposibots://auth` y `OPOSIBOTS_PASSWORD_RECOVERY_REDIRECT_URL=oposibots://auth/reset-password` en `backend.bot.env` (faltaban: los correos volvian al Site URL `localhost:3000`). bot-1 y bot-2 recreados y sanos. Pendiente del propietario en Supabase: Redirect URLs con esas dos URLs y Site URL distinto de localhost. El enlace solo verifica en el dispositivo que pidio el registro (PKCE).
