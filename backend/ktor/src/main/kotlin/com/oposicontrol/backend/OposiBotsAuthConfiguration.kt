@@ -270,7 +270,9 @@ internal class OposiBotsAuthRuntime(
         ): CanonicalProfileRuntime {
             val transport = SupabaseRequestTransport(configuration.supabaseUrl, SupabaseRequestAuthPolicy(configuration.secretKey))
             val upstream = TransportCanonicalUpstream(transport)
-            val profiles = SupabaseCanonicalProfileService(upstream, authProvider, json)
+            // FA42: el mismo firmante (y su cache de URLs) para /me y para la subida del avatar
+            val avatarSigner = AvatarUrlSigner(TransportAvatarStorage(transport))
+            val profiles = SupabaseCanonicalProfileService(upstream, authProvider, json, avatarSigner)
             return CanonicalProfileRuntime(
                 resolver = CanonicalIdentityResolver(
                     verifySubject = verifier::subFrom,
@@ -284,6 +286,7 @@ internal class OposiBotsAuthRuntime(
                     ReferralService(TransportEconomyUpstream(transport)).let { svc -> ReferralAttach { user, code -> svc.attach(user, code) } },
                     PostgrestSpecialtyResolver(upstream, json),
                 ),
+                avatars = AvatarService.fromTransport(transport, avatarSigner),
             )
         }
     }

@@ -39,6 +39,22 @@ internal sealed interface SanitizedImage {
     class Rejected(val reason: String) : SanitizedImage
 }
 
+/**
+ * Forma de la salida recodificada. [FORO] es el comportamiento historico del foro (mismo formato que la entrada, lado mayor <= 1600, sin
+ * orientacion EXIF). [AVATAR] (D1-14): orientacion EXIF aplicada a los pixeles, recorte cuadrado centrado y lado <= 512, siempre JPEG.
+ */
+internal data class ImageOutputSpec(
+    val maxSide: Int,
+    val squareCrop: Boolean = false,
+    val forceJpeg: Boolean = false,
+    val applyExifOrientation: Boolean = false,
+) {
+    companion object {
+        val FORO = ImageOutputSpec(maxSide = ForoImageSanitizer.OUT_MAX_SIDE)
+        val AVATAR = ImageOutputSpec(maxSide = 512, squareCrop = true, forceJpeg = true, applyExifOrientation = true)
+    }
+}
+
 internal object ForoImageSanitizer {
     const val MAX_BYTES = 3 * 1024 * 1024
     const val MAX_PIXELS = 12_000_000L
@@ -69,14 +85,20 @@ internal object ForoImageSanitizer {
         return false
     }
 
-    fun sanitize(input: ByteArray, declaredMime: String, timeoutMs: Long = DECODE_TIMEOUT_MS): SanitizedImage {
-        if (input.isEmpty() || input.size > MAX_BYTES) return SanitizedImage.Rejected("tamano")
+    fun sanitize(
+        input: ByteArray,
+        declaredMime: String,
+        timeoutMs: Long = DECODE_TIMEOUT_MS,
+        output: ImageOutputSpec = ImageOutputSpec.FORO,
+        maxBytes: Int = MAX_BYTES,
+    ): SanitizedImage {
+        if (input.isEmpty() || input.size > maxBytes) return SanitizedImage.Rejected("tamano")
         val sniffed = sniff(input) ?: return SanitizedImage.Rejected("formato")
         if (sniffed != declaredMime) return SanitizedImage.Rejected("mime")
         if (sniffed == "image/png" && isAnimatedPng(input)) return SanitizedImage.Rejected("animada")
         if (!permits.tryAcquire(timeoutMs, TimeUnit.MILLISECONDS)) return SanitizedImage.Rejected("ocupado")
         try {
-            val future = pool.submit<SanitizedImage> { decodeAndReencode(input, sniffed) }
+            val future = pool.submit<SanitizedImage> { decodeAndReencode(input, sniffed, output, maxBytes) }
             return try {
                 future.get(timeoutMs, TimeUnit.MILLISECONDS)
             } catch (e: TimeoutException) {
@@ -90,7 +112,7 @@ internal object ForoImageSanitizer {
         }
     }
 
-    private fun decodeAndReencode(input: ByteArray, mime: String): SanitizedImage {
+    private fun decodeAndReencode(input: ByteArray, inputMime: String, spec: ImageOutputSpec, maxBytes: Int): SanitizedImage {
         ImageIO.createImageInputStream(ByteArrayInputStream(input)).use { stream ->
             val readers = ImageIO.getImageReaders(stream)
             if (!readers.hasNext()) return SanitizedImage.Rejected("formato")
@@ -98,21 +120,36 @@ internal object ForoImageSanitizer {
             try {
                 reader.setInput(stream, true, true)
                 // dimensiones de la CABECERA, antes de decodificar nada
-                val w = reader.getWidth(0)
-                val h = reader.getHeight(0)
-                if (w <= 0 || h <= 0 || w > MAX_SIDE || h > MAX_SIDE || w.toLong() * h > MAX_PIXELS) return SanitizedImage.Rejected("dimensiones")
+                val hw = reader.getWidth(0)
+                val hh = reader.getHeight(0)
+                if (hw <= 0 || hh <= 0 || hw > MAX_SIDE || hh > MAX_SIDE || hw.toLong() * hh > MAX_PIXELS) return SanitizedImage.Rejected("dimensiones")
                 if (reader.getNumImages(false) > 1) return SanitizedImage.Rejected("animada")
-                val decoded = reader.read(0)
-                val scale = minOf(1.0, OUT_MAX_SIDE.toDouble() / maxOf(w, h))
-                val ow = maxOf(1, (w * scale).toInt())
-                val oh = maxOf(1, (h * scale).toInt())
+                val raw = reader.read(0)
+                // avatar: la orientacion EXIF (solo JPEG de camara) se aplica a los pixeles ANTES de recortar; los metadatos no sobreviven a la recodificacion
+                val decoded = if (spec.applyExifOrientation && inputMime == "image/jpeg") {
+                    MediaCompression.applyExifOrientation(raw, MediaCompression.exifOrientation(input))
+                } else {
+                    raw
+                }
+                val w = decoded.width
+                val h = decoded.height
+                // recorte cuadrado centrado (avatar) o la imagen entera (foro)
+                val side = minOf(w, h)
+                val sx = if (spec.squareCrop) (w - side) / 2 else 0
+                val sy = if (spec.squareCrop) (h - side) / 2 else 0
+                val sw = if (spec.squareCrop) side else w
+                val sh = if (spec.squareCrop) side else h
+                val scale = minOf(1.0, spec.maxSide.toDouble() / maxOf(sw, sh))
+                val ow = maxOf(1, (sw * scale).toInt())
+                val oh = maxOf(1, (sh * scale).toInt())
+                val mime = if (spec.forceJpeg) "image/jpeg" else inputMime
                 val png = mime == "image/png"
                 val out = BufferedImage(ow, oh, if (png) BufferedImage.TYPE_INT_ARGB else BufferedImage.TYPE_INT_RGB)
                 val g = out.createGraphics()
                 try {
                     if (!png) { g.color = java.awt.Color.WHITE; g.fillRect(0, 0, ow, oh) }
                     g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR)
-                    g.drawImage(decoded, 0, 0, ow, oh, null)
+                    g.drawImage(decoded, 0, 0, ow, oh, sx, sy, sx + sw, sy + sh, null)
                 } finally {
                     g.dispose()
                 }
@@ -135,7 +172,7 @@ internal object ForoImageSanitizer {
                     }
                     sink.toByteArray()
                 }
-                if (bytes.isEmpty() || bytes.size > MAX_BYTES) return SanitizedImage.Rejected("tamano")
+                if (bytes.isEmpty() || bytes.size > maxBytes) return SanitizedImage.Rejected("tamano")
                 val sha = MessageDigest.getInstance("SHA-256").digest(bytes).joinToString("") { "%02x".format(it) }
                 return SanitizedImage.Ok(bytes, mime, ow, oh, sha)
             } finally {

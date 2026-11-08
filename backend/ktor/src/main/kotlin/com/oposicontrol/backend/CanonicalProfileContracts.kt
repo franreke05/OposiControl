@@ -88,7 +88,7 @@ data class MeProfile(
     val apellidos: String? = null,
     val especialidadPrincipalId: String? = null,
     val comunidadPrincipalId: String? = null,
-    /** D1-14 aplazado: nunca se expone el valor almacenado. Siempre `null`. */
+    /** D1-14 (FA42): URL FIRMADA y corta del objeto propio `avatars/{uid}/{sha256}.jpg`; `null` sin avatar o si lo guardado no es del servidor. */
     val avatarUrl: String? = null,
     val onboardingCompleted: Boolean,
     val accountStatus: String,
@@ -122,6 +122,13 @@ data class PendingLegalDocument(val id: String, val tipo: String, val version: S
 
 @Serializable
 data class LegalAcceptanceResponse(val pendingLegalDocuments: List<PendingLegalDocument>)
+
+/** D1-14 200: URL firmada del avatar recien guardado y su caducidad (instante ISO). */
+@Serializable
+data class AvatarResponse(
+    val avatarUrl: String,
+    val expiresAt: String,
+)
 
 @Serializable
 data class AccountDeletionAccepted(

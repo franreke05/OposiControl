@@ -137,7 +137,7 @@ class CanonicalProfileRoutesTest {
         assertEquals(TEST_SPECIALTY, profile.str("especialidadPrincipalId"))
         assertEquals("true", profile["onboardingCompleted"]!!.jsonPrimitive.content)
         assertEquals("activa", profile.str("accountStatus"))
-        assertNull(profile.str("avatarUrl"), "avatar aplazado (D1-14): nunca se expone la ruta guardada")
+        assertNull(profile.str("avatarUrl"), "sin avatar propio (FA42): null; la ruta guardada nunca se expone")
         assertEquals("private, no-store", response.headers[HttpHeaders.CacheControl])
         assertEquals("\"2026-09-30T10:00:00.123456Z\"", response.headers[HttpHeaders.ETag])
         assertTrue(response.headers["X-Request-Id"]!!.isNotBlank())
@@ -145,7 +145,7 @@ class CanonicalProfileRoutesTest {
         val read = env.upstream.log.single()
         assertTrue(read.startsWith("GET /rest/v1/perfiles_usuario?"), read)
         assertTrue("usuario_id=eq.$TEST_UID" in read, read)
-        assertFalse("avatar_url" in read, "la columna del avatar ni se lee")
+        assertTrue("avatar_url" in read, "FA42: la columna del avatar se lee para firmar SOLO el objeto propio")
         assertFalse("/rest/v1/usuario?" in read, "nunca public.usuario")
     }
 
@@ -580,8 +580,6 @@ class CanonicalProfileRoutesTest {
         val env = env()
         mount(env)
         listOf(
-            HttpMethod.Put to "/api/v1/app/me/avatar",
-            HttpMethod.Delete to "/api/v1/app/me/avatar",
             HttpMethod.Post to "/api/v1/app/me/credentials",
             HttpMethod.Get to "/api/v1/app/me/referrals",
         ).forEach { (method, path) ->

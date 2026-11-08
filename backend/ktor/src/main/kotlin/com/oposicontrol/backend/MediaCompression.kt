@@ -445,7 +445,7 @@ object MediaCompression {
     }
 
     /** Las ocho orientaciones del estandar EXIF, aplicadas a los pixeles. */
-    private fun applyExifOrientation(image: BufferedImage, orientation: Int): BufferedImage {
+    internal fun applyExifOrientation(image: BufferedImage, orientation: Int): BufferedImage {
         if (orientation == 1) return image
         val width = image.width
         val height = image.height
