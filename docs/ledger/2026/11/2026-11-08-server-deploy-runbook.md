@@ -88,6 +88,36 @@ Despues: repetir la exportacion del historial y `release.sh preflight --applied-
 4. Version: `ssh "$OPOSI_SSH_HOST" 'docker inspect bot-1 bot-2 control --format "{{.Name}} {{.Config.Image}}"'` (nombres reales segun `docker ps`) -> los tres en `<sha12>`.
 5. `compose.env` del servidor: `BACKEND_IMAGE=oposicontrol-backend:<sha12>` y `CONTROL_IMAGE=` vacio, para que un `compose up` posterior no devuelva la imagen vieja (si `redeploy-rolling.sh` no lo actualiza, lo edita el propietario; copia del paso 4).
 
+## 6b. Datos: canal unico del foro (P, GO expreso) — decision del propietario 2026-11-08
+
+Foro V1 basico (solo texto, sin imagenes ni hilos). En produccion no hay ningun canal activo en `public.categorias_oposired`, asi que `GET /api/v1/app/oposired/categorias` devuelve `[]` y la app dice "El foro no esta disponible". Se crea UN canal general para todas las especialidades.
+
+1. Solo lectura (SQL Editor):
+   ```sql
+   select id, nombre, slug, activa, solo_lectura, posicion, especialidad_id from public.categorias_oposired order by posicion, nombre;
+   select clave, valor_integer from public.configuracion_v1 where clave like 'foro_%' order by clave;
+   ```
+   Esperado: ningun canal activo; `foro_activo = 1` (lo siembra `20261022101900` con `on conflict do nothing` y es el valor por defecto de `private.config_int('foro_activo', 1)`; si sale `0`, el foro esta apagado: ponerlo a 1 desde el panel, Configuracion V1, con GO).
+2. Crear el canal por el endpoint de Control (queda auditado como `foro_canal_creado`), preferentemente desde el panel: **Foro > Canales > Nuevo canal** (`ForumOpsScreen`), con Nombre `General`, slug `general`, activo, no solo lectura, posicion 1, sin especialidad. Equivalente HTTP (token de un administrador de Control):
+   ```bash
+   curl -sS -X POST "$OPOSI_API_URL/api/v1/admin/foro/canales" -H "Authorization: Bearer $TOKEN_ADMIN" -H 'Content-Type: application/json' \
+     -d '{"nombre":"General","slug":"general","activa":true,"soloLectura":false,"posicion":1,"especialidadId":null}'
+   ```
+   Claves admitidas exactamente: `nombre, slug, descripcion, activa, posicion, especialidadId, soloLectura` (`AdminControlForum.parseChannel`). Si el paso 1 mostro ya un canal con slug `general` inactivo, NO crear otro (`slug` es UNIQUE): `PATCH /api/v1/admin/foro/canales/{id}` con `{"activa":true,"soloLectura":false,"posicion":1,"especialidadId":null}`.
+3. Solo si el panel y el endpoint no estan disponibles (sin auditoria; columnas verificadas contra la captura de MAIN 2026-10-14 + `20261022101900`, que anade `especialidad_id` y `solo_lectura`):
+   ```sql
+   insert into public.categorias_oposired (nombre, slug, activa, solo_lectura, posicion, especialidad_id)
+   values ('General', 'general', true, false, 1, null)
+   on conflict (slug) do nothing
+   returning id, nombre, slug, activa, solo_lectura, posicion, especialidad_id;
+   ```
+4. Comprobacion: `GET /api/v1/app/oposired/categorias` con una cuenta de prueba con especialidad -> 1 canal `General`. Rollback: `PATCH ... {"activa":false}` (no borrar: las publicaciones lo referencian).
+
+Notas del foro para el humo y para la APK:
+- Para publicar, la cuenta debe tener especialidad, mas de `foro_edad_min_horas` = 24 h de antiguedad, y sus 3 primeras publicaciones van a premoderacion (`foro_premoderacion_posts` = 3): con una cuenta recien creada el POST se rechaza o queda "en revision". Usar `+prueba-a/-b` (2026-10-22).
+- **Imagenes del foro: NO hay interruptor de servidor.** Las rutas `POST /api/v1/app/oposired/imagenes`, `PUT .../imagenes/{id}/contenido` y `GET .../imagenes/{id}` estan siempre activas si Storage esta configurado; `foro_imagenes_hora` tiene cota minima 1 (`20261022101500`), no se puede poner a 0. Hoy "sin imagenes" depende solo de que la APK no muestre el boton. Si se quiere cierre en servidor hay tres opciones (decision del propietario, no incluidas en este despliegue): (a) `respond @foroimg 404` en Caddy para `/api/v1/app/oposired/imagenes*` (edicion del Caddy del host con copia, `caddy validate` y reload; validar con 2.6.2); (b) una clave `foro_imagenes_activo` nueva (migracion + Ktor); (c) dejarlo y moderar.
+- Hilos: la tabla tiene `comentario_padre_id`, pero las funciones V1 del foro no lo usan (comentarios planos): no hay hilos en servidor.
+
 ## 7. Pruebas de humo (P)
 
 Generales: `bash ops/deploy/release.sh verify` (health/live 200, health/ready 200, /metrics 404 en el borde). Rutas nuevas, con una cuenta de prueba (`+prueba-a`, `+prueba-b`) y su token (`TOKEN_A`, `TOKEN_B`), nunca con datos reales:
@@ -104,7 +134,7 @@ Generales: `bash ops/deploy/release.sh verify` (health/live 200, health/ready 20
 | 8 | `DELETE /api/v1/app/me/avatar` (A) dos veces | 204 y 204; objeto borrado; `/me` -> `avatarUrl: null` |
 | 9 | `GET /api/v1/app/racha` (A) | 200; `actual`, `maxima` y ademas `liga` (`{codigo,nombre,orden}` o `null`) y `otHoy` `{ganados, tope}` |
 | 10 | `GET /api/v1/app/ranking` (A) | 200; si hay top3, cada entrada trae `avatarUrl` (null o firmada); nunca `avatarPath` |
-| 11 | `GET /api/v1/app/oposired/publicaciones` (B), con un post de A teniendo avatar | `autor.avatarUrl` firmada para A; nunca `avatarPath`; cuenta B ve la foto de A |
+| 11 | Tras 6b: `GET /api/v1/app/oposired/categorias` (A) -> `General`; A publica un texto en `General` (puede quedar en revision: aprobarlo en el panel); `GET /api/v1/app/oposired/publicaciones` (B), con A teniendo avatar | `autor.avatarUrl` firmada para A; nunca `avatarPath`; cuenta B ve la foto de A |
 | 12 | Onboarding de una cuenta nueva de prueba | `nombre_mostrar` = username elegido (SQL de solo lectura sobre esa cuenta) |
 | 13 | Panel de Control: login y abrir un listado | 200 (control tambien cambio de imagen) |
 | 14 | Logs (`docker logs --since 15m bot-1 | grep -E 'OC-KTOR-AVATAR|ERROR'`) | sin `avatar signing failed` repetidos ni 5xx |
