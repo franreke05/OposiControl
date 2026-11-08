@@ -1,5 +1,10 @@
 # Current State
 
+## Integracion servidor 2026-11 — 2026-11-08 (rama local `integ/server-2026-11`, sin push) — `PREPARADO`, NO desplegado, MAIN sin tocar
+
+- F3 avatar (FA42), F2 racha liga/otHoy (FA43), F14 demo automatica (FA44) y F15 turnoAcceso (FA45) fusionadas desde develop `04e5eb5e`. Cinco migraciones pendientes `20261108100000/100100/100200/100300/100500`, manifiesto de ventana `ops/deploy/v1/main-migrations-2026-11.manifest`.
+- Runbook y resultados: `docs/ledger/2026/11/2026-11-08-server-deploy-runbook.md` (orden: migraciones ANTES de la imagen; canal General del foro como paso de datos; rollback completo de F14 en `rollback-20261108100300-complete.sql` porque el de su cabecera pierde el cuerpo de stats de `app_record_attempt_answer`).
+
 ## Foto de perfil y nombre visible — 2026-11-08 (rama local `f3/avatar` desde develop `04e5eb5e`, sin push) — `CURRENT_IMPLEMENTATION`, `LIVE_VERIFIED: NO`
 
 - Decision del propietario 2026-11-08, enmienda FA42. D1-14 `PUT /api/v1/app/me/avatar` (bytes crudos `image/jpeg|image/png`, 1..2.000.000 bytes, sin multipart; saneado con `ForoImageSanitizer`: bytes magicos, sin animadas, cabecera antes de decodificar, orientacion EXIF aplicada, recorte cuadrado <= 512 px, JPEG sin metadatos) y D1-15 `DELETE` (204 idempotente). Objeto `avatars/{uid}/{sha256}.jpg` en el bucket PRIVADO `avatars` (`ensureBucket` en Ktor, como el foro); URLs firmadas de 1 h.

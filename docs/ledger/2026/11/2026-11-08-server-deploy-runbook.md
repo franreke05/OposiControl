@@ -20,6 +20,13 @@ Produccion hoy (CURRENT_STATE, 2026-10-22/27): los tres Ktor en `oposicontrol-ba
 
 ## 1. Antes del dia (C, local — hecho en esta rama)
 
+Resultados SRV 2026-11-08 sobre el arbol final (F3+F2+F14+F15, migraciones con los blobs del manifiesto):
+- `:backend:ktor:test` 2534 tests / 0 fallos (1 omitido); `:backend:dbtest:test` 357 / 0; `:data:jvmTest` 299 / 0; `:domain:jvmTest` 127 / 0; `:features:exams:jvmTest` 335 / 0; `:composeApp:compileKotlinJvm` OK.
+- `db-pg17-gate.sh` OK (bootstrap + todas las pendientes, VERIFY = 0, assertions, rollback == bootstrap, carreras); `db-pg17-gate.test.sh` OK (20 escenarios).
+- Ensayo `rehearse-server-2026-11.sh`: `SERVER-2026-11-REHEARSAL OK` (punto de partida = MAIN tras V1 con 121 versiones; las 5 con `apply-main-migration.sh` + manifiesto; negativas; rollback inverso con huella == partida incluyendo cuerpos de funcion; re-aplicacion identica). Con el procedimiento de rollback de la cabecera de F14 el ensayo FALLA (ver 9).
+- `verify-ops-config` + test (106 mutaciones), `verify-migrations-manifest` + test (47), `release.test`, `assert-clean-tree.test`, `smoke-backend-image.test`, `redocly lint` OK.
+- Fallos PREEXISTENTES en develop `04e5eb5e` (comprobado sobre un `git archive develop`, no los introduce esta rama, no bloquean el despliegue del servidor): `verify-no-direct-supabase.sh` (MediaUrlPolicy.kt con 2 lineas `/storage/v1/object/...` frente a 1 permitida; QuestionResourceMedia.jvm.kt con `HttpURLConnection`, ambos del panel) y `verify-ci-jvmtest-coverage.sh` (`:features:control-v1:jvmTest` falta en la lista de DEPLOYMENT.md).
+
 - Gate PG17 (`scripts/db-pg17-gate.sh` + `.test.sh`), ensayo de la ventana (`docs/ledger/2026/11/rehearse-server-2026-11.sh`), `:backend:ktor:test`, `:backend:dbtest:test`, `verify-ops-config(.test)`, `redocly lint`, manifiestos. Resultados en el informe SRV (ledger de este dia).
 - Manifiesto de la ventana: `ops/deploy/v1/main-migrations-2026-11.manifest` (version -> blob -> predecesora -> clase). Si cambia un blob, se rehace y se repite el ensayo.
 - Requisito de `release.sh`: publica SOLO desde `develop == origin/develop`, arbol limpio. Por tanto el propietario fusiona `integ/server-2026-11` en `develop` y hace push ANTES del paso 3 (Claude no hace push). El SHA desplegado = HEAD de develop tras esa fusion; los blobs de migracion deben seguir siendo los del manifiesto (`apply-main-migration.sh` lo comprueba).
