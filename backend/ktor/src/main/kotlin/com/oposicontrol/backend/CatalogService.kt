@@ -24,6 +24,8 @@ internal data class AppExamSummary(
     val titulo: String,
     val tipoExamen: String,
     val tipoAcceso: String,
+    /** FA45 (F15): turno de la convocatoria (`libre`, `promocion_interna`, `estabilizacion`, `discapacidad`); `null` = sin indicar. NO es `tipoAcceso`. */
+    val turnoAcceso: String? = null,
     val especialidadId: String,
     val comunidadCodigo: String? = null,
     /** V1: nombre legible de la comunidad (p. ej. "Comunidad de Madrid"). Null solo en examenes heredados sin comunidad. */
@@ -59,6 +61,8 @@ internal data class AppExamDetail(
     val descripcion: String? = null,
     val tipoExamen: String,
     val tipoAcceso: String,
+    /** FA45 (F15): turno de la convocatoria (`libre`, `promocion_interna`, `estabilizacion`, `discapacidad`); `null` = sin indicar. NO es `tipoAcceso`. */
+    val turnoAcceso: String? = null,
     val especialidadId: String,
     val comunidadCodigo: String? = null,
     val comunidadNombre: String? = null,
@@ -97,6 +101,8 @@ internal data class MyExamRef(
     val id: String,
     val titulo: String,
     val tipoExamen: String,
+    /** FA45 (F15): turno de la convocatoria (`libre`, `promocion_interna`, `estabilizacion`, `discapacidad`); `null` = sin indicar. NO es `tipoAcceso`. */
+    val turnoAcceso: String? = null,
     val comunidadCodigo: String? = null,
     val comunidadNombre: String? = null,
     val portadaUrl: String? = null,
@@ -339,6 +345,7 @@ internal class CatalogService(
                 titulo = row.titulo,
                 tipoExamen = row.kind().wire,
                 tipoAcceso = row.accessType(),
+                turnoAcceso = row.accessRoute(),
                 especialidadId = row.especialidadId,
                 comunidadCodigo = row.comunidad?.codigo,
                 comunidadNombre = row.comunidad?.codigo?.let(names::get),
@@ -402,6 +409,7 @@ internal class CatalogService(
                 descripcion = row.descripcion,
                 tipoExamen = row.kind().wire,
                 tipoAcceso = row.accessType(),
+                turnoAcceso = row.accessRoute(),
                 especialidadId = row.especialidadId,
                 comunidadCodigo = row.comunidad?.codigo,
                 comunidadNombre = row.comunidad?.codigo?.let(names::get),
@@ -489,6 +497,7 @@ internal class CatalogService(
             id = exam.id,
             titulo = exam.titulo,
             tipoExamen = exam.kind().wire,
+            turnoAcceso = exam.accessRoute(),
             comunidadCodigo = exam.comunidad?.codigo,
             comunidadNombre = exam.comunidad?.codigo?.let(communityNames()::get),
             portadaUrl = exam.portadaStoragePath?.let(covers::get),
@@ -614,6 +623,9 @@ internal class CatalogService(
     private fun CatalogExamRow.accessType(): String =
         tipoAcceso.takeIf { it == "gratuito" || it == "premium" } ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
 
+    /** FA45: solo el conjunto cerrado del CHECK; cualquier otro valor (deriva) se sirve como `null`, nunca rompe la lectura. */
+    private fun CatalogExamRow.accessRoute(): String? = turnoAcceso?.takeIf { it in ACCESS_ROUTES }
+
     private fun CatalogExamRow.publicadoEnOrFail(): String =
         publicadoEn ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
 
@@ -625,6 +637,9 @@ internal class CatalogService(
         const val MAX_PUBLIC_SPECIALTIES = 100
         const val COMMUNITY_NAMES_CACHE_MS = 300_000L
         private val ATTEMPT_STATES = setOf("en_progreso", "finalizado", "abandonado")
+
+        /** FA45: `examenes_turno_acceso_check` (20261108100500). */
+        internal val ACCESS_ROUTES = setOf("libre", "promocion_interna", "estabilizacion", "discapacidad")
     }
 }
 

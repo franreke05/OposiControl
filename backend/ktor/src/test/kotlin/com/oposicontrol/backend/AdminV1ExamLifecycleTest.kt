@@ -556,6 +556,41 @@ class AdminV1ExamLifecycleTest {
     }
 
     /** El cuerpo exacto del único PATCH que sale hacia `examenes`. */
+    // -----------------------------------------------------------------
+    // FA45 (F15) · Turno de acceso: opcional, conjunto cerrado, borrable
+    // -----------------------------------------------------------------
+
+    @Test
+    fun theAccessRouteIsNormalisedClearedOrRejectedAndAbsentMeansUntouched() {
+        assertTrue(
+            patchBodyFor(buildJsonObject { put("turnoAcceso", " Promocion_Interna ") }).contains("\"turno_acceso\":\"promocion_interna\""),
+            "normalised to the canonical code",
+        )
+        assertTrue(patchBodyFor(buildJsonObject { put("turnoAcceso", kotlinx.serialization.json.JsonNull) }).contains("\"turno_acceso\":null"), "null clears (Sin indicar)")
+        assertTrue(patchBodyFor(buildJsonObject { put("turnoAcceso", "  ") }).contains("\"turno_acceso\":null"), "blank = Sin indicar")
+        assertFalse(patchBodyFor(buildJsonObject { put("titulo", "Examen") }).contains("turno_acceso"), "absent key: the column is untouched")
+        val error = assertFailsWith<BackendDomainException> { examenPatchFrom(buildJsonObject { put("turnoAcceso", "concurso") }) }
+        assertEquals("EXAM_ACCESS_ROUTE_UNKNOWN", error.errorCode)
+        assertEquals(HttpStatusCode.UnprocessableEntity, error.status)
+        assertFalse(error.message.contains("concurso"), "never echoes the input: ${error.message}")
+    }
+
+    @Test
+    fun aCreateWithoutAnAccessRouteNeverNamesTheColumnAndOneWithItWritesTheCanonicalCode() {
+        val without = CopyOnWriteArrayList<String>()
+        gatewayRecordingBodies(without).createExamen(AdminExamenDto(especialidadId = especialidadId, titulo = "Examen"))
+        assertFalse(without.first { it.contains("titulo") }.contains("turno_acceso"), "safe against a database without the column")
+        val with = CopyOnWriteArrayList<String>()
+        gatewayRecordingBodies(with).createExamen(AdminExamenDto(especialidadId = especialidadId, titulo = "Examen", turnoAcceso = "LIBRE"))
+        assertTrue(with.first { it.contains("titulo") }.contains("\"turno_acceso\":\"libre\""), with.toString())
+        assertEquals(
+            "EXAM_ACCESS_ROUTE_UNKNOWN",
+            assertFailsWith<BackendDomainException> {
+                gatewayWith { V1StubResponse(200, "[]") }.createExamen(AdminExamenDto(especialidadId = especialidadId, titulo = "Examen", turnoAcceso = "x"))
+            }.errorCode,
+        )
+    }
+
     private fun patchBodyFor(raw: JsonObject): String {
         val bodies = CopyOnWriteArrayList<String>()
         val gateway = gatewayWith(
