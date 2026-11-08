@@ -1387,6 +1387,8 @@ insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, t
   ('e5000000-0000-0000-0000-0000000000c2','G-OTHER','e1000000-0000-0000-0000-0000000000c2','c1000000-0000-0000-0000-0000000000c1','otra especialidad','rafaga','premium',true, now() - interval '1 day', 30),
   ('e5000000-0000-0000-0000-0000000000c3','G-CAP','e1000000-0000-0000-0000-0000000000c1','c1000000-0000-0000-0000-0000000000c1','capacidad apagada','inmersivo','premium',true, now() - interval '1 day', 30),
   ('e5000000-0000-0000-0000-0000000000c4','G-DRAFT','e1000000-0000-0000-0000-0000000000c1','c1000000-0000-0000-0000-0000000000c1','borrador','rafaga','premium',false, null, 30);
+-- F14 (20261108100300): demo_disponible is default ON now; this block checks grants against LOCKED, so its exams opt out of the demo
+update public.examenes set demo_disponible = false where id::text like 'e5000000-0000-0000-0000-0000000000c_';
 update public.perfiles_usuario set especialidad_principal_id = 'e1000000-0000-0000-0000-0000000000c1' where usuario_id in ('a0000000-0000-0000-0000-0000000000c1', 'a0000000-0000-0000-0000-0000000000c4');
 do $$
 declare r record; r2 record; first_until timestamptz;
@@ -1764,7 +1766,9 @@ declare
   ok1 uuid := '0c600000-0000-0000-0000-000000000011'; ok6 uuid := '0c600000-0000-0000-0000-000000000061';
 begin
   -- the demo can only be switched on with a complete set, and the set cannot exceed the configured size
-  perform pg_temp.expect_e(format($q$update public.examenes set demo_disponible = true where id = %L$q$, ex), 'DEMO_SET_INCOMPLETE');
+  -- F14 (20261108100300): switching the demo on is always allowed (no DEMO_SET_INCOMPLETE any more; without an effective set there is simply no demo)
+  perform pg_temp.expect_e(format($q$update public.examenes set demo_disponible = true where id = %L$q$, ex), null);
+  update public.examenes set demo_disponible = false where id = ex;
   update public.preguntas_examen set es_demo = true where examen_id = ex and posicion <= 5;
   perform pg_temp.expect_e(format($q$update public.preguntas_examen set es_demo = true where examen_id = %L and posicion = 6$q$, ex), 'DEMO_SET_FULL');
   update public.examenes set demo_disponible = true where id = ex;
