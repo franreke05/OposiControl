@@ -139,6 +139,10 @@ components:
                 maximum: 3
               handle:
                 type: string
+              avatarUrl:
+                type: [string, 'null']
+                format: uri
+                description: 'FA42: short-lived signed URL of the listed user avatar, only while that user is still public and active; null (or absent) = no avatar. Never persisted by the client.'
               notaMedia:
                 type: number
                 minimum: 0
