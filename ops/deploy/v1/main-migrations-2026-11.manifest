@@ -1,0 +1,9 @@
+# Despliegue servidor 2026-11 (integ/server-2026-11): migraciones que se aplican a MAIN despues del lanzamiento V1 del 2026-10-22.
+# Runbook: docs/ledger/2026/11/2026-11-08-server-deploy-runbook.md. Uso con el script de siempre:
+#   MANIFEST=ops/deploy/v1/main-migrations-2026-11.manifest bash ops/deploy/v1/apply-main-migration.sh supabase/migrations/<version>_<nombre>.sql
+# version  blob(git hash-object, 12)  predecesora(debe estar en supabase_migrations antes de aplicar)  clase
+# Cadena: la ultima de la ventana V1 registrada en MAIN es 20261023100600 (ops/deploy/v1/main-migrations.manifest).
+# Si cambia un blob, se rehacen este manifiesto y el ensayo (docs/ledger/2026/11/rehearse-server-2026-11.sh).
+20261108100000 2d6d4e26fe90 20261023100600 apply
+20261108100100 a387b666a5ad 20261108100000 apply
+20261108100200 e2ce5d51118f 20261108100100 apply
