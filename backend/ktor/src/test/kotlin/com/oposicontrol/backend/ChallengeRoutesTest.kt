@@ -196,4 +196,34 @@ class ChallengeRoutesTest {
         assertEquals(3, obj(r.bodyAsText())["actual"]!!.jsonPrimitive.content.toInt())
         assertEquals("app_get_streak", upstream.rpcs.single().first)
     }
+
+    /** FA43 (Home top bar): liga and otHoy are served exactly as the database builds them, explicit nulls included (no field dropped by explicitNulls = false). */
+    @Test
+    fun streakServesTheLeagueTierAndTodayFreeOtVerbatim() = testApplication {
+        application { challengeModule() }
+        val client = createClient { }
+        upstream.handler = { _, _ ->
+            SupabaseRawResponse(200, """{"liga":{"orden":2,"codigo":"hl-2","nombre":"Liga Plata"},"otHoy":{"tope":100,"ganados":38},"actual":3,"maxima":5,"ultimoDiaSuperado":"2026-11-08"}""")
+        }
+        val r = client.getAs("/api/v1/app/racha")
+        assertEquals(HttpStatusCode.OK, r.status, r.bodyAsText())
+        assertEquals("no-store", r.headers[HttpHeaders.CacheControl])
+        val body = obj(r.bodyAsText())
+        assertEquals("Liga Plata", body["liga"]!!.jsonObject["nombre"]!!.jsonPrimitive.content)
+        assertEquals(2, body["liga"]!!.jsonObject["orden"]!!.jsonPrimitive.content.toInt())
+        assertEquals(38, body["otHoy"]!!.jsonObject["ganados"]!!.jsonPrimitive.content.toInt())
+        assertEquals(100, body["otHoy"]!!.jsonObject["tope"]!!.jsonPrimitive.content.toInt())
+        // no league yet and no daily cap: both nulls reach the client as explicit JSON nulls
+        upstream.handler = { _, _ -> SupabaseRawResponse(200, """{"liga":null,"otHoy":{"tope":null,"ganados":0},"actual":0,"maxima":0,"ultimoDiaSuperado":null}""") }
+        val empty = client.getAs("/api/v1/app/racha")
+        assertEquals(HttpStatusCode.OK, empty.status, empty.bodyAsText())
+        val e = obj(empty.bodyAsText())
+        assertTrue(e.containsKey("liga") && e["liga"] is kotlinx.serialization.json.JsonNull, empty.bodyAsText())
+        assertTrue(e["otHoy"]!!.jsonObject["tope"] is kotlinx.serialization.json.JsonNull, empty.bodyAsText())
+        // an older database (without 20261108100100) still answers the FA29 shape: the route does not require the new fields
+        upstream.handler = { _, _ -> SupabaseRawResponse(200, """{"actual":1,"maxima":1,"ultimoDiaSuperado":null}""") }
+        val old = client.getAs("/api/v1/app/racha")
+        assertEquals(HttpStatusCode.OK, old.status, old.bodyAsText())
+        assertFalse(obj(old.bodyAsText()).containsKey("otHoy"))
+    }
 }

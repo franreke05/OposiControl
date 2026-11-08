@@ -211,19 +211,19 @@ components:
         x-pagination: NONE
         x-idempotency: NONE
         x-error-codes: [UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
-        description: 'Streak = consecutive Madrid days with the daily challenge PASSED; a day without an available challenge does not break it. actual is 0 when yesterday and today were both missed. Single writer: the challenge completion function.'
+        description: 'Streak = consecutive Madrid days with the daily challenge PASSED; a day without an available challenge does not break it. actual is 0 when yesterday and today were both missed. Single writer: the challenge completion function. FA43 (2026-11-08): the same read also carries the Home top bar data, the user league tier (liga) and the free OT earned today against the daily cap (otHoy); both optional and nullable, computed by the database in the same read.'
         security:
           - bearerAuth: []
         responses:
           '200':
-            description: 'The streak.'
+            description: 'The streak, with the league tier and today free OT.'
             headers:
               Cache-Control:
                 $ref: '#/components/headers/NoStore'
             content:
               application/json:
                 schema:
-                  $ref: '#/components/schemas/Streak'
+                  $ref: '#/components/schemas/StreakView'
           '401':
             $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
           '403':
@@ -401,3 +401,43 @@ components:
         ultimoDiaSuperado:
           type: [string, 'null']
           format: date
+    StreakView:
+      type: object
+      required: [actual, maxima]
+      description: 'D3-04 body: the Streak fields plus, since FA43 (2026-11-08, Home top bar), the optional liga and otHoy. A server without FA43 omits both; clients treat an absent field as null.'
+      properties:
+        actual:
+          type: integer
+          minimum: 0
+        maxima:
+          type: integer
+          minimum: 0
+        ultimoDiaSuperado:
+          type: [string, 'null']
+          format: date
+        liga:
+          type: [object, 'null']
+          description: 'League tier assigned to the user by first answers (the same liga as GET ranking). null while the user has not reached the first tier.'
+          required: [codigo, nombre, orden]
+          properties:
+            codigo:
+              type: string
+            nombre:
+              type: string
+              description: 'Display name of the tier (Control data).'
+            orden:
+              type: integer
+              minimum: 1
+              description: 'Position of the tier in the league ladder (1 = first tier).'
+        otHoy:
+          type: [object, 'null']
+          description: 'Free OposiTickets earned today (Madrid day, the same day as the daily challenge) against the daily free-earn cap. ganados is the exact sum the cap is checked against: ledger types reto_diario, bonus_racha, referido and reporte_validado (positive amounts); purchases, admin grants or adjustments, gifts, refunds and rewards still deferred by the cap are not counted. Rewards an admin validates manually are not capped, so ganados can exceed tope.'
+          required: [ganados, tope]
+          properties:
+            ganados:
+              type: integer
+              minimum: 0
+            tope:
+              type: [integer, 'null']
+              minimum: 1
+              description: 'Daily free-earn cap (Control parameter tope_ot_gratis_dia). null when no daily cap is configured.'

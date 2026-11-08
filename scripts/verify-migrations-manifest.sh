@@ -119,18 +119,18 @@ for need in 20261008100500_slice7_wallet_ledger_keyset_index; do
   echo "$expected7" | grep -qx "$need" || { echo "FAIL: el manifiesto Slice 7 no lista $need"; exit 1; }
 done
 echo "ok:   manifiesto Slice 7 == migraciones 202610*_slice7_* ($(echo "$actual7" | wc -l | tr -d ' '))"
-# V1 (propietario 2026-10-15): supabase/V1_MIGRATIONS.txt y los supabase/migrations/20261[01]*_v1_*.sql (comunidad obligatoria, economia; desde 2026-11-08 tambien las 202611*_v1_*).
+# V1 (propietario 2026-10-15): supabase/V1_MIGRATIONS.txt y los supabase/migrations/2026(10|11|12)*_v1_*.sql (comunidad obligatoria, economia; F2 2026-11-08: las V1 posteriores a la ventana, 202611*, tambien).
 manv1=supabase/V1_MIGRATIONS.txt
 [ -s "$manv1" ] || { echo "FAIL: manifiesto vacio o ausente: $manv1"; exit 1; }
 expectedv1="$(tr -d '\r' < "$manv1" | grep -Ev '^[[:space:]]*(#|$)' | sort)"
 [ -n "$expectedv1" ] || { echo "FAIL: manifiesto V1 sin entradas"; exit 1; }
-actualv1="$( (cd supabase/migrations 2>/dev/null && ls | grep -E '^20261[01][0-9]*_v1_.*\.sql$' | sed 's/\.sql$//' | sort) )"
+actualv1="$( (cd supabase/migrations 2>/dev/null && ls | grep -E '^2026(10|11|12)[0-9]*_v1_.*\.sql$' | sed 's/\.sql$//' | sort) )"
 if [ "$actualv1" != "$expectedv1" ]; then
-  echo "FAIL: el manifiesto V1 y supabase/migrations/20261[01]*_v1_*.sql difieren (< manifiesto, > real):"
+  echo "FAIL: el manifiesto V1 y supabase/migrations/2026(10|11|12)*_v1_*.sql difieren (< manifiesto, > real):"
   diff <(echo "$expectedv1") <(echo "$actualv1")
   exit 1
 fi
 for vv1 in $(echo "$expectedv1" | cut -d_ -f1); do
   grep -qF "$vv1" "$dep" || { echo "FAIL: $dep no cita la migracion V1 $vv1"; exit 1; }
 done
-echo "ok:   manifiesto V1 == migraciones 20261[01]*_v1_* ($(echo "$actualv1" | wc -l | tr -d ' '))"
+echo "ok:   manifiesto V1 == migraciones 2026(10|11|12)*_v1_* ($(echo "$actualv1" | wc -l | tr -d ' '))"

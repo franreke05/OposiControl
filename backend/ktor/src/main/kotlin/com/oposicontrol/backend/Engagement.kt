@@ -26,7 +26,7 @@ import kotlinx.serialization.json.put
 //   D3-17 PUT  /api/v1/app/retos/{retoId}/respuestas/{preguntaId} responder (definitiva)
 //   D3-18 POST /api/v1/app/retos/{retoId}/reclamar                 cobrar la recompensa congelada (idempotente por usuario y dia de Madrid)
 //   D3-19 GET  /api/v1/app/retos/{retoId}/preguntas/{preguntaId}/recursos/{recursoId}  URL firmada de un recurso de una pregunta del reto (la base confirma la cadena)
-//   D3-04 GET  /api/v1/app/racha                                   racha actual y maxima
+//   D3-04 GET  /api/v1/app/racha                                   racha actual y maxima; FA43: liga del usuario y OT gratis ganadas hoy / tope diario (barra de Home)
 //
 // Identidad = SOLO el `sub` del JWT. Reloj, segmento, correccion, recompensa, racha y tope de OT los decide la base en UNA funcion por comando; aqui solo forma,
 // limite por usuario y traduccion de errores. El cuerpo de las respuestas lo construye la base con la forma del contrato y se sirve tal cual.

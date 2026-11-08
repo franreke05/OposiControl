@@ -8,6 +8,10 @@
 - Migraciones PENDIENTES `20261108100000_v1_avatar` y `20261108100200_v1_onboarding_display_name` (no aplicadas a MAIN; no anadidas a `ops/deploy/v1/main-migrations.manifest`).
 - Pendiente: la purga de cuentas borradas debe borrar `avatars/{uid}/`; el detalle admin (`AdminUserDetail`) sigue mostrando el valor crudo de `avatar_url`.
 
+## Barra superior de Home: liga y OT hoy (F2) — 2026-11-08 — local, sin push, NO aplicada a MAIN
+
+- Rama local `f2/level-ot-today` (desde develop `04e5eb5e`). Migración pendiente `20261108100100_v1_home_level_ot_today`: `app_get_streak` (D3-04 `GET /api/v1/app/racha`) añade `liga` {codigo, nombre, orden} o null y `otHoy` {ganados, tope}. ganados = la suma del día de Madrid que compara el tope de OT gratis (`reto_diario`, `bonus_racha`, `referido`, `reporte_validado`, cantidad > 0); tope = `tope_ot_gratis_dia` o null si es 0. Enmienda de contrato FA43 (schema `StreakView`), PENDING_OWNER en CONTRACT_FREEZE.md (repo OposiBot). El Ktor sirve el cuerpo tal cual (sin cambio funcional). `verify-migrations-manifest.sh` acepta ya V1 202611*. Fuera del manifiesto de la ventana V1: llegar a MAIN necesita su propio GO.
+
 ## Redirecciones de autenticacion — 2026-10-27
 
 - `OPOSIBOTS_EMAIL_CONFIRM_REDIRECT_URL=oposibots://auth` y `OPOSIBOTS_PASSWORD_RECOVERY_REDIRECT_URL=oposibots://auth/reset-password` en `backend.bot.env` (faltaban: los correos volvian al Site URL `localhost:3000`). bot-1 y bot-2 recreados y sanos. Pendiente del propietario en Supabase: Redirect URLs con esas dos URLs y Site URL distinto de localhost. El enlace solo verifica en el dispositivo que pidio el registro (PKCE).
