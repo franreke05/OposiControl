@@ -1,5 +1,11 @@
 # Current State
 
+## Reto diario por tipo de examen (F20) — 2026-11-09 (rama local `f20/reto-per-type` desde develop `920fa29b`, sin push) — `CURRENT_IMPLEMENTATION`, NO aplicada a MAIN
+
+- Decision del propietario 2026-11-09: el reto toma UNA pregunta de examenes inmersivos, UNA de razonados y UNA de rafaga, de los examenes PUBLICADOS de la especialidad del usuario; un tipo sin preguntas se salta (reto de 1 a 3). Antes exigia los tres huecos (y la inmersiva con marca demo): en produccion, solo rafaga, el reto salia `NO_DISPONIBLE` para todos.
+- Migracion PENDIENTE `20261109100000_v1_reto_por_tipo` (`reto_pool` por `tipo_examen`, sin demo; `ensure_challenge_row` determinista por dia y segmento, huecos vacios saltados, `aciertos_necesarios = ceil(2n/3)`). Manifiesto `ops/deploy/v1/main-migrations-2026-11-f20.manifest`; ensayo `docs/ledger/2026/11/rehearse-f20-2026-11.sh`; acta `docs/ledger/2026/11/2026-11-09-f20-reto-por-tipo.md`. Sin imagen nueva.
+- Contrato: FA46 solo texto (`engagement.yaml`), forma intacta; registro CONTRACT_FREEZE.md (repo OposiBot) PENDING_OWNER. Cliente sin cambios necesarios.
+
 ## Integracion servidor 2026-11 — 2026-11-08 (rama local `integ/server-2026-11`, sin push) — `PREPARADO`, NO desplegado, MAIN sin tocar
 
 - F3 avatar (FA42), F2 racha liga/otHoy (FA43), F14 demo automatica (FA44) y F15 turnoAcceso (FA45) fusionadas desde develop `04e5eb5e`. Cinco migraciones pendientes `20261108100000/100100/100200/100300/100500`, manifiesto de ventana `ops/deploy/v1/main-migrations-2026-11.manifest`.

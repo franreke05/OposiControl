@@ -1936,6 +1936,14 @@ select case when n = 1 then 'e5000000-0000-0000-0000-0000000000e8'::uuid when n 
        ('f8000000-0000-0000-0000-0000000000' || lpad(n::text, 2, '0'))::uuid, n, n, n = 1 from generate_series(1, 6) n;
 insert into public.etiquetas (id, nombre, slug) values ('7a800000-0000-0000-0000-000000000001', 'Legislacion autonomica A', 'ch-leg-a');
 insert into public.etiquetas_pregunta (pregunta_id, etiqueta_id) values ('f8000000-0000-0000-0000-000000000004', '7a800000-0000-0000-0000-000000000001');
+-- 20261109100000 (F20): a second specialty with ONLY a published rafaga exam (production shape on 2026-11-09); inactive so the job of this block ignores it
+insert into public.especialidades (id, codigo, nombre, slug, activa) values ('e1000000-0000-0000-0000-0000000000f2','CH2','CH2','ch2',false);
+insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en) values
+  ('e5000000-0000-0000-0000-0000000000f2','CH2-RAF','e1000000-0000-0000-0000-0000000000f2','c1000000-0000-0000-0000-0000000000a1','Raf2','rafaga','gratuito',true, now() - interval '1 day');
+insert into public.preguntas (id, codigo_pregunta, tipo_pregunta, titulo, activa) values
+  ('f8000000-0000-0000-0000-0000000000f1','CH2-1','rafaga','R2 1',true), ('f8000000-0000-0000-0000-0000000000f2','CH2-2','rafaga','R2 2',true);
+insert into public.preguntas_examen (examen_id, pregunta_id, posicion, numero_en_examen, es_demo) values
+  ('e5000000-0000-0000-0000-0000000000f2','f8000000-0000-0000-0000-0000000000f1',1,1,false), ('e5000000-0000-0000-0000-0000000000f2','f8000000-0000-0000-0000-0000000000f2',2,2,false);
 set local session_replication_role = origin;
 insert into public.recursos_pregunta (id, pregunta_id, codigo_recurso, tipo_recurso, titulo, bucket_storage, ruta_storage, posicion, metadatos)
 values ('7e500000-0000-0000-0000-000000000001', 'f8000000-0000-0000-0000-000000000001', 'CH-R1', 'imagen', 'Imagen', 'recursos-pregunta', 'preguntas/f8000000-0000-0000-0000-000000000001/7e500000-0000-0000-0000-000000000001.png', 1, '{"mime":"image/png","bytes":1234}'::jsonb);
@@ -1966,7 +1974,7 @@ begin
 
   -- ---- pools: the regional rule
   assert qreg in (select private.reto_pool(esp, comA, 'razonada')) and qreg not in (select private.reto_pool(esp, null, 'razonada')) and qreg not in (select private.reto_pool(esp, 'c1000000-0000-0000-0000-0000000000b1', 'razonada')), 'a regional question reaches only its community';
-  assert (select count(*) from private.reto_pool(esp, null, 'inmersiva')) = 1, 'the immersive slot comes from the demo-flagged set';
+  assert (select count(*) from private.reto_pool(esp, null, 'inmersiva')) = 1, 'the immersive slot comes from the published immersive exam (20261109100000: demo flag irrelevant)';
   -- ---- the job
   assert public.app_generate_daily_challenges(today) = 2, 'job: the national row and the regional row of community A';
   assert public.app_generate_daily_challenges(today) = 0, 'job is idempotent';
@@ -2197,6 +2205,23 @@ begin
   update public.configuracion_v1 set valor_integer = 0 where clave = 'reto_hora_desbloqueo';
   -- every row the job or the lazy fallback created in this block follows the rule
   assert not exists (select 1 from public.retos_diarios d where d.especialidad_id = esp and d.termina_en <> private.reto_day_end(d.fecha)), 'no row keeps an inicio + 24 h end';
+  -- ---- 20261109100000 (F20, owner 2026-11-09): one question per EXAM TYPE of the published exams of the specialty; empty types skipped; deterministic per day
+  assert (select string_agg(pr.tipo_slot || '@' || pr.posicion, ',' order by pr.posicion) from public.preguntas_reto_diario pr where pr.reto_id = reto_n) = 'inmersiva_demo@1,razonada@2,rafaga@3'
+     and (select objetivo_preguntas || '/' || aciertos_necesarios from public.retos_diarios where id = reto_n) = '3/2', 'three types: one each, 2 of 3 to pass';
+  assert private.ensure_challenge_row('2026-12-24', 'e1000000-0000-0000-0000-0000000000f2', null), 'only rafaga: a challenge is created';
+  assert (select string_agg(pr.tipo_slot || '@' || pr.posicion, ',') from public.preguntas_reto_diario pr join public.retos_diarios r on r.id = pr.reto_id
+           where r.fecha = '2026-12-24' and r.especialidad_id = 'e1000000-0000-0000-0000-0000000000f2') = 'rafaga@1'
+     and (select objetivo_preguntas || '/' || aciertos_necesarios from public.retos_diarios where fecha = '2026-12-24' and especialidad_id = 'e1000000-0000-0000-0000-0000000000f2') = '1/1',
+     'only rafaga: one question, 1 of 1 to pass';
+  select pr.pregunta_id into pid from public.preguntas_reto_diario pr join public.retos_diarios r on r.id = pr.reto_id where r.fecha = '2026-12-24' and r.especialidad_id = 'e1000000-0000-0000-0000-0000000000f2';
+  assert pid in ('f8000000-0000-0000-0000-0000000000f1', 'f8000000-0000-0000-0000-0000000000f2'), 'only its own specialty questions';
+  delete from public.preguntas_reto_diario where reto_id in (select id from public.retos_diarios where fecha = '2026-12-24' and especialidad_id = 'e1000000-0000-0000-0000-0000000000f2');
+  delete from public.retos_diarios where fecha = '2026-12-24' and especialidad_id = 'e1000000-0000-0000-0000-0000000000f2';
+  perform private.ensure_challenge_row('2026-12-24', 'e1000000-0000-0000-0000-0000000000f2', null);
+  assert (select pr.pregunta_id from public.preguntas_reto_diario pr join public.retos_diarios r on r.id = pr.reto_id where r.fecha = '2026-12-24' and r.especialidad_id = 'e1000000-0000-0000-0000-0000000000f2') = pid,
+     'deterministic: the same day and segment picks the same question';
+  update public.preguntas_examen set es_demo = false where pregunta_id = 'f8000000-0000-0000-0000-000000000001';
+  assert (select count(*) from private.reto_pool(esp, null, 'inmersiva')) = 1, 'the immersive slot no longer needs the demo flag';
   raise notice 'OK V1 wave 2';
 end $$;
 rollback;

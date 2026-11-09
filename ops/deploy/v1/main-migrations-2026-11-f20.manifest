@@ -1,0 +1,7 @@
+# F20 reto diario por tipo de examen (f20/reto-per-type, decision del propietario 2026-11-09): migracion que se aplica a MAIN DESPUES de la ventana servidor 2026-11.
+# Acta y anexo al runbook: docs/ledger/2026/11/2026-11-09-f20-reto-por-tipo.md. Uso con el script de siempre:
+#   MANIFEST=ops/deploy/v1/main-migrations-2026-11-f20.manifest bash ops/deploy/v1/apply-main-migration.sh supabase/migrations/20261109100000_v1_reto_por_tipo.sql
+# version  blob(git hash-object, 12)  predecesora(debe estar en supabase_migrations antes de aplicar)  clase
+# Cadena: la ultima de la ventana 2026-11 es 20261108100500 (ops/deploy/v1/main-migrations-2026-11.manifest).
+# Si cambia el blob, se rehacen este manifiesto y el ensayo (docs/ledger/2026/11/rehearse-f20-2026-11.sh).
+20261109100000 cff9619c0578 20261108100500 apply

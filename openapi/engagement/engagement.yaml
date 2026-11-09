@@ -1,6 +1,7 @@
 # ENGAGEMENT (FA29, V1 wave 2): the daily challenge, its reward claim and the streak. Design: E1-V1-ENGAGEMENT-DESIGN.md v2.1 (E2 conditions C-E1..C-E7).
-# One challenge ROW per user per Madrid day (the most specific segment eligible for the user, frozen the first time it is opened that day): 3 questions (1 immersive, 1 razonado, 1 rafaga) picked by a daily
-# job, the same for every user of the segment; won with 2 or more correct. Everything is decided by the database on its own clock (no date, hour or "correct" flag ever travels from the client). Answers to
+# One challenge ROW per user per Madrid day (the most specific segment eligible for the user, frozen the first time it is opened that day): 1 to 3 questions, ONE per exam type (immersive, razonado, rafaga)
+# drawn from the published exams of the user specialty (FA46, owner 2026-11-09: a type without questions is skipped), picked by a daily job, the same for every user of the segment; won with necesarios
+# correct = ceil(2n/3) of n (3 -> 2, 2 -> 2, 1 -> 1). Everything is decided by the database on its own clock (no date, hour or "correct" flag ever travels from the client). Answers to
 # challenge questions never feed the exam statistics. The reward amount comes from the user's plan benefits (Control), is frozen when the challenge is passed and is paid ONLY through the claim endpoint,
 # once per user per Madrid day (idempotent through the ledger). The streak is the number of consecutive Madrid days with the challenge passed.
 components:
@@ -50,7 +51,7 @@ components:
         x-pagination: NONE
         x-idempotency: NATURAL
         x-error-codes: [VALIDATION, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, NOT_FOUND, ANSWER_LOCKED, RETO_OUT_OF_WINDOW, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
-        description: 'An answer is FINAL. The same option re-sent answers 200 with the stored result (a retry never changes anything); a different option for an answered question is 409 ANSWER_LOCKED. The reto must be the row stored for the caller today and the question one of its 3 positions, otherwise 404 NOT_FOUND (no oracle); outside the window 422 RETO_OUT_OF_WINDOW. The correction is returned with the answer. The third answer closes the challenge (SUPERADO with 2 or more correct, FALLADO otherwise) and updates the streak, all in the same transaction. No reward is paid here: see the claim.'
+        description: 'An answer is FINAL. The same option re-sent answers 200 with the stored result (a retry never changes anything); a different option for an answered question is 409 ANSWER_LOCKED. The reto must be the row stored for the caller today and the question one of its positions, otherwise 404 NOT_FOUND (no oracle); outside the window 422 RETO_OUT_OF_WINDOW. The correction is returned with the answer. The answer to the last question of the reto (1 to 3, FA46) closes the challenge (SUPERADO with necesarios or more correct, FALLADO otherwise) and updates the streak, all in the same transaction. No reward is paid here: see the claim.'
         security:
           - bearerAuth: []
         parameters:
@@ -322,7 +323,7 @@ components:
           $ref: '../common/identifiers.yaml#/components/schemas/Instant'
         necesarios:
           type: integer
-          description: 'Correct answers needed (2).'
+          description: 'Correct answers needed: ceil(2n/3) of the n questions of the reto (FA46: 3 -> 2, 2 -> 2, 1 -> 1).'
         aciertos:
           type: integer
           minimum: 0

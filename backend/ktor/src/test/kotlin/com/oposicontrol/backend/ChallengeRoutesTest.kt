@@ -108,6 +108,26 @@ class ChallengeRoutesTest {
         assertEquals(listOf(ChallengeOperation.READ), limited.toList())
     }
 
+    /** F20 / FA46: a reto of 1..3 questions (one per exam type that has questions). Ktor serves the database count and pass rule verbatim. */
+    @Test
+    fun aOneQuestionChallengeIsServedAsTheDatabaseBuiltIt() = testApplication {
+        application { challengeModule() }
+        upstream.handler = { _, _ ->
+            SupabaseRawResponse(
+                200,
+                """{"estado":"DISPONIBLE","retoId":"$reto","necesarios":1,"aciertos":0,"preguntas":[{"posicion":1,"tipoSlot":"RAFAGA","preguntaId":"$pregunta","titulo":"T","opciones":[{"id":"$opcion","letra":"A","texto":"Si"}],"_recursos":[]}],"racha":{"actual":0,"maxima":0}}""",
+            )
+        }
+        val r = createClient { }.getAs("/api/v1/app/retos/hoy")
+        assertEquals(HttpStatusCode.OK, r.status, r.bodyAsText())
+        val body = obj(r.bodyAsText())
+        assertEquals(1, body["necesarios"]!!.jsonPrimitive.content.toInt())
+        val q = body["preguntas"]!!.jsonArray.single().jsonObject
+        assertEquals("RAFAGA", q["tipoSlot"]!!.jsonPrimitive.content)
+        assertEquals(1, q["posicion"]!!.jsonPrimitive.content.toInt())
+        assertFalse(q.containsKey("_recursos") || q.containsKey("recursos"), q.toString())
+    }
+
     @Test
     fun answerIsFinalAndTheBodyIsStrict() = testApplication {
         application { challengeModule() }
