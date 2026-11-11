@@ -116,4 +116,6 @@ internal object ExamOp {
     const val RESULT = "result"
     const val REVIEW = "review"
     const val RESOURCE_ACCESS = "resource_access"
+    const val QUICK_QUIZ_AVAILABILITY = "quick_quiz_availability"
+    const val QUICK_QUIZ_START = "quick_quiz_start"
 }

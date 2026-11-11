@@ -86,6 +86,8 @@ class AttemptRoutesTest {
         var answerOutcome = """{"outcome":"OK","estado":"ANSWERED","revision":1,"es_primera_respuesta":true,"respondidas":1,"noop":false}"""
         var finishOutcome = """{"outcome":"OK","already":false}"""
         var abandonOutcome = """{"outcome":"OK","already":false}"""
+        var practiceOutcome = """{"outcome":"CREATED","intento_id":"$attempt","total":5}"""
+        var practiceAvailability = """{"preguntas":37}"""
         var attemptRow: String? = null
 
         /** `intentos_examen.creado_por_comando` de la fila: false = intento que NO creo `app_start_exam_attempt` (legacy). */
@@ -112,6 +114,8 @@ class AttemptRoutesTest {
             val uri = legacyFallbackAsPage(URLDecoder.decode(rawUri, Charsets.UTF_8))
             val body = when {
                 uri.endsWith("/rest/v1/rpc/app_start_exam_attempt") -> startOutcome
+                uri.endsWith("/rest/v1/rpc/app_start_practice_attempt") -> practiceOutcome
+                uri.endsWith("/rest/v1/rpc/app_practice_availability") -> practiceAvailability
                 uri.endsWith("/rest/v1/rpc/app_record_attempt_answer") -> answerOutcome
                 uri.endsWith("/rest/v1/rpc/app_reveal_attempt_questions") -> revealOutcome
                 uri.contains("/rest/v1/productos_comerciales") -> plan
@@ -1719,5 +1723,69 @@ class AttemptRoutesTest {
         assertEquals("DAILY_LIMIT_REACHED", code(blocked.bodyAsText()))
         assertEquals("4321", blocked.headers[HttpHeaders.RetryAfter])
         assertFalse(blocked.bodyAsText().contains("titulo"), "a refused page serves no question")
+    }
+
+    // ---------- FA47: OposiQuizzes rapidos (D2-67, D2-68) ----------
+
+    private fun practiceRow(estado: String = "en_progreso") =
+        attemptRow(estado = estado, respondidas = 0).replace("\"examen_id\":\"$exam\"", "\"examen_id\":null").dropLast(1) + ""","es_demo":true,"es_practica":true}"""
+
+    @Test
+    fun quickQuizAvailabilityServesTheDatabaseCountAndTheSizes() = testApplication {
+        application { attemptModule() }
+        val response = client.call(HttpMethod.Get, "/api/v1/app/practicas/disponibilidad")
+        val body = response.bodyAsText()
+        assertEquals(HttpStatusCode.OK, response.status, body)
+        assertEquals("no-store", response.headers[HttpHeaders.CacheControl])
+        assertConforms("D2-67", "200", body)
+        assertEquals("37", obj(body)["preguntas"]!!.jsonPrimitive.content)
+        assertEquals(listOf(5, 10, 20), obj(body)["tamanos"]!!.jsonArray.map { it.jsonPrimitive.int })
+        assertEquals(listOf(mapOf("p_usuario_id" to TEST_UID)), upstream.rpcBodies("app_practice_availability").map { b -> b.mapValues { it.value.jsonPrimitive.content } })
+        assertEquals(listOf(AttemptOperation.READ), limited)
+        assertEquals(HttpStatusCode.Unauthorized, client.call(HttpMethod.Get, "/api/v1/app/practicas/disponibilidad", token = null).status)
+    }
+
+    @Test
+    fun quickQuizStartCreatesAPracticeAttemptThatIsNeverADemoOnTheWire() = testApplication {
+        application { attemptModule() }
+        upstream.attemptRow = practiceRow()
+        val response = client.call(HttpMethod.Post, "/api/v1/app/practicas", body = """{"numPreguntas":5}""", key = key1)
+        val body = response.bodyAsText()
+        assertEquals(HttpStatusCode.Created, response.status, body)
+        assertEquals("/api/v1/app/intentos/$attempt", response.headers[HttpHeaders.Location])
+        assertConforms("D2-68", "201", body)
+        val intento = obj(body)["intento"]!!.jsonObject
+        assertEquals("QUICK_QUIZ", intento["origen"]!!.jsonPrimitive.content)
+        assertNull(intento["examenId"], "no exam")
+        assertNull(intento["esDemo"], "a practice attempt is es_demo in the database but never a demo for the client")
+        assertEquals(listOf(mapOf("p_usuario_id" to TEST_UID, "p_preguntas" to "5")), upstream.rpcBodies("app_start_practice_attempt").map { b -> b.mapValues { it.value.jsonPrimitive.content } })
+        assertEquals(listOf(AttemptOperation.START), limited)
+        // replay with the same key: stored response, no second command
+        val replay = client.call(HttpMethod.Post, "/api/v1/app/practicas", body = """{"numPreguntas":5}""", key = key1)
+        assertEquals("true", replay.headers[IdempotencyHeaders.REPLAYED])
+        assertEquals(1, upstream.rpcBodies("app_start_practice_attempt").size)
+        // the rest of the cycle is the attempt's: D2-07 reads it as QUICK_QUIZ
+        upstream.frozen = "[]"
+        val view = client.call(HttpMethod.Get, base)
+        assertEquals(HttpStatusCode.OK, view.status, view.bodyAsText())
+        assertEquals("QUICK_QUIZ", obj(view.bodyAsText())["intento"]!!.jsonObject["origen"]!!.jsonPrimitive.content)
+    }
+
+    @Test
+    fun quickQuizStartRejectsSizesKeysAndAnEmptyPool() = testApplication {
+        application { attemptModule() }
+        val bad = client.call(HttpMethod.Post, "/api/v1/app/practicas", body = """{"numPreguntas":7}""", key = key1)
+        assertEquals(HttpStatusCode.BadRequest, bad.status)
+        assertEquals("VALIDATION", code(bad.bodyAsText()))
+        assertEquals(0, upstream.rpcBodies("app_start_practice_attempt").size, "an invalid size never reaches the database")
+        val noKey = client.call(HttpMethod.Post, "/api/v1/app/practicas", body = """{"numPreguntas":5}""")
+        assertEquals("IDEMPOTENCY_KEY_REQUIRED", code(noKey.bodyAsText()))
+        upstream.practiceOutcome = """{"outcome":"PRACTICE_EMPTY"}"""
+        val empty = client.call(HttpMethod.Post, "/api/v1/app/practicas", body = """{"numPreguntas":10}""", key = key2)
+        assertEquals(HttpStatusCode.Conflict, empty.status)
+        assertEquals("EXAM_EMPTY", code(empty.bodyAsText()))
+        upstream.practiceOutcome = """{"outcome":"PRACTICE_LIMIT"}"""
+        val limit = client.call(HttpMethod.Post, "/api/v1/app/practicas", body = """{"numPreguntas":20}""", key = "0a0a0a0a-0000-4000-8000-000000000003")
+        assertEquals(HttpStatusCode.TooManyRequests, limit.status)
     }
 }

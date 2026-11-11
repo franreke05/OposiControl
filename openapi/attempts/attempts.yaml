@@ -510,6 +510,92 @@ components:
           '503':
             $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
             description: 'UPSTREAM_UNAVAILABLE: Storage could not sign (object missing or Storage down). Retryable.'
+    QuickQuizAvailability:
+      get:
+        operationId: getQuickQuizAvailability
+        summary: 'How many questions a quick practice test can draw from'
+        tags: [attempts]
+        x-contract-id: D2-67
+        x-implementation: TARGET
+        x-slice: 3
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [UNAUTHENTICATED, RATE_LIMITED]
+        description: 'FA47 (owner decision 2026-11-09, OposiQuizzes rapidos): the number of questions (capped at 200) a quick practice test (D2-68) can draw from right now: active, main, non-annulled questions of the PUBLISHED exams of the user specialty that the user can open (access state FREE, GRANTED or SUBSCRIPTION). 0 = nothing to practise (no access yet: the client invites to the Market). Per-user read limit.'
+        security:
+          - bearerAuth: []
+        responses:
+          '200':
+            description: 'Availability.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/QuickQuizAvailability'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    QuickQuizAttempts:
+      post:
+        operationId: startQuickQuizAttempt
+        summary: 'Start a quick practice test (random questions of the exams the user can open)'
+        tags: [attempts]
+        x-contract-id: D2-68
+        x-implementation: TARGET
+        x-slice: 3
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: REQUIRED
+        x-error-codes: [VALIDATION, IDEMPOTENCY_KEY_REQUIRED, IDEMPOTENCY_KEY_INVALID, UNAUTHENTICATED, EXAM_EMPTY, IDEMPOTENCY_KEY_IN_PROGRESS, IDEMPOTENCY_KEY_REUSED, RATE_LIMITED]
+        description: 'FA47 (owner decision 2026-11-09, OposiQuizzes rapidos): creates a NEW practice attempt (intento.origen QUICK_QUIZ, examenId null, tipoExamen rafaga) with numPreguntas random questions (fewer when fewer are available) drawn from the D2-67 pool; a previous open practice attempt is closed (abandonado). The attempt is then served and answered by the usual attempt operations (D2-07..D2-12, D2-65, D2-66) with the correction revealed on answer (DEC-015). PRACTICE ONLY: it never counts for ranking, league, Nota media, statistics, streak, OposiTickets, referral or Mis examenes, it is not the first answer of any question, and a later real first answer to a question already seen corrected here does not count for ranking or statistics (same rule as the demo, C-D4). Questions are revealed under the daily plan limit like a normal attempt unless every question comes from a GRANTED exam (D2-08 DAILY_LIMIT_REACHED). 409 EXAM_EMPTY = nothing to practise. Starts are limited per user (429 RATE_LIMITED).'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/idempotency.yaml#/components/parameters/IdempotencyKeyRequired'
+        requestBody:
+          required: true
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuickQuizStartRequest'
+        responses:
+          '201':
+            description: 'Practice attempt created; reanudado=false.'
+            headers:
+              Location:
+                description: '/api/v1/app/intentos/{id}'
+                required: true
+                schema:
+                  type: string
+              Idempotent-Replayed:
+                $ref: '../common/idempotency.yaml#/components/headers/IdempotentReplayed'
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AttemptStartResponse'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+            description: 'VALIDATION (numPreguntas not 5, 10 or 20), IDEMPOTENCY_KEY_REQUIRED or IDEMPOTENCY_KEY_INVALID.'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'EXAM_EMPTY (no question the user can practise) or IDEMPOTENCY_KEY_IN_PROGRESS.'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+            description: 'IDEMPOTENCY_KEY_REUSED.'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
   headers:
     NoStore:
       description: 'no-store'
@@ -541,7 +627,7 @@ components:
       properties:
         esDemo:
           type: boolean
-          description: 'FA28: true for a demo attempt (only the effective demo set, FA44). Absent = false.'
+          description: 'FA28: true for a demo attempt (only the effective demo set, FA44). Absent = false. Never true on a quick practice attempt (origen QUICK_QUIZ, FA47).'
         id:
           $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
         origen:
@@ -629,6 +715,28 @@ components:
           $ref: '#/components/schemas/Attempt'
         reanudado:
           type: boolean
+    QuickQuizStartRequest:
+      type: object
+      required: [numPreguntas]
+      additionalProperties: false
+      properties:
+        numPreguntas:
+          type: integer
+          enum: [5, 10, 20]
+    QuickQuizAvailability:
+      type: object
+      required: [preguntas, tamanos]
+      properties:
+        preguntas:
+          type: integer
+          minimum: 0
+          maximum: 200
+          description: 'Questions the user can practise now (capped at 200). 0 = none.'
+        tamanos:
+          type: array
+          items:
+            type: integer
+          description: 'The test sizes D2-68 accepts (today 5, 10, 20).'
     DailyChallengeView:
       type: object
       required: []

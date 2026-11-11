@@ -123,6 +123,27 @@ internal fun Route.attemptRoutes(runtime: AttemptRuntime?) {
             actor = { call -> call.gatedIdentity().userId.value }
         }
 
+        // FA47 (OposiQuizzes rapidos): D2-67 disponibilidad y D2-68 practica nueva; el resto del ciclo es el del intento (D2-07..D2-12, D2-65, D2-66).
+        get("/practicas/disponibilidad") {
+            val rt = runtime.orMisconfigured()
+            val identity = call.attemptGate(runtime, AttemptOperation.READ)
+            call.respond(rt.attempts.practiceAvailability(identity.userId))
+        }.measured(ExamOp.QUICK_QUIZ_AVAILABILITY, runtime?.metrics)
+        post("/practicas") {
+            val rt = runtime.orMisconfigured()
+            val identity = call.gatedIdentity()
+            val request = call.receiveCanonicalCommand<QuickQuizStartRequest>()
+            val started = rt.attempts.startPractice(identity.userId, request)
+            call.response.header(HttpHeaders.Location, "/api/v1/app/intentos/${started.response.intento.id}")
+            call.respond(HttpStatusCode.Created, started.response)
+        }.measured(ExamOp.QUICK_QUIZ_START, runtime?.metrics).install(CanonicalIdempotency) {
+            routeTemplate = "/api/v1/app/practicas"
+            required = true
+            this.store = store
+            before = { call -> call.attemptGate(runtime, AttemptOperation.START) }
+            actor = { call -> call.gatedIdentity().userId.value }
+        }
+
         route("/intentos/{attemptId}") {
             get {
                 val rt = runtime.orMisconfigured()

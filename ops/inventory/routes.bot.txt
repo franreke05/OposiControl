@@ -42,6 +42,7 @@ GET /api/v1/app/opositester/me
 GET /api/v1/app/payments/orders/{}
 GET /api/v1/app/plan/catalogo
 GET /api/v1/app/plan/cupo
+GET /api/v1/app/practicas/disponibilidad
 GET /api/v1/app/racha
 GET /api/v1/app/ranking
 GET /api/v1/app/reto-diario
@@ -79,6 +80,7 @@ POST /api/v1/app/oposired/publicaciones/{}/comentarios
 POST /api/v1/app/oposired/reportes
 POST /api/v1/app/payments/orders
 POST /api/v1/app/payments/orders/{}/verify
+POST /api/v1/app/practicas
 POST /api/v1/app/retos/{}/reclamar
 POST /api/v1/app/store/purchases/restore
 POST /api/v1/app/store/purchases/verify
