@@ -1,5 +1,11 @@
 # Current State
 
+## Demo aleatoria fija por examen (F14b) — 2026-11-11 (rama local `f14b/demo-aleatoria` desde develop `08ea7f0f`, sin push) — `CURRENT_IMPLEMENTATION`, NO aplicada a MAIN
+
+- Decision del propietario 2026-11-11: el conjunto AUTOMATICO de demo son 5 preguntas al azar FIJAS por examen (iguales para todo usuario) en vez de las 5 primeras por posicion; el explicito de Control sigue ganando; menos de N elegibles = sin demo.
+- Migracion PENDIENTE `20261111100000_v1_demo_aleatoria` (solo `private.demo_preguntas_efectivas`: orden `md5(examen_id || pregunta_id)`; si una deja de ser elegible entra la siguiente del orden). Manifiesto `ops/deploy/v1/main-migrations-2026-11-f14b.manifest`; ensayo `docs/ledger/2026/11/rehearse-f14b-2026-11.sh`; acta `docs/ledger/2026/11/2026-11-11-f14b-demo-aleatoria.md`. Sin imagen nueva.
+- Contrato: FA48 solo texto (`attempts.yaml`), forma intacta; registro CONTRACT_FREEZE.md (repo OposiBot) PENDING_OWNER. Cliente sin cambios.
+
 ## Reto diario por tipo de examen (F20) — 2026-11-09 (rama local `f20/reto-per-type` desde develop `920fa29b`, sin push) — `CURRENT_IMPLEMENTATION`, NO aplicada a MAIN
 
 - Decision del propietario 2026-11-09: el reto toma UNA pregunta de examenes inmersivos, UNA de razonados y UNA de rafaga, de los examenes PUBLICADOS de la especialidad del usuario; un tipo sin preguntas se salta (reto de 1 a 3). Antes exigia los tres huecos (y la inmersiva con marca demo): en produccion, solo rafaga, el reto salia `NO_DISPONIBLE` para todos.

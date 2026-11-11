@@ -17,6 +17,9 @@ import kotlin.test.assertTrue
  */
 class V1AutoDemoMigrationTest {
     private val migration = "20261108100300_v1_auto_demo"
+
+    /** F14b (20261111100000) replaces the automatic set (first N by posicion) with a random fixed one: these tests pin the F14 semantics without it. */
+    private val F14B = "20261111100000_v1_demo_aleatoria"
     private val user = "a0000000-0000-0000-0000-0000000014a1"
     private val other = "a0000000-0000-0000-0000-0000000014a2"
     private val esp = "e1000000-0000-0000-0000-0000000014a1"
@@ -68,7 +71,7 @@ class V1AutoDemoMigrationTest {
     private fun Connection.demoListo(exam: String) = unico("select public.demo_listo(e)::text from public.examenes e where e.id = '$exam'")
 
     @Test
-    fun theAutomaticSetIsTheFirstFiveServableMainQuestionsAndNothingBeyondItIsReachable() = V1Db.escenario { c ->
+    fun theAutomaticSetIsTheFirstFiveServableMainQuestionsAndNothingBeyondItIsReachable() = V1Db.escenario(sin = setOf(F14B)) { c ->
         c.ejecutar(seed())
         assertEquals("true", c.unico("select demo_disponible::text from public.examenes where id = '$big'"), "new exams default ON")
         assertEquals("true", c.demoListo(big))
@@ -91,7 +94,7 @@ class V1AutoDemoMigrationTest {
     }
 
     @Test
-    fun aCompleteExplicitSetWinsAndAPartialOneFallsBackToTheAutomaticSet() = V1Db.escenario { c ->
+    fun aCompleteExplicitSetWinsAndAPartialOneFallsBackToTheAutomaticSet() = V1Db.escenario(sin = setOf(F14B)) { c ->
         c.ejecutar(seed())
         // partial explicit (3 of 5): the automatic set applies
         c.ejecutar("update public.preguntas_examen set es_demo = true where examen_id = '$big' and posicion in (7, 8, 9)")
@@ -108,7 +111,7 @@ class V1AutoDemoMigrationTest {
     }
 
     @Test
-    fun fewerThanNServableQuestionsMeansNoDemoAndAnOptOutSwitchesItOff() = V1Db.escenario { c ->
+    fun fewerThanNServableQuestionsMeansNoDemoAndAnOptOutSwitchesItOff() = V1Db.escenario(sin = setOf(F14B)) { c ->
         c.ejecutar(seed())
         assertEquals("false", c.demoListo(small))
         assertEquals("EXAM_LOCKED", c.outcome(c.startDemo(exam = small)), "4 main questions + 1 reserve < 5: no demo (fail closed)")
@@ -129,7 +132,7 @@ class V1AutoDemoMigrationTest {
     }
 
     @Test
-    fun aUserWithAccessGetsANormalAttemptAndTheDemoDoesNotShiftTheNumbering() = V1Db.escenario { c ->
+    fun aUserWithAccessGetsANormalAttemptAndTheDemoDoesNotShiftTheNumbering() = V1Db.escenario(sin = setOf(F14B)) { c ->
         c.ejecutar(seed())
         val demo = c.attemptOf(c.startDemo())
         c.ejecutar(
@@ -150,7 +153,7 @@ class V1AutoDemoMigrationTest {
     }
 
     @Test
-    fun theBackfillSwitchesExistingExamsOnAndTheVerifyAndRollbackBehave() = V1Db.escenario(sin = setOf(migration)) { c ->
+    fun theBackfillSwitchesExistingExamsOnAndTheVerifyAndRollbackBehave() = V1Db.escenario(sin = setOf(migration, F14B)) { c ->
         c.ejecutar(seed(", demo_disponible", ", false"))
         assertEquals("EXAM_LOCKED", c.outcome(c.startDemo()), "negative control: without the migration an unmarked exam offers no demo")
         c.ejecutar(Slice0Db.leer("supabase/migrations/$migration.sql"))

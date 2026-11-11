@@ -1,0 +1,8 @@
+# F14b demo aleatoria fija (f14b/demo-aleatoria, decision del propietario 2026-11-11): migracion que se aplica a MAIN DESPUES de F20.
+# Acta y anexo al runbook: docs/ledger/2026/11/2026-11-11-f14b-demo-aleatoria.md. Uso con el script de siempre:
+#   MANIFEST=ops/deploy/v1/main-migrations-2026-11-f14b.manifest bash ops/deploy/v1/apply-main-migration.sh supabase/migrations/20261111100000_v1_demo_aleatoria.sql
+# version  blob(git hash-object, 12)  predecesora(debe estar en supabase_migrations antes de aplicar)  clase
+# Predecesora: 20261109100000 (F20, la ultima desplegada en MAIN). Solo exige que este registrada: F23 (20261109100100) y F20b (20261109100200),
+# si se aplican antes, no la bloquean (F14b no toca nada de ellas).
+# Si cambia el blob, se rehacen este manifiesto y el ensayo (docs/ledger/2026/11/rehearse-f14b-2026-11.sh).
+20261111100000 e5f53da4b749 20261109100000 apply
