@@ -1,5 +1,11 @@
 # Current State
 
+## Market de consumibles (F28) — 2026-11-14 (rama local `f28/consumibles` desde develop `08ea7f0f`, sin push) — `CURRENT_IMPLEMENTATION`, NO aplicada a MAIN
+
+- Decision del propietario 2026-11-14 (plan seccion 6): Market en 3 secciones como maximo (OposiTickets; Potenciadores y protecciones; Servicios y accesos); los consumibles se compran con OT y funcionan en la 1.3.
+- Migraciones PENDIENTES `20261114400000_v1_servicios_catalogo` (columnas de escaparate y metadatos editables en Control; semilla PLACEHOLDER), `20261114400100_v1_servicios_canje` (D6-39 catalogo, D6-40 compra con OT) y `20261114400200_v1_consumibles_efectos` (protectores en reto fallado, potenciador sobre la base, doble/triple oportunidad; respuesta del reto con 5 argumentos). modo_papel y carta_ccaa_comodin: comprables pero INERTES (sin definicion).
+- Contrato FA52 (economy, engagement, commerce); registro CONTRACT_FREEZE.md (repo OposiBot) PENDING_OWNER. Imagen nueva necesaria. Acta `docs/ledger/2026/11/2026-11-14-f28-consumibles.md`.
+
 ## Reto diario por tipo de examen (F20) — 2026-11-09 (rama local `f20/reto-per-type` desde develop `920fa29b`, sin push) — `CURRENT_IMPLEMENTATION`, NO aplicada a MAIN
 
 - Decision del propietario 2026-11-09: el reto toma UNA pregunta de examenes inmersivos, UNA de razonados y UNA de rafaga, de los examenes PUBLICADOS de la especialidad del usuario; un tipo sin preguntas se salta (reto de 1 a 3). Antes exigia los tres huecos (y la inmersiva con marca demo): en produccion, solo rafaga, el reto salia `NO_DISPONIBLE` para todos.
