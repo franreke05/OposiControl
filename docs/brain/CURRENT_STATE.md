@@ -5,6 +5,10 @@
 - Decision del propietario 2026-11-09: test aleatorio de 5 / 10 / 20 preguntas SOLO de los examenes que el usuario puede abrir (FREE / GRANTED / SUBSCRIPTION) de su especialidad; sin acceso, Home invita al Market. Solo practica: corregida y con resultado, nunca ranking, liga, racha, estadisticas, OT, referido ni Mis examenes.
 - Diseno: reutiliza el intento de examen. Fila de `intentos_examen` con `es_practica` (nueva), `examen_id` NULL y `es_demo` (todas las exclusiones del demo aplican sin tocar sus funciones). Respuestas, cierre, resultado y revision por las rutas de siempre (D2-07..D2-12, D2-65); nuevas D2-67 `GET /api/v1/app/practicas/disponibilidad` y D2-68 `POST /api/v1/app/practicas` (FA47, `origen` QUICK_QUIZ ya existia en el contrato).
 - Migracion PENDIENTE `20261109100100_v1_practica` (predecesora F20). Manifiesto `ops/deploy/v1/main-migrations-2026-11-f23.manifest`; ensayo `docs/ledger/2026/11/rehearse-f23-2026-11.sh`; acta `docs/ledger/2026/11/2026-11-09-f23-practica.md`. NECESITA imagen nueva y ORDEN migracion -> imagen (el Ktor nuevo lee `es_practica` en toda lectura de intento).
+## Reto diario siempre de 3 (F20b) — 2026-11-11 (rama local `f20b/reto-tres` desde develop `08ea7f0f`, sin push) — `CURRENT_IMPLEMENTATION`, NO aplicada a MAIN
+
+- Decision del propietario 2026-11-11: el reto tiene SIEMPRE 3 preguntas. F20 (`20261109100000`, desplegada) ya esta en MAIN y con solo rafaga da 1 pregunta.
+- Migracion PENDIENTE `20261109100200_v1_reto_tres` (tras una por tipo, rellena hasta 3 desde la union de pools, sin repetir, determinista con sal propia; `tipo_slot` del pool de origen; menos de 3 elegibles = las que haya). Manifiesto `ops/deploy/v1/main-migrations-2026-11-f20b.manifest` (predecesora `20261109100000`; F23 `20261109100100` tambien encadena tras F20: orden a fijar en el despliegue). Ensayo `docs/ledger/2026/11/rehearse-f20b-2026-11.sh`; acta `docs/ledger/2026/11/2026-11-11-f20b-reto-tres.md`. Sin imagen. Contrato FA48 solo texto.
 
 ## Reto diario por tipo de examen (F20) — 2026-11-09 (rama local `f20/reto-per-type` desde develop `920fa29b`, sin push) — `CURRENT_IMPLEMENTATION`, NO aplicada a MAIN
 

@@ -2209,17 +2209,22 @@ begin
   assert (select string_agg(pr.tipo_slot || '@' || pr.posicion, ',' order by pr.posicion) from public.preguntas_reto_diario pr where pr.reto_id = reto_n) = 'inmersiva_demo@1,razonada@2,rafaga@3'
      and (select objetivo_preguntas || '/' || aciertos_necesarios from public.retos_diarios where id = reto_n) = '3/2', 'three types: one each, 2 of 3 to pass';
   assert private.ensure_challenge_row('2026-12-24', 'e1000000-0000-0000-0000-0000000000f2', null), 'only rafaga: a challenge is created';
-  assert (select string_agg(pr.tipo_slot || '@' || pr.posicion, ',') from public.preguntas_reto_diario pr join public.retos_diarios r on r.id = pr.reto_id
-           where r.fecha = '2026-12-24' and r.especialidad_id = 'e1000000-0000-0000-0000-0000000000f2') = 'rafaga@1'
-     and (select objetivo_preguntas || '/' || aciertos_necesarios from public.retos_diarios where fecha = '2026-12-24' and especialidad_id = 'e1000000-0000-0000-0000-0000000000f2') = '1/1',
-     'only rafaga: one question, 1 of 1 to pass';
-  select pr.pregunta_id into pid from public.preguntas_reto_diario pr join public.retos_diarios r on r.id = pr.reto_id where r.fecha = '2026-12-24' and r.especialidad_id = 'e1000000-0000-0000-0000-0000000000f2';
-  assert pid in ('f8000000-0000-0000-0000-0000000000f1', 'f8000000-0000-0000-0000-0000000000f2'), 'only its own specialty questions';
+  -- 20261109100200 (F20b, owner 2026-11-11): always 3 when the segment has them; this specialty has only 2 eligible questions -> both, no repeats
+  assert (select string_agg(pr.tipo_slot || '@' || pr.posicion, ',' order by pr.posicion) from public.preguntas_reto_diario pr join public.retos_diarios r on r.id = pr.reto_id
+           where r.fecha = '2026-12-24' and r.especialidad_id = 'e1000000-0000-0000-0000-0000000000f2') = 'rafaga@1,rafaga@2'
+     and (select objetivo_preguntas || '/' || aciertos_necesarios from public.retos_diarios where fecha = '2026-12-24' and especialidad_id = 'e1000000-0000-0000-0000-0000000000f2') = '2/2',
+     'only rafaga with 2 eligible questions: both (filled), 2 of 2 to pass';
+  j := (select to_jsonb(string_agg(pr.pregunta_id::text, ',' order by pr.posicion)) from public.preguntas_reto_diario pr join public.retos_diarios r on r.id = pr.reto_id
+         where r.fecha = '2026-12-24' and r.especialidad_id = 'e1000000-0000-0000-0000-0000000000f2');
+  assert (select count(distinct pr.pregunta_id) from public.preguntas_reto_diario pr join public.retos_diarios r on r.id = pr.reto_id where r.fecha = '2026-12-24' and r.especialidad_id = 'e1000000-0000-0000-0000-0000000000f2') = 2
+     and not exists (select 1 from public.preguntas_reto_diario pr join public.retos_diarios r on r.id = pr.reto_id where r.fecha = '2026-12-24' and r.especialidad_id = 'e1000000-0000-0000-0000-0000000000f2'
+                      and pr.pregunta_id not in ('f8000000-0000-0000-0000-0000000000f1', 'f8000000-0000-0000-0000-0000000000f2')), 'only its own specialty questions, never repeated';
   delete from public.preguntas_reto_diario where reto_id in (select id from public.retos_diarios where fecha = '2026-12-24' and especialidad_id = 'e1000000-0000-0000-0000-0000000000f2');
   delete from public.retos_diarios where fecha = '2026-12-24' and especialidad_id = 'e1000000-0000-0000-0000-0000000000f2';
   perform private.ensure_challenge_row('2026-12-24', 'e1000000-0000-0000-0000-0000000000f2', null);
-  assert (select pr.pregunta_id from public.preguntas_reto_diario pr join public.retos_diarios r on r.id = pr.reto_id where r.fecha = '2026-12-24' and r.especialidad_id = 'e1000000-0000-0000-0000-0000000000f2') = pid,
-     'deterministic: the same day and segment picks the same question';
+  assert (select to_jsonb(string_agg(pr.pregunta_id::text, ',' order by pr.posicion)) from public.preguntas_reto_diario pr join public.retos_diarios r on r.id = pr.reto_id
+           where r.fecha = '2026-12-24' and r.especialidad_id = 'e1000000-0000-0000-0000-0000000000f2') = j,
+     'deterministic: the same day and segment picks the same questions in the same order';
   update public.preguntas_examen set es_demo = false where pregunta_id = 'f8000000-0000-0000-0000-000000000001';
   assert (select count(*) from private.reto_pool(esp, null, 'inmersiva')) = 1, 'the immersive slot no longer needs the demo flag';
   raise notice 'OK V1 wave 2';
