@@ -220,6 +220,42 @@ class V1ConsumiblesEfectosMigrationTest {
         assertEquals("potenciador:0/1:activa", c.activations(idle))
     }
 
+    /** Free OT of today already at the daily cap (100) through the one free-earn writer (a 'referido' earn). */
+    private fun Connection.fillTheDailyCap(u: String) {
+        assertEquals("CREDITED", unico("select estado from public.app_credit_free_ot('$u', 'referido', 100, 'referido', null, 'f28-cap-$u', '{}'::jsonb)"))
+    }
+    private fun Connection.freeEarnedToday(u: String): String = unico(
+        "select coalesce(sum(cantidad), 0)::text from public.transacciones_cartera where usuario_id = '$u' and tipo in ('reto_diario', 'bonus_racha', 'referido', 'reporte_validado') " +
+            "and (creado_en at time zone private.reto_tz())::date = private.reto_today(clock_timestamp())",
+    )!!
+
+    @Test
+    fun withTheDailyCapAlreadyReachedNeitherThePotenciadorNorTheTicketsProtectorCreditsAboveIt() = V1Db.escenario { c ->
+        c.world(2)
+        val (pot, tickets) = listOf(user(1), user(2))
+        listOf(pot, tickets).forEach { c.streak(it, 4) }
+        c.buy(pot, "potenciador_x2")
+        c.buy(tickets, "protector_tickets")
+        listOf(pot, tickets).forEach { c.fillTheDailyCap(it) }
+
+        // potenciador: base 40 + bonus 20 + extra 40, all offered to the caps (D1) -> nothing credited above the cap, everything deferred
+        assertEquals("SUPERADO|100", "${c.j(c.answer(pot, ok), "estado")}|${c.j(c.today(pot), "recompensa,total")}")
+        val p = c.claim(pot)
+        assertEquals("false|true", "${c.j(p, "recompensa,reclamada")}|${c.j(p, "recompensa,pendiente")}", p)
+        assertEquals("100", c.freeEarnedToday(pot), "no free OT credited above the daily cap")
+        assertEquals("", c.ledger(pot), "no reto_diario / bonus_racha / potenciador movement")
+        assertEquals("3", c.unico("select count(*)::text from public.ot_ganancias_diferidas where usuario_id = '$pot' and estado = 'pendiente'"), "base, bonus and extra deferred")
+
+        // protector_tickets: the payout of the failed reto (40 + 20) is the same free earn -> also within the caps, deferred, never above
+        assertEquals("FALLADO|60", "${c.j(c.answer(tickets, ko), "estado")}|${c.j(c.today(tickets), "recompensa,total")}")
+        val t = c.claim(tickets)
+        assertEquals("true", c.j(t, "recompensa,pendiente"), t)
+        assertEquals("100", c.freeEarnedToday(tickets), "the protected payout does not go above the daily cap")
+        assertEquals("", c.ledger(tickets))
+        assertEquals("2", c.unico("select count(*)::text from public.ot_ganancias_diferidas where usuario_id = '$tickets' and estado = 'pendiente'"))
+        assertEquals("protector_tickets:1/1:usada", c.activations(tickets), "the claim went through (deferred): the protector is spent once")
+    }
+
     @Test
     fun aDobleOportunidadHoldsTheWrongAnswerAndLetsTheUserAnswerAgain() = V1Db.escenario { c ->
         c.world(3)

@@ -48,7 +48,7 @@ MANIFEST=ops/deploy/v1/main-migrations-2026-11-v1-3.manifest bash ops/deploy/v1/
 | 7 | `20261114300000` | `20261114300000_v1_stats_fix.sql` | F27 estadísticas (FA54) | `main-migrations-2026-11-f27.manifest` (20261109100100) | `5d904c99a3f3` |
 | 8 | `20261114400000` | `20261114400000_v1_servicios_catalogo.sql` | F28 servicios/Market (FA52) | `main-migrations-2026-11-f28.manifest` (20261109100000) | `3628dd8594bb` |
 | 9 | `20261114400100` | `20261114400100_v1_servicios_canje.sql` | F28 canje con OT | `main-migrations-2026-11-f28.manifest` (20261114400000) | `ddb751bf0ccc` |
-| 10 | `20261114400200` | `20261114400200_v1_consumibles_efectos.sql` | F28 consumibles en el reto | `main-migrations-2026-11-f28.manifest` (20261114400100) | `3632b58c404f` |
+| 10 | `20261114400200` | `20261114400200_v1_consumibles_efectos.sql` | F28 consumibles en el reto | `main-migrations-2026-11-f28.manifest` (20261114400100) | `d50853b0a4ac` |
 | 11 | `20261114500000` | `20261114500000_v1_ranking_lotes_shape.sql` | forma de lotes del ranking (S3) | `main-migrations-2026-11-lotes.manifest` (20261022101700) | `7608aa1990e8` |
 
 Por qué este orden: es el orden de versión, el MISMO en que el gate PG17, `backend/dbtest` y el ensayo combinado aplican las migraciones (lo probado). Cumple todas las predecesoras técnicas de los manifiestos por funcionalidad (F23 antes que F23b y F27; F28 en su cadena 400000→400100→400200). Difiere del orden de fusión de ramas (F20b, F14b, F23…) solo en que F23 (`…100100`) va antes que F20b (`…100200`): no comparten objetos (F23 redefine el arranque de intento y la práctica; F20b solo `private.ensure_challenge_row`). Los manifiestos por funcionalidad siguen siendo válidos para aplicar una suelta, pero en esta ventana se usa el consolidado.

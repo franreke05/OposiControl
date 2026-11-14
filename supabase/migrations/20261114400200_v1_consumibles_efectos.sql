@@ -53,6 +53,8 @@
 --     reto pendiente meanwhile); REJECTED_CAP (the extra alone is above a cap, or its deferral expired) = the extra is NOT credited (the claim of base and
 --     bonus still goes through): the frozen total drops to base + bonus, so recompensa.extraPotenciador reports what was actually credited (0), and the
 --     potenciador use is released (not spent). The reserved uses of that reto are spent in the same transaction (C2).
+--     The payout kept by a tickets (or dual) protector IS the base + bonus of the failed reto, credited by the same app_credit_free_ot calls: it is
+--     within the same daily/weekly caps (deferred when the window is full, OT_EARN_CAP_REACHED when an amount alone exceeds a cap, nothing spent then).
 --
 -- ROLLBACK (manual, executed verbatim by the PG17 gate): the previous bodies come back verbatim (answer 20261022103500 with 4 arguments; today and claim
 -- 20261022101200). Activations already spent stay spent; held answers are dropped (the user answers again); reservations are dropped (those uses were never
