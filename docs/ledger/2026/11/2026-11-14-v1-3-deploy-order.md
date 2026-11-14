@@ -71,7 +71,16 @@ Imagen anterior primero; después los bloques ROLLBACK en orden INVERSO (11 → 
 
 ## Verificación (árbol fusionado)
 
-RESULTADOS
+- `:backend:ktor:test`: 2577 pruebas, 0 fallos, 1 omitida (arbol final, tras D4-29 y la huella FA51b).
+- `:backend:dbtest:test`: 421 pruebas, 0 fallos (incluye `V1RankingLotesShapeMigrationTest`, 2).
+- `:features:store:jvmTest` 143 y `:data:jvmTest` 299: 0 fallos.
+- `scripts/db-pg17-gate.sh`: `db-pg17-gate OK` (55 pendientes, VERIFY = 0, assertions, ROLLBACK inverso == bootstrap, carreras). `db-pg17-gate.test.sh`: OK (20 escenarios).
+- Ensayo combinado `rehearse-v1-3-2026-11.sh` sobre la captura de MAIN: `V1-3-2026-11-REHEARSAL OK` (11 aplicadas con el script y el manifiesto consolidado, VERIFY = 0; negativas STOP; sondas F27 y de trabajos ANTES/DESPUES/tras ROLLBACK; una sola sobrecarga de 5 argumentos; ROLLBACK inverso == punto de partida; re-aplicar == primera aplicacion).
+- `verify-migrations-manifest.sh` OK (V1: 51) + test (47 escenarios); `verify-ops-config.sh` OK + test: OK (106 mutaciones); `redocly lint` valido; inventario de rutas regenerado sin diferencias.
+
+## FA51b: idempotencia de D2-03 con la pagina en linea (peticion del coordinador)
+
+Antes, `incluirPreguntas` / `desde` no formaban parte de la huella de `Idempotency-Key`: la misma clave con otra consulta repetia en silencio la primera respuesta. Ahora la pagina pedida, en forma semantica (sin pagina o `incluirPreguntas=false` = arranque normal, huella de siempre; `incluirPreguntas=true` = `desde=1`; `desde=N`), se anade a la huella: misma clave + misma consulta = repeticion (`Idempotent-Replayed: true`, cuerpo guardado, el comando no se ejecuta); misma clave + otra pagina = 422 `IDEMPOTENCY_KEY_REUSED`. Documentado en `attempts.yaml` (solo texto, nota FA51b-idem en el manifiesto de congelado). Prueba: `AttemptRoutesTest.theInlineQueryIsPartOfTheIdempotencyFingerprint`.
 
 ## Dudas abiertas
 
