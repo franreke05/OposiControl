@@ -31,10 +31,18 @@ import java.util.concurrent.ConcurrentHashMap
 // Lectura (propia, ranking, foro): SOLO se firma una ruta propiedad del servidor (`avatars/{uid}/{sha256}.jpg`); una URL externa de OAuth que
 // handle_new_auth_user copio a perfiles_usuario.avatar_url nunca se firma ni se reenvia. La base decide que avatar puede viajar (cuenta activa,
 // ranking publico, puertas del foro) y lo entrega como `avatarPath`; Ktor lo convierte en `avatarUrl` firmada y nunca reenvia la ruta.
+//
+// AVATARES PREDEFINIDOS (decision del propietario 2026-11-14, FA53; migracion 20261114100000_v1_avatar_preset):
+//   D1-14 PUT con `application/json` {"avatarId":1..10} -> app_set_avatar_preset (guarda el predefinido y BORRA la foto) -> 200 {"avatarId":N}.
+//   Fuera de 1..10 -> 422 AVATAR_ID_INVALID. La foto (bytes crudos) solo con AVATAR_PHOTO_UPLOADS_ENABLED=true; apagada (por defecto) -> 415.
+//   La base entrega `avatarId` junto a `avatarPath` (mismas puertas); un perfil tiene predefinido O foto, nunca ambos.
 // =====================================================================
 
 /** 2 MB decimales: el mismo numero que `request_body max_size 2MB` de Caddy (unidades SI) y por debajo del tope global de Ktor (2 MiB). */
 internal const val AVATAR_MAX_BYTES = 2_000_000
+
+/** FA53: los 10 avatares predefinidos (`perfiles_usuario.avatar_id`, CHECK 1..10). */
+internal val AVATAR_PRESET_RANGE = 1..10
 
 internal object AvatarPaths {
     const val BUCKET = "avatars"
@@ -188,11 +196,23 @@ internal class AvatarService(
     private val sanitize: (ByteArray, String) -> SanitizedImage = { bytes, mime ->
         ForoImageSanitizer.sanitize(bytes, mime, output = ImageOutputSpec.AVATAR, maxBytes = AVATAR_MAX_BYTES)
     },
+    /** FA53: la subida de foto (FA42) solo con `AVATAR_PHOTO_UPLOADS_ENABLED=true`; apagada responde 415 sin leer nada mas. */
+    val photoUploadsEnabled: Boolean = false,
 ) {
     private val inFlight = ConcurrentHashMap.newKeySet<String>()   // una subida a la vez por usuario y proceso
 
+    /** D1-14 con cuerpo JSON (FA53): elige el avatar predefinido [avatarId] (1..10) y borra la foto anterior, si era propia. */
+    suspend fun choosePreset(identity: CanonicalUserIdentity, avatarId: Int): AvatarResponse {
+        if (avatarId !in AVATAR_PRESET_RANGE) throw CanonicalErrorCode.AVATAR_ID_INVALID.exception()
+        val userId = identity.userId.value.lowercase()
+        val stored = call("app_set_avatar_preset", buildJsonObject { put("p_usuario_id", userId); put("p_avatar_id", avatarId) })
+        AvatarPaths.ownObjectPath(userId, stored["previousPath"]?.jsonPrimitive?.contentOrNull)?.let { deleteBestEffort(it) }
+        return AvatarResponse(avatarId = avatarId)
+    }
+
     /** D1-14. [contentType] = cabecera `Content-Type` cruda; [body] = bytes ya leidos (la ruta acoto `Content-Length`). */
     suspend fun replace(identity: CanonicalUserIdentity, contentType: String?, body: ByteArray): AvatarResponse {
+        if (!photoUploadsEnabled) throw CanonicalErrorCode.UNSUPPORTED_MEDIA_TYPE.exception()
         val declared = contentType?.substringBefore(';')?.trim()?.lowercase()?.takeIf { it == "image/jpeg" || it == "image/png" }
             ?: throw CanonicalErrorCode.UNSUPPORTED_MEDIA_TYPE.exception()
         if (body.isEmpty()) throw validationError(ErrorIssue("body", CanonicalIssue.REQUIRED))
@@ -249,8 +269,13 @@ internal class AvatarService(
     }
 
     companion object {
-        fun fromTransport(transport: SupabaseRequestTransport, signer: AvatarUrlSigner): AvatarService =
-            AvatarService({ function, body -> transport.rpcRaw(function, body) }, TransportAvatarStorage(transport), signer)
+        fun fromTransport(transport: SupabaseRequestTransport, signer: AvatarUrlSigner, photoUploadsEnabled: Boolean = false): AvatarService =
+            AvatarService(
+                { function, body -> transport.rpcRaw(function, body) },
+                TransportAvatarStorage(transport),
+                signer,
+                photoUploadsEnabled = photoUploadsEnabled,
+            )
     }
 }
 

@@ -44,3 +44,4 @@
 20261108100300_v1_auto_demo
 20261108100500_v1_exam_turno_acceso
 20261109100000_v1_reto_por_tipo
+20261114100000_v1_avatar_preset

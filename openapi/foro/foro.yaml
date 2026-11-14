@@ -1,7 +1,7 @@
 # FORO / RED (FA35, V1 wave 5b, text part). Contract: E1-V1-W5-FORO-CONTRACT.md; design E4-V1-FORO-DESIGN v3.1 + E1-V1-FORO-MIGRATION-NOTES (M-F1..M-F10).
 # The user is always the JWT sub. THE GATE: a user reads and writes only channels whose especialidad_id is null or equal to the caller's specialty; a user with NO specialty has no forum. Every id-based call re-evaluates the gate and answers the
 # SAME 404 for: another specialty, hidden / deleted content, a post still in pre-moderation that is not the caller's, comments / votes / reports / deletes on anything the caller cannot read.
-# Author = {handle, avatarUrl} only (the username chosen at onboarding; null = deleted account tombstone; avatarUrl FA42 signed, nullable). Plain text only: links are refused (422 CONTENT_REJECTED), ZWJ sequences are refused, bidi / zero-width characters are stripped.
+# Author = {handle, avatarUrl, avatarId} only (the username chosen at onboarding; null = deleted account tombstone; avatarUrl FA42 signed, nullable; avatarId FA53 preset 1..10, nullable). Plain text only: links are refused (422 CONTENT_REJECTED), ZWJ sequences are refused, bidi / zero-width characters are stripped.
 # New posts of an account (the first N approved by Control) and identical texts posted by another user within an hour are created in pre-moderation: returned only to their author with enRevision = true.
 # Limits are database-authoritative and Control-configurable (posts 5/h 20/day, comments 30/h, reports 20/day, votes 60/min 500/day); 429 carries Retry-After. D5-01 (existing) lists only the channels open to every specialty; D5-02 is the gated list the app uses.
 components:
@@ -810,6 +810,11 @@ components:
           type: [string, 'null']
           format: uri
           description: 'FA42: short-lived signed URL of the author avatar (D1-14), only for an active account; null (or absent) = no avatar, always null for a tombstone. Never persisted by the client.'
+        avatarId:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 10
+          description: 'FA53: preset avatar (1..10) of the author, only for an active account; null = none, always null for a tombstone.'
     ForoCanal:
       type: object
       required: [id, nombre, slug, posicion, soloLectura]

@@ -215,7 +215,8 @@ class AvatarRoutesTest {
     fun wrongOrMissingContentTypeIs415AndNothingIsReadOrStored() = testApplication {
         val env = env()
         mount(env)
-        listOf("image/webp", "application/json", "image/gif", "multipart/form-data; boundary=x", null).forEach { type ->
+        // application/json is the FA53 preset body now (covered by the preset tests)
+        listOf("image/webp", "text/plain", "image/gif", "multipart/form-data; boundary=x", null).forEach { type ->
             val response = client.putAvatar(image("jpg"), type = type)
             assertEquals(HttpStatusCode.UnsupportedMediaType, response.status, "$type")
             assertEquals("UNSUPPORTED_MEDIA_TYPE", response.json().str("code"))
@@ -373,6 +374,122 @@ class AvatarRoutesTest {
         assertTrue(top3[1].containsKey("avatarUrl") && top3[1]["avatarUrl"] == JsonNull, "a user without a servable avatar: explicit null")
         assertFalse("avatarPath" in view.toString())
         assertEquals(JsonNull, view["liga"], "the rest of the payload is untouched")
+    }
+
+    // ------------------------------------------------------------------ FA53 avatares predefinidos
+
+    private suspend fun HttpClient.putPreset(body: String): HttpResponse = request("/api/v1/app/me/avatar") {
+        method = HttpMethod.Put
+        header(HttpHeaders.Authorization, "Bearer $TEST_TOKEN")
+        setBody(io.ktor.http.content.TextContent(body, ContentType.Application.Json))
+    }
+
+    private fun presetEnv(photoUploads: Boolean = false, vararg previous: String?) =
+        CanonicalTestEnv(avatarStorage = FakeAvatarStorage(), avatarPhotoUploads = photoUploads).apply {
+            val queue = ArrayDeque(previous.toList())
+            upstream.onGet = { profileRowJson() }
+            upstream.onRpc = { function, args ->
+                when (function) {
+                    "app_set_avatar_preset" -> {
+                        val prev = queue.removeFirstOrNull()
+                        rpcOk("""{"avatarId":${args["p_avatar_id"]},"previousPath":${prev?.let { "\"$it\"" } ?: "null"},"changed":true}""")
+                    }
+                    else -> rpcOk("{}")
+                }
+            }
+        }
+
+    @Test
+    fun aPresetIsStoredAnsweredWithItsIdAndTheOwnPhotoIsDeleted() = testApplication {
+        val own = "avatars/$TEST_UID/${"9".repeat(64)}.jpg"
+        val env = presetEnv(false, own)
+        mount(env)
+        val response = client.putPreset("""{"avatarId":3}""")
+        assertEquals(HttpStatusCode.OK, response.status, response.bodyAsText())
+        assertEquals("private, no-store", response.headers[HttpHeaders.CacheControl])
+        assertEquals(mapOf("avatarId" to "3"), response.json().mapValues { it.value.jsonPrimitive.content }, "only avatarId (nulls are omitted)")
+        val args = env.upstream.lastArgs("app_set_avatar_preset")
+        assertEquals(TEST_UID, args["p_usuario_id"]!!.jsonPrimitive.content, "the JWT subject, never the body")
+        assertEquals("3", args["p_avatar_id"]!!.jsonPrimitive.content)
+        assertEquals(listOf("$TEST_UID/${"9".repeat(64)}.jpg"), env.storage.deletes.toList(), "the replaced photo object is deleted")
+        assertTrue(env.storage.puts.isEmpty())
+    }
+
+    @Test
+    fun aPresetNeverDeletesAForeignOrExternalPreviousValue() = testApplication {
+        val env = presetEnv(false, "https://lh3.googleusercontent.com/a/photo.jpg", "avatars/$otherUid/${"b".repeat(64)}.jpg")
+        mount(env)
+        assertEquals(HttpStatusCode.OK, client.putPreset("""{"avatarId":10}""").status)
+        assertEquals(HttpStatusCode.OK, client.putPreset("""{"avatarId":1}""").status)
+        assertTrue(env.storage.deletes.isEmpty(), "only an own server-owned object is ever deleted: ${env.storage.deletes}")
+    }
+
+    @Test
+    fun anOutOfRangePresetIs422AndAMalformedBodyIs400() = testApplication {
+        val env = presetEnv()
+        mount(env)
+        listOf("0", "11", "-1", "32767").forEach { id ->
+            val response = client.putPreset("""{"avatarId":$id}""")
+            assertEquals(HttpStatusCode.UnprocessableEntity, response.status, id)
+            assertEquals("AVATAR_ID_INVALID", response.json().str("code"), id)
+        }
+        listOf("""{"avatarId":3.5}""", """{"avatarId":3,"usuarioId":"x"}""", "{}", "").forEach { body ->
+            val response = client.putPreset(body)
+            assertEquals(HttpStatusCode.BadRequest, response.status, body)
+            assertEquals("VALIDATION", response.json().str("code"), body)
+        }
+        assertTrue(env.upstream.rpcCalls.isEmpty(), "nothing invalid reaches the database")
+    }
+
+    @Test
+    fun photoUploadsAreOffByDefaultWith415ButThePresetStillWorks() = testApplication {
+        val env = presetEnv(photoUploads = false)
+        mount(env)
+        listOf("image/jpeg", "image/png").forEach { type ->
+            val response = client.putAvatar(image(if (type == "image/png") "png" else "jpg"), type = type)
+            assertEquals(HttpStatusCode.UnsupportedMediaType, response.status, type)
+            assertEquals("UNSUPPORTED_MEDIA_TYPE", response.json().str("code"))
+        }
+        assertTrue(env.storage.puts.isEmpty() && env.upstream.rpcCalls.isEmpty(), "a photo never reaches Storage nor the database")
+        assertEquals(HttpStatusCode.OK, client.putPreset("""{"avatarId":1}""").status)
+        assertFalse(AvatarService({ _, _ -> error("unused") }, FakeAvatarStorage(), AvatarUrlSigner(FakeAvatarStorage())).photoUploadsEnabled, "default off")
+    }
+
+    @Test
+    fun meCarriesThePresetId() = testApplication {
+        val env = env()
+        var id: String = "4"
+        env.upstream.onGet = { profileRowJson().replace("\"actualizado_en\"", "\"avatar_url\":null,\"avatar_id\":$id,\"actualizado_en\"") }
+        mount(env)
+        val me = client.request("/api/v1/app/me") { header(HttpHeaders.Authorization, "Bearer $TEST_TOKEN") }.json()["profile"]!!.jsonObject
+        assertEquals("4", me["avatarId"]!!.jsonPrimitive.content)
+        assertNull(me.str("avatarUrl"))
+        assertTrue("avatar_id" in env.upstream.log.first(), "the column is read")
+        id = "null"
+        val none = client.request("/api/v1/app/me") { header(HttpHeaders.Authorization, "Bearer $TEST_TOKEN") }.json()["profile"]!!.jsonObject
+        assertTrue(none["avatarId"] == null || none["avatarId"] == JsonNull, "no preset: null or absent")
+    }
+
+    @Test
+    fun rankingAndForoCarryAvatarIdNextToAvatarUrl() = runBlocking {
+        val storage = FakeAvatarStorage()
+        val upstream = object : EconomyUpstream {
+            override fun get(path: String): String = "[]"
+            override fun rpc(function: String, body: String) = SupabaseRawResponse(
+                200,
+                """{"top3":[{"posicion":1,"handle":"ana","notaMedia":9.0,"avatarId":7},{"posicion":2,"handle":"bea","notaMedia":8.0}],"visibilidad":{"publico":true},"liga":null}""",
+            )
+        }
+        val top3 = RankingService(upstream, avatarSigner = AvatarUrlSigner(storage)).view(CanonicalUserId.fromJwtSubject(TEST_UID))
+            .jsonObject["top3"]!!.jsonArray.map { it.jsonObject }
+        assertEquals("7", top3[0]["avatarId"]!!.jsonPrimitive.content)
+        assertEquals(JsonNull, top3[0]["avatarUrl"])
+        assertEquals(JsonNull, top3[1]["avatarId"], "always sent, explicit null when the database stripped it")
+
+        val foro = rewriteAvatarPaths(Json.parseToJsonElement("""{"items":[{"id":"p1","autor":{"handle":"ana","avatarPath":null,"avatarId":2}}]}"""), AvatarUrlSigner(storage))
+        val autor = foro.jsonObject["items"]!!.jsonArray[0].jsonObject["autor"]!!.jsonObject
+        assertEquals("2", autor["avatarId"]!!.jsonPrimitive.content, "avatarId passes through untouched")
+        assertEquals(JsonNull, autor["avatarUrl"])
     }
 
     // ------------------------------------------------------------------ saneado del avatar

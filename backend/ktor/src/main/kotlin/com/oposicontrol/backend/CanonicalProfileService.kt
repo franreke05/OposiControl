@@ -319,6 +319,7 @@ internal class SupabaseCanonicalProfileService(
                 especialidadPrincipalId = snapshot.especialidadPrincipalId,
                 comunidadPrincipalId = snapshot.comunidadPrincipalId,
                 avatarUrl = avatarUrl,
+                avatarId = snapshot.avatarId?.takeIf { it in AVATAR_PRESET_RANGE },
                 onboardingCompleted = snapshot.onboardingCompleted,
                 accountStatus = status.wire,
                 introSeenAt = snapshot.introSeenAt?.let(::normalizeInstant),
@@ -374,6 +375,8 @@ internal class SupabaseCanonicalProfileService(
         val replay: Boolean = false,
         /** Valor CRUDO de `perfiles_usuario.avatar_url` (puede ser una URL externa de OAuth): nunca se reenvia tal cual. */
         val avatarUrl: String? = null,
+        /** FA53: `perfiles_usuario.avatar_id` (1..10) o `null`. */
+        val avatarId: Int? = null,
     )
 
     @Serializable
@@ -391,10 +394,11 @@ internal class SupabaseCanonicalProfileService(
         @SerialName("creado_en") val creadoEn: String? = null,
         @SerialName("actualizado_en") val actualizadoEn: String? = null,
         @SerialName("avatar_url") val avatarUrl: String? = null,
+        @SerialName("avatar_id") val avatarId: Int? = null,
     ) {
         fun toSnapshot() = ProfileSnapshot(
             usuarioId, username, nombreMostrar, nombre, apellidos, especialidadPrincipalId, comunidadPrincipalId,
-            onboardingCompletado, estadoCuenta, introSeenAt, creadoEn, actualizadoEn, avatarUrl = avatarUrl,
+            onboardingCompletado, estadoCuenta, introSeenAt, creadoEn, actualizadoEn, avatarUrl = avatarUrl, avatarId = avatarId,
         )
     }
 
@@ -411,7 +415,7 @@ internal class SupabaseCanonicalProfileService(
     companion object {
         private const val PROFILE_COLUMNS =
             "usuario_id,username,nombre_mostrar,nombre,apellidos,especialidad_principal_id,comunidad_principal_id," +
-                "onboarding_completado,estado_cuenta,perfil_intro_visto_en,creado_en,actualizado_en,avatar_url"
+                "onboarding_completado,estado_cuenta,perfil_intro_visto_en,creado_en,actualizado_en,avatar_url,avatar_id"
         const val MAX_LEGAL_DOCUMENTS = 20
         private const val MAX_ACCEPTANCE_DOCUMENTS = 5
         private const val MAX_ONBOARDING_DOCUMENTS = 10

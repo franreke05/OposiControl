@@ -1,0 +1,7 @@
+# F29 avatares predefinidos (f29/avatar-preset, decision del propietario 2026-11-14, FA53): migracion que se aplica a MAIN DESPUES de F20 y ANTES de la imagen Ktor nueva.
+# Acta y anexo al runbook: docs/ledger/2026/11/2026-11-14-f29-avatar-predefinido.md. Uso con el script de siempre:
+#   MANIFEST=ops/deploy/v1/main-migrations-2026-11-f29.manifest bash ops/deploy/v1/apply-main-migration.sh supabase/migrations/20261114100000_v1_avatar_preset.sql
+# version  blob(git hash-object, 12)  predecesora(debe estar en supabase_migrations antes de aplicar)  clase
+# Predecesora: 20261109100000 (F20). Solo exige que este registrada: F14b (20261111100000), F23 o F20b, si se aplican antes, no la bloquean (F29 no toca nada de ellas).
+# Si cambia el blob, se rehacen este manifiesto y el ensayo (docs/ledger/2026/11/rehearse-f29-2026-11.sh).
+20261114100000 26061b231391 20261109100000 apply
