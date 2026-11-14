@@ -107,7 +107,8 @@ class V1PracticaMigrationTest {
     }
 
     @Test
-    fun itIsAnsweredAndFinishedWithTheUsualRpcsAndNeverCounts() = V1Db.escenario { c ->
+    // The F23 body on its own: 20261114300000 (F27, FA54) makes a practice answer count in aciertos / fallos and the later real answer count for ranking (V1StatsFixMigrationTest).
+    fun itIsAnsweredAndFinishedWithTheUsualRpcsAndNeverCounts() = V1Db.escenario(sin = setOf("20261114300000_v1_stats_fix")) { c ->
         c.ejecutar(seed)
         val a = c.attemptOf(c.start())
         val first = c.frozen(a).first()
@@ -172,7 +173,7 @@ class V1PracticaMigrationTest {
     }
 
     @Test
-    fun withoutTheMigrationThereIsNoPractice() = V1Db.escenario(sin = setOf(migration)) { c ->
+    fun withoutTheMigrationThereIsNoPractice() = V1Db.escenario(sin = setOf(migration, "20261114300000_v1_stats_fix")) { c ->
         c.ejecutar(seed)
         assertEquals("0", c.unico("select count(*)::text from pg_proc where proname in ('app_start_practice_attempt', 'app_practice_availability')"))
         assertEquals("0", c.unico("select count(*)::text from information_schema.columns where table_name = 'intentos_examen' and column_name = 'es_practica'"))

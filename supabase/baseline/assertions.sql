@@ -1802,10 +1802,11 @@ begin
   a := (r ->> 'intento_id')::uuid;
   assert (select intento_numero_usuario = 1 and es_primer_intento_examen and not es_demo and acceso_estado = 'GRANTED' from public.intentos_examen where id = a), 'a demo does not shift the numbering: the real attempt is the first';
   assert (select count(*) from public.preguntas_intento where intento_id = a) = 8, 'the real attempt holds all 8 questions';
-  -- the first real answer to a question already seen in a demo: first answer, NOT ranking; to a question never seen: first answer and ranking
+  -- the first real answer to a question already seen in a demo: first answer AND ranking (20261114300000 F27/FA54: the demo never burns it; the first real attempt now counts for ranking)
   r := public.app_record_attempt_answer(u1, a, q1, ok1, 0, 0, null);
   assert (r ->> 'es_primera_respuesta')::boolean, 'the real answer is the first answer (the demo did not consume it)';
-  assert (select es_primer_intento_pregunta and not cuenta_para_ranking from public.respuestas_intento where intento_id = a and pregunta_id = q1), 'seen in a demo: first answer, but no ranking (note: the start RPC never sets cuenta_para_ranking, the column default false shadows the trigger coalesce: stats use es_primer_intento_pregunta)';
+  assert (select cuenta_para_ranking from public.intentos_examen where id = a), 'the first real attempt counts for ranking (F27: the column default no longer shadows the trigger)';
+  assert (select es_primer_intento_pregunta and cuenta_para_ranking from public.respuestas_intento where intento_id = a and pregunta_id = q1), 'seen in a demo: first answer and ranking (F27: the demo does not burn the question)';
   r := public.app_record_attempt_answer(u1, a, q6, ok6, 0, 0, null);
   assert (select es_primer_intento_pregunta from public.respuestas_intento where intento_id = a and pregunta_id = q6), 'never seen: first answer';
   select count(*) into n from public.respuestas_intento where usuario_id = u1 and es_primer_intento_pregunta;
@@ -4687,4 +4688,45 @@ end $$;
 reset role;
 revoke update on table public.perfiles_usuario from authenticated;  -- undo the second-layer grant inside this transaction
 do $$ begin assert not has_table_privilege('authenticated', 'public.perfiles_usuario', 'update'), 'second-layer grant not undone'; end $$;
+rollback;
+-- 20261114300000: F27 / FA54 stats correctness. The first real attempt counts for ranking (the column default no longer hides it); the Nota media uses the frozen
+-- rational penalty with the attempt-grade function; a demo never burns a question; a second attempt counts in aciertos / fallos but never in the ranking.
+begin;
+insert into auth.users (id, email, aud, role) values ('a0000000-0000-0000-0000-0000000027f1', 'f27-gate@test.local', 'authenticated', 'authenticated');
+insert into public.especialidades (id, codigo, nombre, slug, activa) values ('e1000000-0000-0000-0000-0000000027f1', 'F27G', 'F27G', 'f27g', true);
+insert into public.comunidades_autonomas (id, codigo, nombre, slug) values ('c1000000-0000-0000-0000-0000000027f1', 'F27G', 'Com F27G', 'com-f27g');
+insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta, especialidad_principal_id)
+  values ('a0000000-0000-0000-0000-0000000027f1', 'g', 'f27_gate', true, 'activa', 'e1000000-0000-0000-0000-0000000027f1') on conflict (usuario_id) do nothing;
+set local session_replication_role = replica;
+insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en, regla_anuladas, penalizacion_racional)
+values ('e9270000-0000-0000-0000-000000000001', 'F27G-1', 'e1000000-0000-0000-0000-0000000027f1', 'c1000000-0000-0000-0000-0000000027f1', 'Pen', 'rafaga', 'gratuito', true, now() - interval '1 day', 'NO_PUNTUA', true);
+insert into public.preguntas (id, codigo_pregunta, tipo_pregunta, titulo, activa) select ('f9270000-0000-0000-0000-' || lpad(p::text, 12, '0'))::uuid, 'F27G-' || p, 'rafaga', 'P', true from generate_series(1, 4) p;
+insert into public.opciones_pregunta (id, pregunta_id, letra, texto_opcion, posicion)
+select ('0a927000-0000-0000-000' || o || '-' || lpad(p::text, 12, '0'))::uuid, ('f9270000-0000-0000-0000-' || lpad(p::text, 12, '0'))::uuid, chr(64 + o), 'O', o from generate_series(1, 4) p, generate_series(1, 4) o;
+insert into public.soluciones_pregunta (pregunta_id, opcion_correcta_id, razonamiento) select ('f9270000-0000-0000-0000-' || lpad(p::text, 12, '0'))::uuid, ('0a927000-0000-0000-0001-' || lpad(p::text, 12, '0'))::uuid, 'x' from generate_series(1, 4) p;
+insert into public.preguntas_examen (examen_id, pregunta_id, posicion, numero_en_examen) select 'e9270000-0000-0000-0000-000000000001', ('f9270000-0000-0000-0000-' || lpad(p::text, 12, '0'))::uuid, p, p from generate_series(1, 4) p;
+set local session_replication_role = origin;
+do $$
+declare
+  u constant uuid := 'a0000000-0000-0000-0000-0000000027f1'; ex constant uuid := 'e9270000-0000-0000-0000-000000000001';
+  a uuid; b uuid; s jsonb; p int;
+begin
+  a := (public.app_start_exam_attempt(u, ex, 'NORMAL') ->> 'intento_id')::uuid;
+  assert (select cuenta_para_ranking from public.intentos_examen where id = a), 'the first real attempt counts for ranking';
+  for p in 1..4 loop
+    perform public.app_record_attempt_answer(u, a, ('f9270000-0000-0000-0000-' || lpad(p::text, 12, '0'))::uuid, ('0a927000-0000-0000-000' || case when p = 4 then 2 else 1 end || '-' || lpad(p::text, 12, '0'))::uuid, 1500, 0, null);
+  end loop;
+  perform public.app_finish_exam_attempt(u, a);
+  s := public.app_stats_summary(u);
+  assert (s #>> '{notaMedia,valor}')::numeric = 6.67 and (s ->> 'preguntasValidas')::int = 4 and (s #>> '{totales,aciertos}')::int = 3 and (s #>> '{totales,fallos}')::int = 1,
+         'Nota media (3 - 1/3) / 4 x 10 with the frozen rational penalty: ' || s::text;
+  assert (select nota from public.intentos_examen where id = a) = 6.67, 'the same number as the attempt grade';
+  b := (public.app_start_exam_attempt(u, ex, 'NORMAL') ->> 'intento_id')::uuid;
+  assert not (select cuenta_para_ranking from public.intentos_examen where id = b), 'a second attempt does not count for ranking';
+  perform private.app_count_answer(u, ('f9270000-0000-0000-0000-' || lpad(1::text, 12, '0'))::uuid, true, 10, null, 'reto');
+  assert (public.app_stats_summary(u) #>> '{totales,aciertos}')::int = 3, 'a question already counted never counts twice (any origin)';
+  assert not has_table_privilege('authenticated', 'public.primeras_respuestas_ranking', 'select') and not has_function_privilege('authenticated', 'private.app_rank_answer(uuid,uuid,boolean,integer,integer,uuid)', 'execute'),
+         'the ranking ledger and its hook are closed to clients';
+  raise notice 'OK F27 stats fix';
+end $$;
 rollback;

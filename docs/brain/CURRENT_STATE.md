@@ -1,5 +1,11 @@
 # Current State
 
+## Estadisticas bien contadas (F27, FA54) — 2026-11-14 (rama local `f27/stats-fix` desde `f23/quick-quiz` + merge de `f20b/reto-tres`, sin push) — `CURRENT_IMPLEMENTATION`, NO aplicada a MAIN
+
+- Decision del propietario 2026-11-14 (plan 1.3, seccion 9): demo y practica no queman preguntas; aciertos/fallos/etiquetas cuentan examen, practica y reto; nota media, liga y ranking solo intentos con `cuenta_para_ranking`; nota media con PD = A - E/(n-1) y penalizacion congelada por intento (misma funcion que la nota del intento); "sin contestar" por pregunta con el mismo criterio. Formas JSON sin cambios (FA54 solo texto en `stats.yaml`).
+- Hallazgo: `intentos_examen.cuenta_para_ranking` era SIEMPRE false (el default NOT NULL false anulaba el coalesce del disparador `preparar_intento_examen`); corregido y rellenado en los primeros intentos reales V1.
+- Migracion PENDIENTE `20261114300000_v1_stats_fix` (predecesora F23 `20261109100100`; con relleno en la misma transaccion). Manifiesto `ops/deploy/v1/main-migrations-2026-11-f27.manifest`; ensayo `docs/ledger/2026/11/rehearse-f27-2026-11.sh`; acta `docs/ledger/2026/11/2026-11-14-f27-stats-fix.md`. Sin imagen nueva.
+
 ## OposiQuizzes rapidos / practica (F23) — 2026-11-09 (rama local `f23/quick-quiz` desde develop `08ea7f0f`, sin push) — `CURRENT_IMPLEMENTATION`, NO aplicada a MAIN
 
 - Decision del propietario 2026-11-09: test aleatorio de 5 / 10 / 20 preguntas SOLO de los examenes que el usuario puede abrir (FREE / GRANTED / SUBSCRIPTION) de su especialidad; sin acceso, Home invita al Market. Solo practica: corregida y con resultado, nunca ranking, liga, racha, estadisticas, OT, referido ni Mis examenes.
