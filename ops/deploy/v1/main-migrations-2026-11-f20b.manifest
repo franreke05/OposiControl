@@ -1,0 +1,8 @@
+# F20b reto diario siempre de 3 preguntas (f20b/reto-tres, decision del propietario 2026-11-11): migracion que se aplica a MAIN DESPUES de F20.
+# Acta y anexo al runbook: docs/ledger/2026/11/2026-11-11-f20b-reto-tres.md. Uso con el script de siempre:
+#   MANIFEST=ops/deploy/v1/main-migrations-2026-11-f20b.manifest bash ops/deploy/v1/apply-main-migration.sh supabase/migrations/20261109100200_v1_reto_tres.sql
+# version  blob(git hash-object, 12)  predecesora(debe estar en supabase_migrations antes de aplicar)  clase
+# Cadena: F20 20261109100000 (ops/deploy/v1/main-migrations-2026-11-f20.manifest), ya en MAIN.
+# Si F23 (20261109100100) se aplica antes, la predecesora pasa a 20261109100100 y se rehace el ensayo (docs/ledger/2026/11/rehearse-f20b-2026-11.sh).
+# Si cambia el blob, se rehacen este manifiesto y el ensayo.
+20261109100200 ba0052d49730 20261109100000 apply

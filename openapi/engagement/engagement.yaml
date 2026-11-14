@@ -1,6 +1,7 @@
 # ENGAGEMENT (FA29, V1 wave 2): the daily challenge, its reward claim and the streak. Design: E1-V1-ENGAGEMENT-DESIGN.md v2.1 (E2 conditions C-E1..C-E7).
-# One challenge ROW per user per Madrid day (the most specific segment eligible for the user, frozen the first time it is opened that day): 1 to 3 questions, ONE per exam type (immersive, razonado, rafaga)
-# drawn from the published exams of the user specialty (FA46, owner 2026-11-09: a type without questions is skipped), picked by a daily job, the same for every user of the segment; won with necesarios
+# One challenge ROW per user per Madrid day (the most specific segment eligible for the user, frozen the first time it is opened that day): 3 questions, first ONE per exam type (immersive, razonado, rafaga)
+# drawn from the published exams of the user specialty (FA46, owner 2026-11-09), then filled up to 3 from the other eligible questions of the specialty, so a tipoSlot can repeat (FA48, owner 2026-11-11);
+# fewer than 3 eligible questions = what exists. Picked by a daily job, the same for every user of the segment; won with necesarios
 # correct = ceil(2n/3) of n (3 -> 2, 2 -> 2, 1 -> 1). Everything is decided by the database on its own clock (no date, hour or "correct" flag ever travels from the client). Answers to
 # challenge questions never feed the exam statistics. The reward amount comes from the user's plan benefits (Control), is frozen when the challenge is passed and is paid ONLY through the claim endpoint,
 # once per user per Madrid day (idempotent through the ledger). The streak is the number of consecutive Madrid days with the challenge passed.
