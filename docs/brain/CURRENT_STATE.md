@@ -29,6 +29,12 @@
 - Diseno: reutiliza el intento de examen. Fila de `intentos_examen` con `es_practica` (nueva), `examen_id` NULL y `es_demo` (todas las exclusiones del demo aplican sin tocar sus funciones). Respuestas, cierre, resultado y revision por las rutas de siempre (D2-07..D2-12, D2-65); nuevas D2-67 `GET /api/v1/app/practicas/disponibilidad` y D2-68 `POST /api/v1/app/practicas` (FA47, `origen` QUICK_QUIZ ya existia en el contrato).
 - Migracion PENDIENTE `20261109100100_v1_practica` (predecesora F20). Manifiesto `ops/deploy/v1/main-migrations-2026-11-f23.manifest`; ensayo `docs/ledger/2026/11/rehearse-f23-2026-11.sh`; acta `docs/ledger/2026/11/2026-11-09-f23-practica.md`. NECESITA imagen nueva y ORDEN migracion -> imagen (el Ktor nuevo lee `es_practica` en toda lectura de intento).
 
+## Avatares predefinidos (F29) — 2026-11-14 (rama local `f29/avatar-preset` desde develop `08ea7f0f`, sin push) — `CURRENT_IMPLEMENTATION`, NO aplicada a MAIN
+
+- Decision del propietario 2026-11-14 (plan 1.3, seccion 8): 10 avatares predefinidos; la subida de foto queda apagada por configuracion (`AVATAR_PHOTO_UPLOADS_ENABLED`, por defecto false -> 415).
+- Migracion PENDIENTE `20261114100000_v1_avatar_preset` (`perfiles_usuario.avatar_id` 1..10, `app_set_avatar_preset`, `avatarId` en ranking top3 y autores del foro). Manifiesto `ops/deploy/v1/main-migrations-2026-11-f29.manifest`; ensayo `docs/ledger/2026/11/rehearse-f29-2026-11.sh`; acta `docs/ledger/2026/11/2026-11-14-f29-avatar-predefinido.md`. Imagen Ktor NUEVA despues de la migracion.
+- Contrato: FA53 aditiva (`profiles.yaml` D1-14 JSON `{"avatarId":N}` y `MeProfile.avatarId`, `ranking.yaml`, `foro.yaml`, `errors.yaml` AVATAR_ID_INVALID); registro CONTRACT_FREEZE.md (repo OposiBot) PENDING_OWNER.
+
 ## Reto diario por tipo de examen (F20) — 2026-11-09 (rama local `f20/reto-per-type` desde develop `920fa29b`, sin push) — `CURRENT_IMPLEMENTATION`, NO aplicada a MAIN
 
 - Decision del propietario 2026-11-09: el reto toma UNA pregunta de examenes inmersivos, UNA de razonados y UNA de rafaga, de los examenes PUBLICADOS de la especialidad del usuario; un tipo sin preguntas se salta (reto de 1 a 3). Antes exigia los tres huecos (y la inmersiva con marca demo): en produccion, solo rafaga, el reto salia `NO_DISPONIBLE` para todos.

@@ -165,6 +165,8 @@ internal class CanonicalTestEnv(
     var gateway: OposiBotsAuthGateway = NoAuthGateway,
     /** FA42: Storage falso del avatar; `null` = sin firmante ni rutas de avatar cableadas (503). */
     val avatarStorage: AvatarStorage? = null,
+    /** FA53: subida de foto encendida en los tests de FA42; produccion la tiene apagada por defecto (AVATAR_PHOTO_UPLOADS_ENABLED). */
+    val avatarPhotoUploads: Boolean = true,
 ) {
     val upstream = FakeUpstream()
     val auth = FakeAuthProvider()
@@ -180,7 +182,7 @@ internal class CanonicalTestEnv(
 
     val avatarSigner: AvatarUrlSigner? = avatarStorage?.let { AvatarUrlSigner(it, clock = { now }) }
     val profiles: CanonicalProfileService = SupabaseCanonicalProfileService(upstream, auth, testJson, avatarSigner)
-    val avatars: AvatarService? = avatarStorage?.let { AvatarService({ f, b -> upstream.rpc(f, b) }, it, avatarSigner!!, testJson) }
+    val avatars: AvatarService? = avatarStorage?.let { AvatarService({ f, b -> upstream.rpc(f, b) }, it, avatarSigner!!, testJson, photoUploadsEnabled = avatarPhotoUploads)}
     val deletion = AccountDeletionService(upstream, auth, clock = { now }, json = testJson)
 
     private val resolver = CanonicalIdentityResolver(

@@ -42,7 +42,9 @@ class ServerAuthoritativeTest {
                 // V1 pagos de tienda (docs/payments/STORE_PAYMENTS_CONTRACT.md): S-03, S-04. Solo la prueba de la tienda, nunca precio ni cantidad.
                 "StoreVerifyRequest", "StoreRestoreRequest",
                 // FA47 / FA47b (practica): D2-68. Solo tamano y examenes elegidos; el acceso a cada uno lo decide la base.
-                "QuickQuizStartRequest"),
+                "QuickQuizStartRequest",
+                // FA53: D1-14 con cuerpo JSON (avatar predefinido).
+                "AvatarPresetRequest"),
             commands.map { it.simpleName }.toSet(),
             "comandos canonicos de SLICE 1 (D1-12, D1-13, D1-17, D1-19, D1-26 admin: MASTER-API-005; D1-25 admin: MASTER2-API-001) " +
                 "y de SLICE 3 (D2-03, D2-09, D2-10, D2-11)",

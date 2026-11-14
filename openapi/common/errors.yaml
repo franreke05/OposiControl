@@ -151,6 +151,7 @@ components:
         - DUPLICATE_POST
         - CONTENT_REJECTED
         - IMAGE_REJECTED
+        - AVATAR_ID_INVALID
         - STATS_RECOMPUTE_COOLDOWN
   headers:
     XRequestId:

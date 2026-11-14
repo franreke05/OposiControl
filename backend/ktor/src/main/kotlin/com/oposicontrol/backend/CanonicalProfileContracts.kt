@@ -90,6 +90,8 @@ data class MeProfile(
     val comunidadPrincipalId: String? = null,
     /** D1-14 (FA42): URL FIRMADA y corta del objeto propio `avatars/{uid}/{sha256}.jpg`; `null` sin avatar o si lo guardado no es del servidor. */
     val avatarUrl: String? = null,
+    /** FA53: avatar predefinido elegido (1..10) o `null` (sin predefinido; puede haber foto antigua en [avatarUrl]). Nunca ambos. */
+    val avatarId: Int? = null,
     val onboardingCompleted: Boolean,
     val accountStatus: String,
     val introSeenAt: String? = null,
@@ -123,12 +125,21 @@ data class PendingLegalDocument(val id: String, val tipo: String, val version: S
 @Serializable
 data class LegalAcceptanceResponse(val pendingLegalDocuments: List<PendingLegalDocument>)
 
-/** D1-14 200: URL firmada del avatar recien guardado y su caducidad (instante ISO). */
+/**
+ * D1-14 200. FA53: predefinido -> solo [avatarId] (1..10); foto (FA42, solo con AVATAR_PHOTO_UPLOADS_ENABLED) -> URL firmada del avatar recien
+ * guardado y su caducidad (instante ISO). Los `null` no viajan (`explicitNulls = false`): ausente = null.
+ */
 @Serializable
 data class AvatarResponse(
-    val avatarUrl: String,
-    val expiresAt: String,
+    val avatarId: Int? = null,
+    val avatarUrl: String? = null,
+    val expiresAt: String? = null,
 )
+
+/** D1-14 con cuerpo JSON (FA53): el avatar predefinido elegido, 1..10 (fuera de rango 422 AVATAR_ID_INVALID). */
+@CanonicalCommand
+@Serializable
+data class AvatarPresetRequest(val avatarId: Int)
 
 @Serializable
 data class AccountDeletionAccepted(

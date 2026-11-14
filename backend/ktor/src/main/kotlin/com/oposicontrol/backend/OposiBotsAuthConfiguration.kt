@@ -30,6 +30,11 @@ internal data class OposiBotsAuthConfiguration(
      * again by GoTrue). Turn on once every shipped client sends it.
      */
     val oauthNonceRequired: Boolean = false,
+    /**
+     * FA53 (`AVATAR_PHOTO_UPLOADS_ENABLED`, default false): D1-14 with a raw image body (photo upload, FA42). Off = the route stays but
+     * answers 415 UNSUPPORTED_MEDIA_TYPE to an image body; the preset body `{"avatarId":1..10}` always works.
+     */
+    val avatarPhotoUploadsEnabled: Boolean = false,
 ) {
     val development: Boolean
         get() = AppEnvironment.isDevelopment(appEnvironment)
@@ -98,6 +103,9 @@ internal data class OposiBotsAuthConfiguration(
                 pkceMode = PkceMode.parse(System.getenv("AUTH_PKCE_MODE")),
                 oauthNonceRequired = System.getenv("AUTH_OAUTH_NONCE_REQUIRED")?.trim()?.takeIf(String::isNotEmpty)?.let {
                     it.toBooleanStrictOrNull() ?: error("AUTH_OAUTH_NONCE_REQUIRED debe ser true o false.")
+                } ?: false,
+                avatarPhotoUploadsEnabled = System.getenv("AVATAR_PHOTO_UPLOADS_ENABLED")?.trim()?.takeIf(String::isNotEmpty)?.let {
+                    it.toBooleanStrictOrNull() ?: error("AVATAR_PHOTO_UPLOADS_ENABLED debe ser true o false.")
                 } ?: false,
             )
             configuration.requireDeployable()
@@ -286,7 +294,7 @@ internal class OposiBotsAuthRuntime(
                     ReferralService(TransportEconomyUpstream(transport)).let { svc -> ReferralAttach { user, code -> svc.attach(user, code) } },
                     PostgrestSpecialtyResolver(upstream, json),
                 ),
-                avatars = AvatarService.fromTransport(transport, avatarSigner),
+                avatars = AvatarService.fromTransport(transport, avatarSigner, photoUploadsEnabled = configuration.avatarPhotoUploadsEnabled),
             )
         }
     }

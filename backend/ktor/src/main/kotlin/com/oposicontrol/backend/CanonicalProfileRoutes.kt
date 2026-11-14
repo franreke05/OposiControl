@@ -109,7 +109,7 @@ internal fun Route.canonicalProfileRoutes(runtime: OposiBotsAuthRuntime) {
                 call.respond(canonical.profiles.acceptLegalDocuments(identity, request))
             }
             // D1-14 / D1-15 (FA42): bytes crudos image/jpeg|image/png de 1..AVATAR_MAX_BYTES; sin multipart (cabe bajo el tope global de 2 MiB
-            // de Ktor y el `max_size 2MB` de Caddy, sin excepciones nuevas).
+            // de Ktor y el `max_size 2MB` de Caddy, sin excepciones nuevas). FA53: o JSON {"avatarId":1..10} (predefinido).
             put("/avatar") {
                 call.privateNoStore()
                 val identity = canonical.resolver.activeIdentity(call) { call.limitUser(runtime, OposiBotsAuthOperation.PROFILE_WRITE, it) }
@@ -117,6 +117,14 @@ internal fun Route.canonicalProfileRoutes(runtime: OposiBotsAuthRuntime) {
                 val avatars = canonical.avatars ?: throw CanonicalErrorCode.UPSTREAM_UNAVAILABLE.exception()
                 val contentType = call.request.header(HttpHeaders.ContentType)
                 val declaredType = contentType?.substringBefore(';')?.trim()?.lowercase()
+                // FA53: el avatar predefinido llega como JSON {"avatarId":1..10} (decodificacion estricta: campo extra = 400 VALIDATION)
+                if (declaredType == "application/json") {
+                    val request = call.receiveCanonicalCommand<AvatarPresetRequest>()
+                    call.respond(avatars.choosePreset(identity, request.avatarId))
+                    return@put
+                }
+                // FA42: la foto en bytes crudos, solo con AVATAR_PHOTO_UPLOADS_ENABLED (apagada por defecto: 415 sin leer el cuerpo)
+                if (!avatars.photoUploadsEnabled) throw CanonicalErrorCode.UNSUPPORTED_MEDIA_TYPE.exception()
                 if (declaredType != "image/jpeg" && declaredType != "image/png") throw CanonicalErrorCode.UNSUPPORTED_MEDIA_TYPE.exception()
                 val declared = call.request.header(HttpHeaders.ContentLength)?.trim()?.toLongOrNull()
                     ?: throw validationError(ErrorIssue("Content-Length", CanonicalIssue.REQUIRED))

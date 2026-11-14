@@ -202,13 +202,16 @@ components:
         x-roles: [USER]
         x-pagination: NONE
         x-idempotency: NATURAL
-        x-error-codes: [VALIDATION, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, PAYLOAD_TOO_LARGE, UNSUPPORTED_MEDIA_TYPE, IMAGE_REJECTED, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
-        description: 'FA42 (owner 2026-11-08, implemented): the body is the RAW image (no multipart), Content-Type image/jpeg or image/png (anything else, webp included, 415 UNSUPPORTED_MEDIA_TYPE), Content-Length required (400 VALIDATION) and 1..2000000 bytes (2 MB, the same number as the ingress body cap; larger 413 PAYLOAD_TOO_LARGE). The server checks the MAGIC BYTES against Content-Type, the dimensions from the header BEFORE decoding, rejects animated images, decodes in a separate pool with a time limit, applies the EXIF orientation, crops to a centred square, scales to at most 512x512 and RE-ENCODES it as JPEG without any metadata (EXIF, GPS, ICC and thumbnails do not survive): 422 IMAGE_REJECTED on any verification failure. The re-encoded object is stored in a private bucket at avatars/{uid}/{sha256}.jpg, so an identical upload is a no-op that answers the same avatar; the replaced object is deleted. avatarUrl is a short-lived signed URL (about 1 hour, expiresAt) and is never persisted by the client: GET /api/v1/app/me returns a fresh one. 429 RATE_LIMITED also while another upload of the same user is in progress.'
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, PAYLOAD_TOO_LARGE, UNSUPPORTED_MEDIA_TYPE, IMAGE_REJECTED, AVATAR_ID_INVALID, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'FA53 (owner 2026-11-14): PRESET AVATARS. Content-Type application/json with AvatarPresetRequest {"avatarId": 1..10} (strict: an unknown field or a non-integer is 400 VALIDATION; out of range 422 AVATAR_ID_INVALID) stores the chosen preset and removes the photo (the replaced object is deleted); 200 AvatarResponse with avatarId only. A profile holds a preset OR a photo, never both. The raw photo upload below (FA42) is OFF by default (server setting AVATAR_PHOTO_UPLOADS_ENABLED=false): an image body then answers 415 UNSUPPORTED_MEDIA_TYPE without being read; when switched on it works as described and clears the preset. Original FA42 text follows. FA42 (owner 2026-11-08, implemented): the body is the RAW image (no multipart), Content-Type image/jpeg or image/png (anything else, webp included, 415 UNSUPPORTED_MEDIA_TYPE), Content-Length required (400 VALIDATION) and 1..2000000 bytes (2 MB, the same number as the ingress body cap; larger 413 PAYLOAD_TOO_LARGE). The server checks the MAGIC BYTES against Content-Type, the dimensions from the header BEFORE decoding, rejects animated images, decodes in a separate pool with a time limit, applies the EXIF orientation, crops to a centred square, scales to at most 512x512 and RE-ENCODES it as JPEG without any metadata (EXIF, GPS, ICC and thumbnails do not survive): 422 IMAGE_REJECTED on any verification failure. The re-encoded object is stored in a private bucket at avatars/{uid}/{sha256}.jpg, so an identical upload is a no-op that answers the same avatar; the replaced object is deleted. avatarUrl is a short-lived signed URL (about 1 hour, expiresAt) and is never persisted by the client: GET /api/v1/app/me returns a fresh one. 429 RATE_LIMITED also while another upload of the same user is in progress.'
         security:
           - bearerAuth: []
         requestBody:
           required: true
           content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AvatarPresetRequest'
             image/jpeg:
               schema:
                 type: string
@@ -226,7 +229,7 @@ components:
                   $ref: '#/components/schemas/AvatarResponse'
           '400':
             $ref: '../common/errors.yaml#/components/responses/BadRequest'
-            description: 'VALIDATION: Content-Length missing, empty body or unknown query parameter.'
+            description: 'VALIDATION: Content-Length missing, empty body, unknown query parameter, or (JSON body) an unknown field or a non-integer avatarId.'
           '401':
             $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
           '403':
@@ -236,9 +239,10 @@ components:
             $ref: '../common/errors.yaml#/components/responses/PayloadTooLarge'
           '415':
             $ref: '../common/errors.yaml#/components/responses/UnsupportedMediaType'
+            description: 'UNSUPPORTED_MEDIA_TYPE: neither application/json nor image/jpeg|png, or an image body while photo uploads are off (default, FA53).'
           '422':
             $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
-            description: 'IMAGE_REJECTED: the bytes are not the declared format, animated, too many pixels, undecodable or too slow to decode.'
+            description: 'AVATAR_ID_INVALID (FA53): avatarId outside 1..10. IMAGE_REJECTED: the bytes are not the declared format, animated, too many pixels, undecodable or too slow to decode.'
           '429':
             $ref: '../common/errors.yaml#/components/responses/RateLimited'
           '503':
@@ -254,7 +258,7 @@ components:
         x-pagination: NONE
         x-idempotency: NATURAL
         x-error-codes: [VALIDATION, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
-        description: 'FA42 (implemented). Idempotent: an absent avatar also returns 204. Clears the stored avatar (an external provider picture copied at signup too) and deletes the stored object; a signed URL handed out before stops working with the object.'
+        description: 'FA53: also clears the preset (avatarId becomes null). FA42 (implemented). Idempotent: an absent avatar also returns 204. Clears the stored avatar (an external provider picture copied at signup too) and deletes the stored object; a signed URL handed out before stops working with the object.'
         security:
           - bearerAuth: []
         responses:
@@ -876,6 +880,11 @@ components:
           type: [string, 'null']
           format: uri
           description: 'FA42: short-lived signed URL (about 1 hour) of the avatar uploaded through D1-14; null when the user has none. A picture of an external sign-in provider is never returned. Never persisted by the client.'
+        avatarId:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 10
+          description: 'FA53: the preset avatar chosen through D1-14 (1..10, the client ships the 10 images); null or absent = no preset (then avatarUrl may carry a legacy photo). Never both.'
         onboardingCompleted:
           type: boolean
         accountStatus:
@@ -978,12 +987,25 @@ components:
           $ref: '../common/identifiers.yaml#/components/schemas/LocalDate'
     AvatarResponse:
       type: object
-      required: [avatarUrl, expiresAt]
+      description: 'FA53: a preset answers {avatarId} only; a photo (uploads switched on) answers {avatarUrl, expiresAt}. Null fields are omitted.'
+      required: []
       properties:
+        avatarId:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 10
         avatarUrl:
           $ref: '../common/identifiers.yaml#/components/schemas/SignedUrl'
         expiresAt:
           $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+    AvatarPresetRequest:
+      type: object
+      additionalProperties: false
+      required: [avatarId]
+      properties:
+        avatarId:
+          type: integer
+          description: 'FA53: one of the 10 preset avatars, 1..10 (outside: 422 AVATAR_ID_INVALID, checked by the server, not by the schema).'
     LegalDocument:
       type: object
       required: [id, tipo, version, titulo, contenido, publicadoEn]

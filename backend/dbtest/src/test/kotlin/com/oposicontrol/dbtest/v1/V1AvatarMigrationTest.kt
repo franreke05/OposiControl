@@ -168,7 +168,8 @@ class V1AvatarMigrationTest {
     }
 
     @Test
-    fun negativeControlWithoutTheMigrationThereIsNoAvatarCommandAndNoAvatarInTheReads() = V1Db.escenario(sin = setOf(migration)) { c ->
+    // 20261114100000_v1_avatar_preset (FA53) needs this one (preflight): it is left out too
+    fun negativeControlWithoutTheMigrationThereIsNoAvatarCommandAndNoAvatarInTheReads() = V1Db.escenario(sin = setOf(migration, "20261114100000_v1_avatar_preset")) { c ->
         c.ejecutar(seed)
         assertEquals("0", c.unico("select count(*) from pg_proc where proname in ('app_set_avatar', 'app_clear_avatar', 'avatar_visible_path')"))
         assertEquals("0", c.unico("select count(*) from pg_proc p where p.proname = 'app_foro_list' and p.prosrc like '%avatar%'"))

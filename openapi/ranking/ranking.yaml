@@ -143,6 +143,11 @@ components:
                 type: [string, 'null']
                 format: uri
                 description: 'FA42: short-lived signed URL of the listed user avatar, only while that user is still public and active; null (or absent) = no avatar. Never persisted by the client.'
+              avatarId:
+                type: [integer, 'null']
+                minimum: 1
+                maximum: 10
+                description: 'FA53: preset avatar (1..10) of the listed user, under the same gate as avatarUrl (still public and active); null = none. The server always sends the key.'
               notaMedia:
                 type: number
                 minimum: 0

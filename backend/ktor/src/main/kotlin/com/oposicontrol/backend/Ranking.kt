@@ -71,7 +71,7 @@ internal class RankingService(
 ) {
     suspend fun view(userId: CanonicalUserId): JsonElement {
         val raw = rpc("app_ranking_me", buildJsonObject { put("p_usuario", userId.value) }.toString())
-        // la ruta nunca sale; cada entrada del top3 lleva `avatarUrl` (firmada o null) aunque la base haya omitido el null (jsonb_strip_nulls)
+        // la ruta nunca sale; cada entrada del top3 lleva `avatarUrl` (firmada o null) y `avatarId` (FA53) aunque la base haya omitido el null (jsonb_strip_nulls)
         return withTop3AvatarUrl(rewriteAvatarPaths(raw, avatarSigner))
     }
 
@@ -80,7 +80,8 @@ internal class RankingService(
         val top3 = obj["top3"] as? JsonArray ?: return view
         val items = top3.map { item ->
             val entry = item as? JsonObject ?: return@map item
-            if (entry.containsKey("avatarUrl")) entry else JsonObject(entry + ("avatarUrl" to JsonNull))
+            // FA53: `avatarId` tambien explicito (null) aunque la base lo haya omitido
+            JsonObject(entry + listOf("avatarUrl", "avatarId").filterNot(entry::containsKey).associateWith { JsonNull })
         }
         return JsonObject(obj + ("top3" to JsonArray(items)))
     }
