@@ -85,6 +85,7 @@ class AdminMarketTest {
         precioTickets = precioTickets,
         precioCentimos = precioCentimos,
         activo = activo,
+        multiplicador = 2.0,
     )
 
     @Test

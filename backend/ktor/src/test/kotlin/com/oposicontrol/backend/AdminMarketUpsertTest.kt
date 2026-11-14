@@ -105,10 +105,14 @@ class AdminMarketUpsertTest {
             "SERVICE_USES_OUT_OF_RANGE" to ok.copy(usos = 0),
             "SERVICE_DURATION_OUT_OF_RANGE" to ok.copy(duracionHoras = 9000),
             "SERVICE_MULTIPLIER_OUT_OF_RANGE" to ok.copy(multiplicador = 0.5),
+            "SERVICE_MULTIPLIER_PRECISION" to ok.copy(multiplicador = 2.125),
+            "SERVICE_MULTIPLIER_REQUIRED" to ok.copy(multiplicador = null),
         ).forEach { (code, dto) ->
             assertEquals(code, assertFailsWith<BackendDomainException> { gateway(sent).upsertService(dto) }.errorCode, code)
         }
-        ok.copy(multiplicador = null).validated() // the panel asks for it; the server keeps accepting older saves (x1 in the reto)
+        ok.copy(multiplicador = null, activo = false).validated() // an inactive potenciador can be prepared without it
+        ok.copy(multiplicador = 2.25).validated() // two decimals are fine
+        ok.copy(tipoServicio = "protector_racha", multiplicador = null).validated() // only the potenciador needs it
         assertTrue(sent.isEmpty(), "nothing of this leaves the server")
     }
 

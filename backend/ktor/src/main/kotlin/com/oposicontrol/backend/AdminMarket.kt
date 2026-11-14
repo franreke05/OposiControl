@@ -170,8 +170,14 @@ internal fun AdminServiceDto.validated(): AdminServiceDto {
     if (multiplicador != null && (multiplicador.isNaN() || multiplicador < 1.0 || multiplicador > 10.0)) {
         reject("SERVICE_MULTIPLIER_OUT_OF_RANGE", "El multiplicador va de 1 a 10.")
     }
-    // Un potenciador sin multiplicador vale x1 en el reto (la base aplica coalesce a 1). El panel lo avisa y lo pide antes
-    // de guardar; aqui no se exige para no romper los guardados que ya existian (AdminMarketTest).
+    // Como mucho dos decimales (el panel admite p. ej. 2,5 o 2,25): el reto aplica floor(base x m), un factor con mas decimales no se puede leer en el panel.
+    if (multiplicador != null && kotlin.math.abs(multiplicador * 100 - kotlin.math.round(multiplicador * 100)) > 1e-6) {
+        reject("SERVICE_MULTIPLIER_PRECISION", "El multiplicador admite como mucho dos decimales.")
+    }
+    // Un potenciador ACTIVO sin multiplicador cobraria OT por un x1 en el reto (la base aplica coalesce a 1): se rechaza. Inactivo se puede preparar sin el.
+    if (activo && tipoServicio.trim() == "potenciador" && multiplicador == null) {
+        reject("SERVICE_MULTIPLIER_REQUIRED", "Un potenciador activo necesita multiplicador.")
+    }
     return copy(codigo = codigo.trim(), nombre = nombre.trim(), tipoServicio = tipoServicio.trim(), seccion = section)
 }
 

@@ -196,7 +196,7 @@ internal object ServiceSpec : MarketEditorSpec<MarketService, ServiceDraft> {
             return "La duración va de 1 a $MAX_SERVICE_HOURS horas."
         }
         if (draft.multiplier.isNotBlank() && parseMultiplier(draft.multiplier) == null) return "El multiplicador va de 1 a 10, por ejemplo 2 o 2,5."
-        // Un potenciador activo sin multiplicador cobraría por un x1 (el servidor lo rechaza igual).
+        // Un potenciador activo sin multiplicador cobraría por un x1. El servidor también lo rechaza (SERVICE_MULTIPLIER_REQUIRED), igual que más de dos decimales.
         if (draft.active && draft.type == "potenciador" && draft.multiplier.isBlank()) return "Un potenciador activo necesita multiplicador."
         return null
     }
