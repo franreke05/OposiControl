@@ -117,6 +117,9 @@ class OpenApiContractTest {
         "D2-12" to "GET /api/v1/app/intentos/{attemptId}/resultado",
         "D2-65" to "GET /api/v1/app/intentos/{attemptId}/revision",
         "D2-66" to "GET /api/v1/app/intentos/{attemptId}/recursos/{recursoId}",
+        // FA47 (OposiQuizzes rapidos, 2026-11-09).
+        "D2-67" to "GET /api/v1/app/practicas/disponibilidad",
+        "D2-68" to "POST /api/v1/app/practicas",
         // FA11: noticias admin (D4-01..D4-11) y lecturas de wallet (D6-01, D6-02), TARGET.
         "D4-01" to "GET /api/v1/admin/noticias",
         "D4-02" to "GET /api/v1/admin/noticias/{noticiaId}",
@@ -210,7 +213,7 @@ class OpenApiContractTest {
     )
 
     /** Contratos con `Idempotency-Key!` (REQUIRED) o `Idempotency-Key?` (OPTIONAL). */
-    private val idempotencyRequired = setOf("D1-18", "D2-22", "D2-38", "D2-57", "D2-58", "D2-62", "D2-03", "D2-09", "D4-03", "D4-09", "D6-03", "D6-12")
+    private val idempotencyRequired = setOf("D1-18", "D2-22", "D2-38", "D2-57", "D2-58", "D2-62", "D2-03", "D2-09", "D2-68", "D4-03", "D4-09", "D6-03", "D6-12")
     private val idempotencyOptional = setOf("D2-06", "D2-10", "D6-14", "D5-15", "D5-06", "D5-07")
 
     /** contractId -> (max, default) del limit de las listas paginadas. */

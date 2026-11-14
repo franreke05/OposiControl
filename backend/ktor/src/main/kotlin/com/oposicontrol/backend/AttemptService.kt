@@ -46,6 +46,15 @@ import java.time.OffsetDateTime
 @CanonicalCommand
 internal data class AttemptStartRequest(val modo: String? = null)
 
+/** D2-68 (FA47): tamano de la practica (5 | 10 | 20). FA47b: `examenIds` opcional = solo de esos examenes (1..50 distintos, cada uno accesible). */
+@Serializable
+@CanonicalCommand
+internal data class QuickQuizStartRequest(val numPreguntas: Int, val examenIds: List<String>? = null)
+
+/** D2-67 (FA47). FA47b: `examenesAdquiridos` = examenes distintos de D2-13 `vista=ADQUIRIDOS` (el cliente muestra "Generar examen" con 3 o mas). */
+@Serializable
+internal data class QuickQuizAvailability(val preguntas: Int, val tamanos: List<Int>, val examenesAdquiridos: Int)
+
 /** D2-09. `opcionSeleccionadaId` ausente o `null` = saltar. Nada de lo que decide el servidor viaja aqui. */
 @Serializable
 @CanonicalCommand
@@ -412,6 +421,57 @@ internal class AttemptService(
         StartedAttempt(AttemptStartResponse(intento = row.toDto(now, openUnanswered = null), reanudado = !created), created)
     }
 
+    // ----- D2-67 / D2-68 (FA47, OposiQuizzes rapidos) -----
+    /** Cuantas preguntas puede sortear una practica ahora (0 = nada que practicar: el cliente invita al Market). La politica de acceso vive en la base (`private.practica_pool`). */
+    suspend fun practiceAvailability(userId: CanonicalUserId): QuickQuizAvailability = withUpstreamIo {
+        val row = gateway.practiceAvailability(userId.value)
+        QuickQuizAvailability(
+            preguntas = row.preguntas.coerceIn(0, AttemptGateway.MAX_ATTEMPT_QUESTIONS),
+            tamanos = QUICK_QUIZ_SIZES.toList(),
+            examenesAdquiridos = row.examenesAdquiridos,
+        )
+    }
+
+    /**
+     * Una practica NUEVA de [QuickQuizStartRequest.numPreguntas] preguntas al azar de los examenes que el usuario puede abrir. Es un intento normal (origen QUICK_QUIZ,
+     * sin examen): las respuestas, el cierre, el resultado y la revision van por D2-07..D2-12 / D2-65. Nunca cuenta (es_demo en la base). Siempre 201: generar es crear.
+     */
+    suspend fun startPractice(userId: CanonicalUserId, request: QuickQuizStartRequest): StartedAttempt = withUpstreamIo {
+        val examIds = validatePractice(request)
+        val now = clock()
+        val uid = userId.value
+        val outcome = gateway.startPractice(uid, request.numPreguntas, examIds)
+        when (outcome.outcome) {
+            "CREATED" -> Unit
+            "PRACTICE_EMPTY" -> throw CanonicalErrorCode.EXAM_EMPTY.exception(PRACTICE_EMPTY_MESSAGE)
+            "PRACTICE_LIMIT" -> throw CanonicalErrorCode.RATE_LIMITED.exception(retryAfterSeconds = 3_600)
+            "INVALID_SIZE" -> throw validationError(ErrorIssue("numPreguntas", CanonicalIssue.INVALID_FORMAT))
+            "INVALID_EXAMS" -> throw validationError(ErrorIssue("examenIds", CanonicalIssue.INVALID_FORMAT))
+            // FA47b: algun examen elegido no existe, no esta publicado, es de otra especialidad o el usuario no puede abrirlo (indistinguibles a proposito).
+            "EXAM_NOT_ACCESSIBLE" -> throw CanonicalErrorCode.PRACTICE_EXAM_NOT_ACCESSIBLE.exception()
+            else -> throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+        }
+        val attemptId = outcome.intentoId?.takeIf { it.isUuid() } ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+        val row = gateway.attempt(uid, attemptId)?.takeIf { it.esPractica } ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+        StartedAttempt(AttemptStartResponse(intento = row.toDto(now, openUnanswered = null), reanudado = false), created = true)
+    }
+
+    /** D2-68: tamano y, FA47b, la forma de `examenIds` (1..50 uuids distintos) ANTES de tocar la base. El acceso a cada examen lo decide la base. */
+    private fun validatePractice(request: QuickQuizStartRequest): List<String>? {
+        val issues = buildList {
+            if (request.numPreguntas !in QUICK_QUIZ_SIZES) add(ErrorIssue("numPreguntas", CanonicalIssue.INVALID_FORMAT))
+            val ids = request.examenIds
+            when {
+                ids == null -> Unit
+                ids.isEmpty() || ids.size > QUICK_QUIZ_MAX_EXAMS -> add(ErrorIssue("examenIds", CanonicalIssue.OUT_OF_RANGE))
+                ids.any { !it.isUuid() } -> add(ErrorIssue("examenIds", CanonicalIssue.INVALID_FORMAT))
+                ids.map { it.lowercase() }.toSet().size != ids.size -> add(ErrorIssue("examenIds", ISSUE_DUPLICATE))
+            }
+        }
+        if (issues.isNotEmpty()) throw validationError(*issues.toTypedArray())
+        return request.examenIds?.map { it.lowercase() }
+    }
+
     // ----- D2-07 -----
     suspend fun get(userId: CanonicalUserId, attemptId: String): AttemptView = withUpstreamIo {
         val now = clock()
@@ -600,7 +660,7 @@ internal class AttemptService(
                 id = row.id,
                 examenId = row.examenId,
                 especialidadId = row.especialidadSnapshotId,
-                origen = ORIGIN_EXAM,
+                origen = row.origin(),
                 tipoExamen = row.kind().wire,
                 estado = FINISHED,
                 motivoFin = row.endReason(),
@@ -652,7 +712,7 @@ internal class AttemptService(
                 examenId = row.examenId,
                 especialidadId = row.especialidadSnapshotId,
                 modo = row.kind().wire,
-                esDemo = row.esDemo.takeIf { it },
+                esDemo = (row.esDemo && !row.esPractica).takeIf { it },
                 nota = nota?.let { kotlinx.serialization.json.JsonPrimitive(it.toDouble()) } ?: kotlinx.serialization.json.JsonNull,
                 calificacion = nota?.let { bandOf(it) } ?: BAND_NO_EVALUABLES,
                 duracionSegundos = row.durationSeconds(),
@@ -818,7 +878,7 @@ internal class AttemptService(
         val finished = estado == FINISHED
         return AttemptDto(
             id = id,
-            origen = ORIGIN_EXAM,
+            origen = origin(),
             examenId = examenId,
             especialidadId = especialidadSnapshotId,
             tipoExamen = kind().wire,
@@ -837,10 +897,12 @@ internal class AttemptService(
                 openUnanswered != null -> openUnanswered
                 else -> totalPreguntas - totalRespondidas
             }.coerceAtLeast(0),
-            esDemo = esDemo.takeIf { it },
+            esDemo = (esDemo && !esPractica).takeIf { it },
             ultimaPreguntaPosicion = ultimaPreguntaPosicion?.takeIf { it >= 1 },
         )
     }
+
+    private fun AttemptRow.origin(): String = if (esPractica) ORIGIN_QUICK_QUIZ else ORIGIN_EXAM
 
     private fun AttemptRow.kind(): ExamKind =
         ExamKind.fromWireOrNull(tipoExamenSnapshot) ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
@@ -925,6 +987,15 @@ internal class AttemptService(
 
         private const val FINISHED = "finalizado"
         private const val ORIGIN_EXAM = "EXAM"
+        /** FA47: intento de practica (OposiQuizzes rapidos, D2-68). */
+        private const val ORIGIN_QUICK_QUIZ = "QUICK_QUIZ"
+
+        /** FA47: tamanos de la practica que acepta D2-68 (los chips de Home). */
+        internal val QUICK_QUIZ_SIZES = setOf(5, 10, 20)
+        /** FA47b: como mucho 50 examenes elegidos en D2-68. */
+        internal const val QUICK_QUIZ_MAX_EXAMS = 50
+        private const val ISSUE_DUPLICATE = "DUPLICATE"
+        private const val PRACTICE_EMPTY_MESSAGE = "No hay preguntas de tus examenes para practicar."
         private const val END_USER = "USER"
         private const val STATUS_ANNULLED = "ANNULLED"
         private const val STATUS_UNUSED_RESERVE = "RESERVA_NO_UTILIZADA"

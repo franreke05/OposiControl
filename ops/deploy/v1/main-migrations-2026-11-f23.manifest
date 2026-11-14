@@ -1,0 +1,7 @@
+# F23 OposiQuizzes rapidos (f23/quick-quiz, decision del propietario 2026-11-09): migracion que se aplica a MAIN DESPUES de F20 (20261109100000).
+# Acta y anexo al runbook: docs/ledger/2026/11/2026-11-09-f23-practica.md. Uso con el script de siempre:
+#   MANIFEST=ops/deploy/v1/main-migrations-2026-11-f23.manifest bash ops/deploy/v1/apply-main-migration.sh supabase/migrations/20261109100100_v1_practica.sql
+# version  blob(git hash-object, 12)  predecesora(debe estar en supabase_migrations antes de aplicar)  clase
+# Cadena: ventana 2026-11 (ops/deploy/v1/main-migrations-2026-11.manifest) -> F20 20261109100000 (main-migrations-2026-11-f20.manifest) -> F23.
+# Si cambia el blob, se rehacen este manifiesto y el ensayo (docs/ledger/2026/11/rehearse-f23-2026-11.sh).
+20261109100100 cce505461dbd 20261109100000 apply

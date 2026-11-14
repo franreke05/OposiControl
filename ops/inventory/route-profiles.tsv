@@ -147,6 +147,7 @@ GET	/api/v1/app/opositester/me	BOT	user-jwt	Consumer app API: opositester/me (D5
 GET	/api/v1/app/payments/orders/{}	BOT	user-jwt	Consumer economy: payment order status (D6-13)	OposiBot
 GET	/api/v1/app/plan/catalogo	BOT	user-jwt	Consumer plan: catalog with coverage, daily limit and tariffs as data (D7-33)	OposiBot
 GET	/api/v1/app/plan/cupo	BOT	user-jwt	Consumer plan: immersive quota summary (D7-31)	OposiBot
+GET	/api/v1/app/practicas/disponibilidad	BOT	user-jwt	Consumer practice: questions and acquired exams for a quick practice test (D2-67, FA47/FA47b)	OposiBot
 GET	/api/v1/app/racha	BOT	user-jwt	Consumer challenge: current and best streak (D3-04)	OposiBot
 GET	/api/v1/app/estadisticas/resumen	BOT	user-jwt	Consumer stats: nota media, evolution, streak, league, totals (D3-20)	OposiBot
 GET	/api/v1/app/estadisticas/debilidades	BOT	user-jwt	Consumer stats: weak tags, aggregated or per exam (D3-21)	OposiBot
@@ -268,6 +269,7 @@ POST	/api/v1/app/me/legal-acceptances	AUTH	user-jwt	Canonical profile/account: P
 POST	/api/v1/app/me/onboarding	AUTH	user-jwt	Canonical profile/account: POST me/onboarding	OposiBot
 POST	/api/v1/app/payments/orders	BOT	user-jwt	Consumer economy: create payment order (D6-12)	OposiBot
 POST	/api/v1/app/payments/orders/{}/verify	BOT	user-jwt	Consumer economy: confirm payment with receipt (D6-14)	OposiBot
+POST	/api/v1/app/practicas	BOT	user-jwt	Consumer practice: start a quick practice test, optionally from chosen exams (D2-68, FA47/FA47b)	OposiBot
 POST	/api/v1/app/wallet/canjes	BOT	user-jwt	Consumer economy: redeem exam with OposiTickets (D6-03)	OposiBot
 POST	/api/v1/app/retos/{}/reclamar	BOT	user-jwt	Consumer challenge: claim the frozen reward (D3-18)	OposiBot
 POST	/api/v1/webhooks/payments/{}	BOT	none	Payment provider notification (W-01); authenticated by provider signature, not JWT	none

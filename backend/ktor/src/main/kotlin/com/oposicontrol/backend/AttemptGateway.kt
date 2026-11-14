@@ -76,6 +76,8 @@ internal data class AttemptRow(
     @SerialName("especialidad_snapshot_id") val especialidadSnapshotId: String? = null,
     @SerialName("ultima_pregunta_posicion") val ultimaPreguntaPosicion: Int? = null,
     @SerialName("es_demo") val esDemo: Boolean = false,
+    /** FA47: intento de practica (OposiQuizzes rapidos): sin examen, siempre `es_demo` en la base (nunca cuenta). */
+    @SerialName("es_practica") val esPractica: Boolean = false,
     /** FA31: la regla de anuladas congelada al EMPEZAR; `null` = intento anterior (regla viva M10, nota con la formula DEC-013). */
     @SerialName("regla_anuladas") val reglaAnuladas: String? = null,
     @SerialName("penalizacion_num") val penalizacionNum: Int? = null,
@@ -244,6 +246,9 @@ internal data class AttemptCommandOutcome(
     @SerialName("retry_after_seconds") val retryAfterSeconds: Int? = null,
 )
 
+/** FA47 / FA47b: lo que devuelve `app_practice_availability`. */
+internal data class PracticeAvailabilityRow(val preguntas: Int, val examenesAdquiridos: Int)
+
 internal class AttemptGateway(
     private val upstream: AttemptUpstream,
     private val json: Json = Json { ignoreUnknownKeys = true },
@@ -272,6 +277,37 @@ internal class AttemptGateway(
                 buildJsonObject { put("p_usuario_id", userId); put("p_examen_id", examId); put("p_modo", if (demo) "DEMO" else "NORMAL") }.toString(),
             ),
         )
+    }
+
+    /**
+     * FA47 D2-68: practica nueva de [size] preguntas (`app_start_practice_attempt`, 20261109100100). FA47b (20261114200100): con [examIds] solo de esos examenes
+     * (ya validados: 1..50 uuids distintos); sin ellos no se envia `p_examen_ids` (mismo comportamiento que antes).
+     */
+    fun startPractice(userId: String, size: Int, examIds: List<String>? = null): AttemptCommandOutcome {
+        require(userId.isUuid() && (examIds == null || examIds.all { it.isUuid() })) { "ids" }
+        val body = buildJsonObject {
+            put("p_usuario_id", userId)
+            put("p_preguntas", size)
+            if (examIds != null) put("p_examen_ids", kotlinx.serialization.json.buildJsonArray { examIds.forEach { add(JsonPrimitive(it)) } })
+        }
+        return decodeOutcome(upstream.rpc("app_start_practice_attempt", body.toString()))
+    }
+
+    /**
+     * FA47 D2-67: preguntas que una practica puede sortear ahora (`app_practice_availability`, acotado a 200 en la base) y, FA47b (20261114200100), cuantos examenes
+     * distintos tiene adquiridos el usuario (el conjunto de D2-13 `vista=ADQUIRIDOS`).
+     */
+    fun practiceAvailability(userId: String): PracticeAvailabilityRow {
+        require(userId.isUuid()) { "ids" }
+        val element = json.parseToJsonElement(upstream.rpc("app_practice_availability", buildJsonObject { put("p_usuario_id", userId) }.toString()))
+        val row = when (element) {
+            is JsonObject -> element
+            is JsonArray -> element.singleOrNull() as? JsonObject
+            else -> null
+        } ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+        fun count(key: String) = (row[key] as? JsonPrimitive)?.takeIf { !it.isString }?.content?.toIntOrNull()?.takeIf { it >= 0 }
+            ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+        return PracticeAvailabilityRow(preguntas = count("preguntas"), examenesAdquiridos = count("examenes_adquiridos"))
     }
 
     /** Limitador diario (C-L1): registra las preguntas que una pagina va a revelar; `DAILY_LIMIT_REACHED` si la ventana no da. */
@@ -542,7 +578,7 @@ internal class AttemptGateway(
 
         internal const val ATTEMPT_COLUMNS =
             "id,examen_id,estado,motivo_fin,iniciado_en,finalizado_en,duracion_segundos,total_preguntas,total_respondidas," +
-                "total_correctas,total_falladas,total_sin_responder,tipo_examen_snapshot,especialidad_snapshot_id,ultima_pregunta_posicion,es_demo," +
+                "total_correctas,total_falladas,total_sin_responder,tipo_examen_snapshot,especialidad_snapshot_id,ultima_pregunta_posicion,es_demo,es_practica," +
                 "regla_anuladas,penalizacion_num,penalizacion_den,penalizacion_racional,penalizacion_descuento,nota,total_evaluables,total_anuladas,reservas_usadas,anuladas_sin_reserva"
 
         /** Contenido de pregunta que ve el opositor DURANTE el intento. Sin soluciones (SEC-004). */

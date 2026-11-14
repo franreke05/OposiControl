@@ -12,6 +12,17 @@
 - Migracion PENDIENTE `20261111100000_v1_demo_aleatoria` (tabla `private.demo_set_fijo`, `private.demo_set_fijar`, tres triggers diferidos y `private.demo_preguntas_efectivas` que lee los fijados y completa por el orden `md5(examen_id || pregunta_id)`). Manifiesto `ops/deploy/v1/main-migrations-2026-11-f14b.manifest`; ensayo `docs/ledger/2026/11/rehearse-f14b-2026-11.sh`; acta `docs/ledger/2026/11/2026-11-11-f14b-demo-aleatoria.md`. Sin imagen nueva.
 - Contrato: FA48 solo texto (`attempts.yaml`), forma intacta; registro CONTRACT_FREEZE.md (repo OposiBot) PENDING_OWNER. Cliente sin cambios.
 
+## Generar examen: practica de los examenes elegidos (F23b, FA47b) — 2026-11-14 (rama local `f23/quick-quiz`, sin push) — `CURRENT_IMPLEMENTATION`, NO aplicada a MAIN
+
+- D2-68 acepta `examenIds` opcional (1..50, cada uno en el alcance de la practica; fuera = 422 `PRACTICE_EXAM_NOT_ACCESSIBLE`); D2-67 devuelve `examenesAdquiridos` (conjunto de D2-13 `vista=ADQUIRIDOS`; el cliente ensena "Generar examen" con >= 3). Marcado `es_demo` / `es_practica` sin cambios.
+- Migracion PENDIENTE `20261114200100_v1_practica_examenes` (predecesora F23). Manifiesto `ops/deploy/v1/main-migrations-2026-11-f23b.manifest`; ensayo `docs/ledger/2026/11/rehearse-f23b-2026-11.sh`; acta `docs/ledger/2026/11/2026-11-14-f23b-practica-examenes.md`. Misma imagen nueva que F23, ORDEN migracion -> imagen.
+
+## OposiQuizzes rapidos / practica (F23) — 2026-11-09 (rama local `f23/quick-quiz` desde develop `08ea7f0f`, sin push) — `CURRENT_IMPLEMENTATION`, NO aplicada a MAIN
+
+- Decision del propietario 2026-11-09: test aleatorio de 5 / 10 / 20 preguntas SOLO de los examenes que el usuario puede abrir (FREE / GRANTED / SUBSCRIPTION) de su especialidad; sin acceso, Home invita al Market. Solo practica: corregida y con resultado, nunca ranking, liga, racha, estadisticas, OT, referido ni Mis examenes.
+- Diseno: reutiliza el intento de examen. Fila de `intentos_examen` con `es_practica` (nueva), `examen_id` NULL y `es_demo` (todas las exclusiones del demo aplican sin tocar sus funciones). Respuestas, cierre, resultado y revision por las rutas de siempre (D2-07..D2-12, D2-65); nuevas D2-67 `GET /api/v1/app/practicas/disponibilidad` y D2-68 `POST /api/v1/app/practicas` (FA47, `origen` QUICK_QUIZ ya existia en el contrato).
+- Migracion PENDIENTE `20261109100100_v1_practica` (predecesora F20). Manifiesto `ops/deploy/v1/main-migrations-2026-11-f23.manifest`; ensayo `docs/ledger/2026/11/rehearse-f23-2026-11.sh`; acta `docs/ledger/2026/11/2026-11-09-f23-practica.md`. NECESITA imagen nueva y ORDEN migracion -> imagen (el Ktor nuevo lee `es_practica` en toda lectura de intento).
+
 ## Reto diario por tipo de examen (F20) — 2026-11-09 (rama local `f20/reto-per-type` desde develop `920fa29b`, sin push) — `CURRENT_IMPLEMENTATION`, NO aplicada a MAIN
 
 - Decision del propietario 2026-11-09: el reto toma UNA pregunta de examenes inmersivos, UNA de razonados y UNA de rafaga, de los examenes PUBLICADOS de la especialidad del usuario; un tipo sin preguntas se salta (reto de 1 a 3). Antes exigia los tres huecos (y la inmersiva con marca demo): en produccion, solo rafaga, el reto salia `NO_DISPONIBLE` para todos.
