@@ -918,6 +918,32 @@ components:
           type: [integer, 'null']
         activo:
           type: boolean
+        visible:
+          type: boolean
+          description: 'FA52 (F28, migration 20261114400000): false = never sold in the app even when activo. Optional; absent on a write keeps the stored value (default true on a new row).'
+        posicion:
+          type: integer
+          minimum: 0
+          description: 'FA52: order inside its section, ascending. Optional; absent on a write keeps the stored value (default 0 on a new row).'
+        seccion:
+          type: [string, 'null']
+          enum: [OPOSITICKETS, POTENCIADORES, SERVICIOS, null]
+          description: 'FA52: Market section (owner decision 2026-11-14: at most three). null on a write = derived from tipo_servicio by the database (the protectors, potenciador, doble/triple oportunidad and carta_ccaa_comodin go to POTENCIADORES, the rest to SERVICIOS).'
+        usos:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 100
+          description: 'FA52: uses granted by ONE purchase (null = one use).'
+        duracion_horas:
+          type: [integer, 'null']
+          minimum: 1
+          maximum: 8760
+          description: 'FA52: lifetime of one activation from the purchase (null = no expiry).'
+        multiplicador:
+          type: [number, 'null']
+          minimum: 1
+          maximum: 10
+          description: 'FA52: potenciador factor on the daily-challenge base reward (required for an active potenciador).'
     Promocion:
       type: object
       required: [id, codigo, nombre, tipo_descuento, valor, activo, usos]

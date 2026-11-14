@@ -8888,7 +8888,8 @@ class AdminV1Gateway private constructor(
         val saved = request(
             "POST",
             "/rest/v1/servicios",
-            marketUpsertBody(row, "descripcion", "precio_tickets", "precio_centimos"),
+            // F28: seccion vaciada = null explicito (la base la deriva del tipo); usos/duracion/multiplicador vaciados se borran de verdad.
+            marketUpsertBody(row, "descripcion", "precio_tickets", "precio_centimos", "seccion", "usos", "duracion_horas", "multiplicador"),
             prefer = "resolution=merge-duplicates,return=representation",
         ).decodeList<AdminServiceDto>().firstOrNull() ?: error("El servicio no se pudo guardar.")
         registrarAuditoria("servicio_market_guardado", "servicios", row.id)

@@ -112,7 +112,45 @@ data class ServiceDraft(
     val priceTickets: String = "",
     val price: String = "",
     val active: Boolean = true,
+    // F28 (FA52): escaparate de la app y efecto del consumible.
+    val visible: Boolean = true,
+    val position: String = "0",
+    /** "" = según el tipo (la base la deriva). */
+    val section: String = "",
+    val uses: String = "",
+    val durationHours: String = "",
+    val multiplier: String = "",
 )
+
+/** CHECK `servicios_seccion_check` (F28): las tres secciones del Market que decidió el propietario. */
+internal val SERVICE_SECTIONS: List<String> = listOf("OPOSITICKETS", "POTENCIADORES", "SERVICIOS")
+
+internal fun serviceSectionLabel(section: String?): String = when (section) {
+    "OPOSITICKETS" -> "OposiTickets"
+    "POTENCIADORES" -> "Potenciadores y protecciones"
+    "SERVICIOS" -> "Servicios y accesos"
+    null, "" -> "Según el tipo"
+    else -> section
+}
+
+/** La sección que la base pone a un tipo cuando no se elige ninguna (`private.servicio_seccion_por_tipo`). */
+internal fun serviceSectionForType(type: String): String = when (type) {
+    "protector_racha", "protector_tickets", "protector_dual", "potenciador", "doble_oportunidad", "triple_oportunidad", "carta_ccaa_comodin" -> "POTENCIADORES"
+    else -> "SERVICIOS"
+}
+
+/** Lo que hace cada tipo en la app 1.3 (F28), dicho para quien lo configura. `null` = no tiene efecto todavía. */
+internal fun serviceEffectText(type: String): String? = when (type) {
+    "protector_racha" -> "Si el usuario falla el reto diario con racha activa, la racha cuenta igual (ese día no cobra). Se gasta solo."
+    "protector_tickets" -> "Si el usuario falla el reto diario, cobra igualmente la recompensa del día; la racha se rompe. Se gasta solo."
+    "protector_dual" -> "Si el usuario falla el reto diario, conserva la racha y cobra la recompensa. Se gasta solo."
+    "potenciador" -> "Multiplica la recompensa base del siguiente reto diario superado (el bonus de racha no). Un uso por reto."
+    "doble_oportunidad", "triple_oportunidad" -> "Tras fallar una pregunta del reto diario, deja responderla otra vez antes de ver la solución. Cada uso, una repetición."
+    else -> null
+}
+
+private const val MAX_SERVICE_USES = 100
+private const val MAX_SERVICE_HOURS = 8760
 
 internal object ServiceSpec : MarketEditorSpec<MarketService, ServiceDraft> {
     override val emptyDraft = ServiceDraft()
@@ -127,6 +165,12 @@ internal object ServiceSpec : MarketEditorSpec<MarketService, ServiceDraft> {
         priceTickets = item.priceTickets?.toString().orEmpty(),
         price = item.priceCents?.let(::centsToInput).orEmpty(),
         active = item.active,
+        visible = item.visible,
+        position = item.position.toString(),
+        section = item.section.orEmpty(),
+        uses = item.uses?.toString().orEmpty(),
+        durationHours = item.durationHours?.toString().orEmpty(),
+        multiplier = item.multiplier?.let(::multiplierToInput).orEmpty(),
     )
 
     override fun problem(draft: ServiceDraft, isNew: Boolean, others: List<MarketService>): String? {
@@ -143,6 +187,17 @@ internal object ServiceSpec : MarketEditorSpec<MarketService, ServiceDraft> {
         if (draft.active && draft.priceTickets.isBlank() && draft.price.isBlank()) {
             return "Un servicio activo necesita precio en OposiTickets o en dinero; si no, no se puede adquirir."
         }
+        if (parseNonNegativeInt(draft.position) == null) return "La posición debe ser un número entero no negativo."
+        if (draft.section.isNotBlank() && draft.section !in SERVICE_SECTIONS) return "Elige una de las tres secciones."
+        if (draft.uses.isNotBlank() && parseNonNegativeInt(draft.uses)?.takeIf { it in 1..MAX_SERVICE_USES } == null) {
+            return "Los usos por compra van de 1 a $MAX_SERVICE_USES."
+        }
+        if (draft.durationHours.isNotBlank() && parseNonNegativeInt(draft.durationHours)?.takeIf { it in 1..MAX_SERVICE_HOURS } == null) {
+            return "La duración va de 1 a $MAX_SERVICE_HOURS horas."
+        }
+        if (draft.multiplier.isNotBlank() && parseMultiplier(draft.multiplier) == null) return "El multiplicador va de 1 a 10, por ejemplo 2 o 2,5."
+        // Un potenciador activo sin multiplicador cobraría por un x1 (el servidor lo rechaza igual).
+        if (draft.active && draft.type == "potenciador" && draft.multiplier.isBlank()) return "Un potenciador activo necesita multiplicador."
         return null
     }
 
@@ -155,6 +210,12 @@ internal object ServiceSpec : MarketEditorSpec<MarketService, ServiceDraft> {
         priceTickets = if (draft.priceTickets.isBlank()) null else parseNonNegativeInt(draft.priceTickets) ?: return null,
         priceCents = if (draft.price.isBlank()) null else parsePriceToCents(draft.price) ?: return null,
         active = draft.active,
+        visible = draft.visible,
+        position = parseNonNegativeInt(draft.position) ?: return null,
+        section = draft.section.takeIf { it in SERVICE_SECTIONS },
+        uses = if (draft.uses.isBlank()) null else parseNonNegativeInt(draft.uses)?.takeIf { it in 1..MAX_SERVICE_USES } ?: return null,
+        durationHours = if (draft.durationHours.isBlank()) null else parseNonNegativeInt(draft.durationHours)?.takeIf { it in 1..MAX_SERVICE_HOURS } ?: return null,
+        multiplier = if (draft.multiplier.isBlank()) null else parseMultiplier(draft.multiplier) ?: return null,
     )
 
     override fun matches(item: MarketService, query: String, filter: String?) =
@@ -164,8 +225,22 @@ internal object ServiceSpec : MarketEditorSpec<MarketService, ServiceDraft> {
         "la descripción".takeIf { sent.description == null && saved.description != null },
         "el precio en OposiTickets".takeIf { sent.priceTickets == null && saved.priceTickets != null },
         "el precio en dinero".takeIf { sent.priceCents == null && saved.priceCents != null },
+        "los usos".takeIf { sent.uses == null && saved.uses != null },
+        "la duración".takeIf { sent.durationHours == null && saved.durationHours != null },
+        "el multiplicador".takeIf { sent.multiplier == null && saved.multiplier != null },
     )
 }
+
+/** Multiplicador 1..10 con coma o punto y como mucho dos decimales (`numeric(4,2)` en la base). */
+internal fun parseMultiplier(text: String): Double? {
+    val t = text.trim().replace(',', '.')
+    if (t.isEmpty() || t.length > 5 || !t.all { it.isDigit() || it == '.' } || t.count { it == '.' } > 1) return null
+    if (t.substringAfter('.', "").length > 2) return null
+    return t.toDoubleOrNull()?.takeIf { it in 1.0..10.0 }
+}
+
+internal fun multiplierToInput(value: Double): String =
+    if (value == kotlin.math.floor(value)) value.toLong().toString() else value.toString().replace('.', ',')
 
 /** Precio de un servicio dicho en una línea: en OT, en dinero, en ambos o ninguno. */
 internal fun servicePriceLabel(service: MarketService): String = listOfNotNull(
@@ -174,12 +249,16 @@ internal fun servicePriceLabel(service: MarketService): String = listOfNotNull(
 ).joinToString(" · ").ifEmpty { "Sin precio" }
 
 internal fun serviceRowSpec(service: MarketService): CatalogRowSpec {
-    val status = commerceStatus(service.active)
+    val status = commerceStatus(service.active, visible = service.visible)
     return CatalogRowSpec(
         key = service.id,
         title = service.name.ifBlank { "Servicio sin nombre" },
         eyebrow = service.code,
-        meta = listOf(serviceTypeLabel(service.serviceType), servicePriceLabel(service)),
+        meta = listOfNotNull(
+            serviceTypeLabel(service.serviceType),
+            servicePriceLabel(service),
+            service.multiplier?.let { "x" + multiplierToInput(it) },
+        ),
         status = status.label,
         statusTone = status.tone,
     )
@@ -188,16 +267,21 @@ internal fun serviceRowSpec(service: MarketService): CatalogRowSpec {
 internal fun serviceFacts(service: MarketService?): List<WorkspaceFact> {
     if (service == null) return emptyList()
     return listOf(
-        WorkspaceFact("Estado", commerceStatus(service.active).label),
+        WorkspaceFact("Estado", commerceStatus(service.active, visible = service.visible).label),
         WorkspaceFact("Tipo", serviceTypeLabel(service.serviceType)),
+        WorkspaceFact("Sección", serviceSectionLabel(service.section ?: serviceSectionForType(service.serviceType))),
+        WorkspaceFact("Posición", service.position.toString()),
         WorkspaceFact("Precio en OT", service.priceTickets?.toString() ?: "No tiene"),
         WorkspaceFact("Precio", service.priceCents?.let { formatPriceCents(it, "EUR") } ?: "No tiene"),
-    )
+        WorkspaceFact("Usos por compra", service.uses?.toString() ?: "1"),
+        WorkspaceFact("Duración", service.durationHours?.let { "$it h" } ?: "No caduca"),
+    ) + listOfNotNull(service.multiplier?.let { WorkspaceFact("Multiplicador", "x" + multiplierToInput(it)) })
 }
 
 internal val serviceInformationLines: List<String> = listOf(
     "Un servicio puede cobrarse en OposiTickets, en dinero o de las dos formas. Activo sin ningún precio no se puede adquirir.",
-    "Lo que hace cada tipo (duración, multiplicador) no se configura aquí: es una decisión de producto pendiente.",
+    "En la app el Market tiene tres secciones como máximo: OposiTickets, Potenciadores y protecciones, y Servicios y accesos. Oculto = no se vende aunque esté activo.",
+    "En la app se compran con OposiTickets los protectores, potenciadores y oportunidades (y el modo papel y la carta CCAA, que en la 1.3 todavía no hacen nada). Premium, corrección, tutoría y contenido extra no se canjean con OposiTickets.",
 )
 
 // =====================================================================================================================

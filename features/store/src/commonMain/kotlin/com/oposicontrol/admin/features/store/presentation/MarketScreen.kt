@@ -256,12 +256,80 @@ private fun ServiceForm(draft: ServiceDraft, isNew: Boolean, update: (ServiceDra
             }
         }
     }
+    ServiceShowcaseSection(draft, update)
     ActiveSection(
         description = "Si el servicio se puede adquirir.",
         toggleDescription = "Un servicio inactivo no se puede adquirir.",
         active = draft.active,
         onChange = { update(draft.copy(active = it)) },
     )
+}
+
+/** F28 (FA52): dónde y en qué orden sale en el Market de la app, y lo que da una compra. */
+@Composable
+private fun ServiceShowcaseSection(draft: ServiceDraft, update: (ServiceDraft) -> Unit) {
+    FormSection(
+        title = "En la app",
+        description = "Sección, orden y lo que da una compra con OposiTickets.",
+        icon = AppIcon.VIEW,
+        iconRole = SemanticRole.INFO,
+    ) {
+        Column(verticalArrangement = Arrangement.spacedBy(Spacing.field)) {
+            GlassToggleRow(
+                title = "Visible en la app",
+                description = "Oculto = no se vende en el Market aunque esté activo.",
+                checked = draft.visible,
+                onCheckedChange = { update(draft.copy(visible = it)) },
+            )
+            DropdownField(
+                label = "Sección",
+                selectedLabel = if (draft.section.isBlank()) {
+                    "Según el tipo (" + serviceSectionLabel(serviceSectionForType(draft.type)) + ")"
+                } else {
+                    serviceSectionLabel(draft.section)
+                },
+                options = listOf<Pair<String?, String>>(null to "Según el tipo") + SERVICE_SECTIONS.map { it to serviceSectionLabel(it) },
+                onSelect = { update(draft.copy(section = it.orEmpty())) },
+                supportingText = "El Market de la app tiene como máximo estas tres secciones.",
+            )
+            LabeledField(
+                label = "Posición",
+                value = draft.position,
+                onValueChange = { update(draft.copy(position = it)) },
+                placeholder = "Ej. 10",
+                supportingText = "Orden dentro de la sección: el número más bajo sale primero.",
+            )
+            LabeledField(
+                label = "Usos por compra",
+                value = draft.uses,
+                onValueChange = { update(draft.copy(uses = it)) },
+                placeholder = "Ej. 1",
+                supportingText = "De 1 a 100. En blanco = un uso.",
+            )
+            LabeledField(
+                label = "Duración (horas)",
+                value = draft.durationHours,
+                onValueChange = { update(draft.copy(durationHours = it)) },
+                placeholder = "Ej. 24",
+                supportingText = "Desde la compra. En blanco = no caduca.",
+            )
+            LabeledField(
+                label = "Multiplicador",
+                value = draft.multiplier,
+                onValueChange = { update(draft.copy(multiplier = it)) },
+                placeholder = "Ej. 2",
+                supportingText = "Sólo potenciadores: multiplica la recompensa base del reto diario (de 1 a 10).",
+            )
+            val effect = serviceEffectText(draft.type)
+            if (draft.type.isNotBlank()) {
+                WorkspaceNotice(
+                    tone = if (effect != null) WorkspaceNoticeTone.INFO else WorkspaceNoticeTone.WARNING,
+                    title = if (effect != null) "Qué hace en la app" else "Sin efecto en la app",
+                    detail = effect ?: "Este tipo todavía no hace nada en la app 1.3.",
+                )
+            }
+        }
+    }
 }
 
 // =====================================================================================================================

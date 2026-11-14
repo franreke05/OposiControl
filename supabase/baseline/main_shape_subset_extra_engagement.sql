@@ -425,3 +425,74 @@ begin
   end if;
 end
 $users$;
+
+-- F28 (2026-11-14): public.servicios (Market services) and public.activaciones_servicio_usuario (per-user activations of a service). MAIN objects that no
+-- capture of the bootstrap carried until the consumables migrations (20261114400000..) built on them. Shapes, constraints, indexes, trigger, policies and
+-- ACLs from the read-only MAIN captures (ops/local-exam/main-wallet-shape.txt; docs/audit-v1/evidence/V1-DEPLOY-REHEARSAL/run-2026-10-22b/fingerprint_start.txt:
+-- rel ACL anon=rm, authenticated=rm, service_role=arwdDxtm; pol servicios_select_publico {anon,authenticated}, activaciones_select_propio {authenticated};
+-- trg_servicios_actualizado_en). Placed here because usado_en_reto_id references public.retos_diarios (created above). IDEMPOTENT; NOT a migration.
+create table if not exists public.servicios (
+  id uuid not null default gen_random_uuid(),
+  codigo text not null,
+  nombre text not null,
+  descripcion text,
+  tipo_servicio text not null,
+  precio_tickets integer,
+  precio_centimos integer,
+  activo boolean not null default true,
+  creado_en timestamp with time zone not null default now(),
+  actualizado_en timestamp with time zone not null default now(),
+  constraint servicios_pkey primary key (id),
+  constraint servicios_codigo_key unique (codigo),
+  constraint servicios_precio_centimos_check check (((precio_centimos is null) or (precio_centimos >= 0))),
+  constraint servicios_precio_tickets_check check (((precio_tickets is null) or (precio_tickets >= 0))),
+  constraint servicios_tipo_servicio_check check ((tipo_servicio = any (array['premium'::text, 'correccion'::text, 'tutoria'::text, 'contenido_extra'::text,
+    'protector_racha'::text, 'protector_tickets'::text, 'protector_dual'::text, 'potenciador'::text, 'doble_oportunidad'::text, 'triple_oportunidad'::text,
+    'modo_papel'::text, 'carta_ccaa_comodin'::text])))
+);
+create table if not exists public.activaciones_servicio_usuario (
+  id uuid not null default gen_random_uuid(),
+  usuario_id uuid not null,
+  servicio_id uuid not null,
+  compra_id uuid,
+  estado text not null default 'activa'::text,
+  activa_desde timestamp with time zone not null default now(),
+  activa_hasta timestamp with time zone,
+  metadatos jsonb not null default '{}'::jsonb,
+  creado_en timestamp with time zone not null default now(),
+  usos_disponibles integer not null default 1,
+  usos_consumidos integer not null default 0,
+  usado_en_reto_id uuid,
+  usado_en_intento_id uuid,
+  usado_en timestamp with time zone,
+  constraint activaciones_servicio_usuario_pkey primary key (id),
+  constraint activaciones_servicio_usuario_estado_check check ((estado = any (array['activa'::text, 'usada'::text, 'caducada'::text, 'cancelada'::text]))),
+  constraint activaciones_servicio_usuario_compra_id_fkey foreign key (compra_id) references public.compras_usuario(id) on delete set null,
+  constraint activaciones_servicio_usuario_servicio_id_fkey foreign key (servicio_id) references public.servicios(id) on delete cascade,
+  constraint activaciones_servicio_usuario_usado_en_intento_id_fkey foreign key (usado_en_intento_id) references public.intentos_examen(id),
+  constraint activaciones_servicio_usuario_usado_en_reto_id_fkey foreign key (usado_en_reto_id) references public.retos_diarios(id),
+  constraint activaciones_servicio_usuario_usuario_id_fkey foreign key (usuario_id) references auth.users(id) on delete cascade
+);
+create index if not exists idx_activaciones_servicio_usuario_compra_id on public.activaciones_servicio_usuario using btree (compra_id);
+create index if not exists idx_activaciones_servicio_usuario_servicio_id on public.activaciones_servicio_usuario using btree (servicio_id);
+create index if not exists idx_activaciones_servicio_usuario_usado_en_intento_id on public.activaciones_servicio_usuario using btree (usado_en_intento_id);
+create index if not exists idx_activaciones_servicio_usuario_usado_en_reto_id on public.activaciones_servicio_usuario using btree (usado_en_reto_id);
+create index if not exists idx_activaciones_servicio_usuario_usuario_id on public.activaciones_servicio_usuario using btree (usuario_id);
+alter table public.servicios enable row level security;
+alter table public.activaciones_servicio_usuario enable row level security;
+do $svc$
+begin
+  if not exists (select 1 from pg_trigger where tgname = 'trg_servicios_actualizado_en' and not tgisinternal) then
+    create trigger trg_servicios_actualizado_en before update on public.servicios for each row execute function public.establecer_actualizado_en();
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'servicios') then
+    create policy servicios_select_publico on public.servicios for select to anon, authenticated using (((activo = true) or public.es_admin()));
+  end if;
+  if not exists (select 1 from pg_policies where schemaname = 'public' and tablename = 'activaciones_servicio_usuario') then
+    create policy activaciones_select_propio on public.activaciones_servicio_usuario for select to authenticated using (((usuario_id = (select auth.uid() as uid)) or public.es_admin()));
+  end if;
+end
+$svc$;
+revoke all on table public.servicios, public.activaciones_servicio_usuario from public, anon, authenticated, service_role;
+grant delete, insert, maintain, references, select, trigger, truncate, update on table public.servicios, public.activaciones_servicio_usuario to service_role;
+grant maintain, select on table public.servicios, public.activaciones_servicio_usuario to anon, authenticated;
