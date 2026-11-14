@@ -642,6 +642,7 @@ fun Application.module() {
         catalogRuntime = catalogRuntime,
         walletRuntime = walletRuntime,
         appReadsRuntime = appReadsRuntime,
+        appNewsRuntime = canonicalIdentityResolver?.let { AppNewsRuntime.fromEnvironment(it) },
         newsRuntime = newsRuntime,
         // Solicitudes de acceso de administrador: la solicitud publica vive en `bot` y la revision en `control`.
         accessRequestGateway = SupabaseAdminAccessRequestGateway.fromEnvironment(json),
@@ -749,6 +750,8 @@ internal class CombinedRoutingDeps(
     internal val newsRuntime: NewsRuntime? = null,
     /** FA15 (D7-05, D5-01, D5-16). `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
     internal val appReadsRuntime: AppReadsRuntime? = null,
+    /** F25 / FA49 (D4-18, D4-27): noticias de la app. `null` = sin resolver de identidad: las rutas existen y fallan cerrado (500). */
+    internal val appNewsRuntime: AppNewsRuntime? = null,
     /** Solicitudes de acceso de administrador (AdminAccessRequests.kt). `null` = sin configuracion: las rutas existen y fallan cerradas. */
     internal val accessRequestGateway: AdminAccessRequestGateway? = null,
     /** E2: almacen de `Idempotency-Key` de soporte y moderacion. `null` = una peticion CON clave falla cerrada (500). */
@@ -808,6 +811,8 @@ internal fun Route.installBotRoutes(deps: CombinedRoutingDeps) = with(deps) {
     walletRoutes(walletRuntime)
     // FA15: historial de compras y suscripciones, categorias de OposiRed y contadores de OposiTester (D7-05, D5-01, D5-16).
     appReadsRoutes(appReadsRuntime)
+    // F25 / FA49: noticias de la app (D4-18, D4-27), solo lectura.
+    appNewsRoutes(appNewsRuntime)
     // SLICE 3: runtime de examen del consumidor (D2-03, D2-07, D2-08, D2-09, D2-10, D2-11, D2-12, D2-65).
     attemptRoutes(attemptRuntime)
     // V1 economia (OposiTickets): canje D6-03, paquetes D6-11, pedidos D6-12..D6-14 y aviso del proveedor.

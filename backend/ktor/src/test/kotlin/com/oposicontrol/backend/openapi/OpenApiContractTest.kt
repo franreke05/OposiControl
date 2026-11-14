@@ -132,6 +132,9 @@ class OpenApiContractTest {
         "D4-09" to "POST /api/v1/admin/noticias/assets",
         "D4-10" to "GET /api/v1/admin/tipos-noticia",
         "D4-11" to "PUT /api/v1/admin/tipos-noticia/{codigo}",
+        // FA49 (F25, noticias de la app, 2026-11-11).
+        "D4-18" to "GET /api/v1/app/noticias",
+        "D4-27" to "GET /api/v1/app/noticias/{noticiaId}",
         "D6-01" to "GET /api/v1/app/wallet",
         "D6-02" to "GET /api/v1/app/wallet/movimientos",
         // FA12: lecturas de moderacion (hilos, reportes, feedback de preguntas), TARGET.
@@ -238,6 +241,7 @@ class OpenApiContractTest {
         "D7-27" to (100L to 50L),
         "D7-29" to (100L to 50L),
         "D7-05" to (50L to 20L),
+        "D4-18" to (50L to 20L),
     )
     private val offsetLists = mapOf(
         "D1-22" to (200L to 50L),
