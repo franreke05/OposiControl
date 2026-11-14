@@ -1,5 +1,10 @@
 # Current State
 
+## Reto diario siempre de 3 (F20b) — 2026-11-11 (rama local `f20b/reto-tres` desde develop `08ea7f0f`, sin push) — `CURRENT_IMPLEMENTATION`, NO aplicada a MAIN
+
+- Decision del propietario 2026-11-11: el reto tiene SIEMPRE 3 preguntas. F20 (`20261109100000`, desplegada) ya esta en MAIN y con solo rafaga da 1 pregunta.
+- Migracion PENDIENTE `20261109100200_v1_reto_tres` (tras una por tipo, rellena hasta 3 desde la union de pools, sin repetir, determinista con sal propia; `tipo_slot` del pool de origen; menos de 3 elegibles = las que haya). Manifiesto `ops/deploy/v1/main-migrations-2026-11-f20b.manifest` (predecesora `20261109100000`; F23 `20261109100100` tambien encadena tras F20: orden a fijar en el despliegue). Ensayo `docs/ledger/2026/11/rehearse-f20b-2026-11.sh`; acta `docs/ledger/2026/11/2026-11-11-f20b-reto-tres.md`. Sin imagen. Contrato FA48 solo texto.
+
 ## Reto diario por tipo de examen (F20) — 2026-11-09 (rama local `f20/reto-per-type` desde develop `920fa29b`, sin push) — `CURRENT_IMPLEMENTATION`, NO aplicada a MAIN
 
 - Decision del propietario 2026-11-09: el reto toma UNA pregunta de examenes inmersivos, UNA de razonados y UNA de rafaga, de los examenes PUBLICADOS de la especialidad del usuario; un tipo sin preguntas se salta (reto de 1 a 3). Antes exigia los tres huecos (y la inmersiva con marca demo): en produccion, solo rafaga, el reto salia `NO_DISPONIBLE` para todos.

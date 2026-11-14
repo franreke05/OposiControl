@@ -128,6 +128,21 @@ class ChallengeRoutesTest {
         assertFalse(q.containsKey("_recursos") || q.containsKey("recursos"), q.toString())
     }
 
+    /** F20b / FA48: the reto is filled to 3 from the eligible questions, so a tipoSlot can repeat. Ktor keeps every question and its order. */
+    @Test
+    fun aFilledChallengeWithARepeatedSlotKeepsEveryQuestion() = testApplication {
+        application { challengeModule() }
+        val ids = listOf("f3f3f3f3-f3f3-4f3f-8f3f-f3f3f3f3f301", "f3f3f3f3-f3f3-4f3f-8f3f-f3f3f3f3f302", "f3f3f3f3-f3f3-4f3f-8f3f-f3f3f3f3f303")
+        val qs = ids.mapIndexed { i, id -> """{"posicion":${i + 1},"tipoSlot":"RAFAGA","preguntaId":"$id","titulo":"T$i","opciones":[],"_recursos":[]}""" }.joinToString(",")
+        upstream.handler = { _, _ -> SupabaseRawResponse(200, """{"estado":"DISPONIBLE","retoId":"$reto","necesarios":2,"aciertos":0,"preguntas":[$qs],"racha":{"actual":0,"maxima":0}}""") }
+        val r = createClient { }.getAs("/api/v1/app/retos/hoy")
+        assertEquals(HttpStatusCode.OK, r.status, r.bodyAsText())
+        val served = obj(r.bodyAsText())["preguntas"]!!.jsonArray.map { it.jsonObject }
+        assertEquals(ids, served.map { it["preguntaId"]!!.jsonPrimitive.content })
+        assertEquals(listOf(1, 2, 3), served.map { it["posicion"]!!.jsonPrimitive.content.toInt() })
+        assertTrue(served.all { it["tipoSlot"]!!.jsonPrimitive.content == "RAFAGA" })
+    }
+
     @Test
     fun answerIsFinalAndTheBodyIsStrict() = testApplication {
         application { challengeModule() }

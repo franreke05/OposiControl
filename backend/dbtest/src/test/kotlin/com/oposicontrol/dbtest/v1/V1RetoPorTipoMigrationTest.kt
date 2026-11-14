@@ -19,6 +19,9 @@ import kotlin.test.assertTrue
  */
 class V1RetoPorTipoMigrationTest {
     private val migration = "20261109100000_v1_reto_por_tipo"
+
+    /** The F20 body is tested on its own: 20261109100200 (F20b, always 3) replaces ensure_challenge_row and has its own test (V1RetoTresMigrationTest). */
+    private val later = setOf("20261109100200_v1_reto_tres")
     private val espA = "e1000000-0000-0000-0000-0000000020a1"
     private val espB = "e1000000-0000-0000-0000-0000000020b1"
     private val espC = "e1000000-0000-0000-0000-0000000020c1"
@@ -89,7 +92,7 @@ class V1RetoPorTipoMigrationTest {
     }
 
     @Test
-    fun onlyRafagaExamsGiveAOneQuestionChallengeThatPassesWithOneCorrect() = V1Db.escenario { c ->
+    fun onlyRafagaExamsGiveAOneQuestionChallengeThatPassesWithOneCorrect() = V1Db.escenario(sin = later) { c ->
         c.ejecutar(users)
         c.onlyRafagaInA()
         val t = c.today(ua)
@@ -117,7 +120,7 @@ class V1RetoPorTipoMigrationTest {
     }
 
     @Test
-    fun allThreeTypesGiveOneQuestionEachAndTwoTypesGiveTwo() = V1Db.escenario { c ->
+    fun allThreeTypesGiveOneQuestionEachAndTwoTypesGiveTwo() = V1Db.escenario(sin = later) { c ->
         c.ejecutar(users)
         // A: the three types. The immersive exam has NO demo flag: the flag no longer matters.
         c.exam(10, espA, "inmersivo", listOf(Q(0x10), Q(0x11)))
@@ -145,7 +148,7 @@ class V1RetoPorTipoMigrationTest {
     }
 
     @Test
-    fun theChallengeIsScopedToTheUserSpecialty() = V1Db.escenario { c ->
+    fun theChallengeIsScopedToTheUserSpecialty() = V1Db.escenario(sin = later) { c ->
         c.ejecutar(users)
         c.onlyRafagaInA()
         c.exam(20, espB, "razonado", listOf(Q(0x60), Q(0x61)))
@@ -162,7 +165,7 @@ class V1RetoPorTipoMigrationTest {
     }
 
     @Test
-    fun thePickIsDeterministicPerDayAndSegmentAndChangesAcrossDays() = V1Db.escenario { c ->
+    fun thePickIsDeterministicPerDayAndSegmentAndChangesAcrossDays() = V1Db.escenario(sin = later) { c ->
         c.ejecutar(users)
         c.exam(30, espA, "rafaga", (0x70..0x7f).map { Q(it) })
         c.exam(31, espA, "razonado", (0x80..0x8f).map { Q(it) })
@@ -193,7 +196,7 @@ class V1RetoPorTipoMigrationTest {
     }
 
     @Test
-    fun theVerifyBlockProvesTheEndStateAndTheRollbackRestoresTheThreeSlotRule() = V1Db.escenario { c ->
+    fun theVerifyBlockProvesTheEndStateAndTheRollbackRestoresTheThreeSlotRule() = V1Db.escenario(sin = later) { c ->
         c.ejecutar(users)
         val verify = Slice0Db.verifyDe("supabase/migrations/$migration.sql")
         val rows = c.filas(verify)
@@ -209,7 +212,7 @@ class V1RetoPorTipoMigrationTest {
     }
 
     @Test
-    fun withoutTheMigrationOnlyRafagaMeansNoChallengeForAnyone() = V1Db.escenario(sin = setOf(migration)) { c ->
+    fun withoutTheMigrationOnlyRafagaMeansNoChallengeForAnyone() = V1Db.escenario(sin = later + migration) { c ->
         c.ejecutar(users)
         c.onlyRafagaInA()
         assertEquals("NO_DISPONIBLE", c.j(c.today(ua), "estado"))
