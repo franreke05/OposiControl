@@ -15,8 +15,8 @@ import kotlin.test.assertTrue
  * `20261114200000_v1_biblioteca_pregunta` (F30, FA50, plan del propietario 2026-11-14): la Biblioteca abre la pregunta guardada ahi mismo. `app_saved_question_detail`
  * solo responde si el usuario la guardo Y puede abrir alguno de sus examenes (la regla de la lista); contenido y solucion VIVOS (las funciones que congelan revisiones),
  * mas el examen elegido (enlace no anulado primero, luego la publicacion mas reciente), su posicion y si esta anulada. `app_list_saved` devuelve tipo_examen y usa la
- * MISMA eleccion. No escribe nada (no toca el limitador). B1 (revision Control 2026-11-14): la solucion solo si el usuario ya la resolvio (respuesta con opcion o intento
- * finalizado que la contiene); guardar exige que la pregunta le haya sido revelada; las reservas sin usar no cuentan. Control negativo + VERIFY / ROLLBACK.
+ * MISMA eleccion. No escribe nada (no toca el limitador). B1 (revision Control 2026-11-14): la solucion solo si el usuario ya la resolvio (intento FINALIZADO
+ * que la contiene; un intento abierto nunca cuenta, B1-bis); guardar exige que la pregunta le haya sido revelada; las reservas sin usar no cuentan. Control negativo + VERIFY / ROLLBACK.
  */
 class V1BibliotecaPreguntaMigrationTest {
     private val migration = "20261114200000_v1_biblioteca_pregunta"
@@ -106,8 +106,11 @@ class V1BibliotecaPreguntaMigrationTest {
         val open = c.detail(user, 1)
         assertEquals("OK", c.field(open, "outcome"))
         assertNull(c.field(open, "solucion,opcion_correcta_id"), "open attempt, question not answered: the answer stays hidden")
-        // answered -> solution
+        // B1-bis: open attempt answered -> still no solution (the answer can still be changed)
         c.answer(att1, 1)
+        assertEquals("null", c.unico("select jsonb_typeof(('${c.detail(user, 1)}'::jsonb) -> 'solucion')"), "answered inside an OPEN attempt: no solution")
+        // after finishing -> solution
+        c.ejecutar("begin; set local session_replication_role = replica; update public.intentos_examen set estado = 'finalizado' where id = '$att1'; commit;")
         val answered = c.detail(user, 1)
         assertEquals(ok(1), c.field(answered, "solucion,opcion_correcta_id"))
         assertEquals("Razon 1", c.field(answered, "solucion,razonamiento"))

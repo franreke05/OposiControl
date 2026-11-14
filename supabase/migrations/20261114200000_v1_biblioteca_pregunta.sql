@@ -6,7 +6,8 @@
 -- active, published exam whose access verdict is FREE / GRANTED / SUBSCRIPTION; the specialty gate is rule 0 of that verdict). It returns the LIVE content built by the function
 -- that freezes attempt revisions (private.app_revision_pregunta_contenido), plus the chosen exam (id, title, type), the question position in it and whether it is annulled
 -- there. The SOLUTION (private.app_revision_pregunta_solucion: correct option + explanation) is returned ONLY when the user already resolved the question
--- (private.saved_question_resolved: an answer of theirs with a chosen option, or a FINISHED attempt of theirs that contains it); otherwise 'solucion' is JSON null (still OK):
+-- (private.saved_question_resolved: a FINISHED attempt of theirs contains it; an answer in an OPEN attempt never counts because it can still be changed, B1-bis);
+-- otherwise 'solucion' is JSON null (still OK):
 -- saving a question in an open attempt must never reveal its answer before it is answered (review Control 2026-11-14, B1).
 -- Exam choice: a link where the question is NOT annulled first, then the latest publication (an annulled link is used only when no other accessible link exists: the client shows
 -- it flagged as annulled, without the correct answer, like the review). A RESERVE link (pe.es_reserva) counts only when the user resolved the question (an unused reserve is not
@@ -14,7 +15,8 @@
 -- Changed: public.app_list_saved returns tipo_examen of the chosen exam and uses the SAME exam choice (so an item is accesible exactly when its detail opens: a question annulled
 -- in every accessible exam is now accesible and its detail says anulada). The return type changes, so the function is dropped and recreated (an older Ktor image ignores the
 -- extra column).
--- Changed: public.app_save_item (B1): a NEW save needs the question to be REVEALED to the user (private.saved_question_revealed: resolved as above, or served to them by the
+-- Changed: public.app_save_item (B1): a NEW save needs the question to be REVEALED to the user (private.saved_question_revealed: resolved as above, answered by them in
+-- any attempt, or served to them by the
 -- daily limiter (preguntas_reveladas_usuario), or part of an attempt of theirs that the limiter does not count (demo / GRANTED / DEMO access, or a plan without daily limit));
 -- the D2-07 id list of an open limited attempt is no longer enough, so saving cannot skip private.plan_daily_limit. Unused reserves are excluded like in the detail. An already
 -- saved question still answers its original guardado_en (naturally idempotent, unchanged).
@@ -143,8 +145,8 @@ begin
 end
 $$;
 
--- ---- 0. helpers (B1). RESOLVED = the user already answered it (an answer row of theirs with a chosen option) or a FINISHED attempt of theirs contains it: only then is the
--- solution shown. REVEALED = resolved, or served to them (limiter row), or in an attempt of theirs the limiter does not count: only then can it be saved.
+-- ---- 0. helpers (B1). RESOLVED = a FINISHED attempt of theirs contains it (B1-bis: open attempts never count): only then is the solution shown.
+-- REVEALED = resolved, answered by them in any attempt, served to them (limiter row), or in an attempt of theirs the limiter does not count: only then can it be saved.
 create or replace function private.saved_question_resolved(p_usuario uuid, p_pregunta uuid)
 returns boolean
 language sql
@@ -152,11 +154,9 @@ stable
 security definer
 set search_path = ''
 as $$
+  -- B1-bis: ONLY a finished attempt counts. An answer inside an OPEN attempt can still be changed (app_record_attempt_answer allows it in every mode,
+  -- practice and demo included), so it never unlocks the solution: otherwise answer anything, read the correct option here, change it, finish.
   select exists (
-           select 1 from public.respuestas_intento ri
-             join public.intentos_examen ie on ie.id = ri.intento_id and ie.usuario_id = p_usuario
-            where ri.pregunta_id = p_pregunta and ri.opcion_seleccionada_id is not null)
-      or exists (
            select 1 from public.preguntas_intento pi
              join public.intentos_examen ie on ie.id = pi.intento_id and ie.usuario_id = p_usuario and ie.estado = 'finalizado'
             where pi.pregunta_id = p_pregunta);
@@ -171,6 +171,10 @@ security definer
 set search_path = ''
 as $$
   select private.saved_question_resolved(p_usuario, p_pregunta)
+      or exists (  -- answered in any attempt of theirs: it was served to them (revealed), even if the solution stays hidden until the attempt ends
+           select 1 from public.respuestas_intento ri
+             join public.intentos_examen ie on ie.id = ri.intento_id and ie.usuario_id = p_usuario
+            where ri.pregunta_id = p_pregunta and ri.opcion_seleccionada_id is not null)
       or exists (select 1 from public.preguntas_reveladas_usuario r where r.usuario_id = p_usuario and r.pregunta_id = p_pregunta)
       or exists (
            select 1 from public.preguntas_intento pi
