@@ -101,6 +101,70 @@ internal data class PaymentOrderResult(val response: PaymentOrderResponse, val c
 @Serializable
 internal data class WebhookAckDto(val result: String)
 
+// ---------- F28 (FA52): Market de consumibles ----------
+
+/** D6-40 cuerpo (opcional): el precio en OT que el cliente enseno. Guarda, nunca precio: si no coincide, 409 PRICE_CHANGED. */
+@Serializable
+@CanonicalCommand
+internal data class ServiceRedeemRequest(val expectedPrice: Int? = null)
+
+/** Un elemento del Market. Los nulos no viajan (`explicitNulls = false` en la respuesta): ausente = null. */
+@Serializable
+internal data class MarketItemDto(
+    val codigo: String,
+    val nombre: String,
+    val descripcion: String? = null,
+    val tipo: String,
+    val precioTickets: Int? = null,
+    val precioCentimos: Int? = null,
+    val usos: Int? = null,
+    val duracionHoras: Int? = null,
+    val multiplicador: Double? = null,
+    /** Usos que le quedan al usuario de este servicio (0 en los packs). */
+    val disponibles: Int,
+    /** Se canjea con OT por D6-40 (los packs y premium/correccion/tutoria/contenido_extra: false). */
+    val comprableConTickets: Boolean,
+    /** Solo packs: OposiTickets que entrega. */
+    val cantidadTickets: Int? = null,
+)
+
+@Serializable
+internal data class MarketSectionDto(val codigo: String, val titulo: String, val items: List<MarketItemDto>)
+
+@Serializable
+internal data class MarketCatalogResponse(val secciones: List<MarketSectionDto>)
+
+/** Una activacion de servicio como la ve la app (D6-40 y efectos). */
+@Serializable
+internal data class ServiceActivationDto(
+    val id: String,
+    val servicioCodigo: String,
+    val tipo: String,
+    val estado: String,
+    val usosRestantes: Int,
+    val activaHasta: String? = null,
+    val multiplicador: Double? = null,
+)
+
+@Serializable
+internal data class ServiceRedeemResponse(val saldoTickets: Int, val activacion: ServiceActivationDto)
+
+internal data class ServiceRedeemResult(val response: ServiceRedeemResponse, val replayed: Boolean)
+
+@Serializable
+internal data class ServiceRedeemRow(
+    val outcome: String,
+    @SerialName("transaccion_id") val transaccionId: String,
+    val saldo: Int,
+    val activacion: ServiceActivationDto? = null,
+)
+
+/** Las tres secciones que decidio el propietario (2026-11-14), en su orden. */
+internal val MARKET_SECTIONS = listOf("OPOSITICKETS", "POTENCIADORES", "SERVICIOS")
+
+/** Codigo de servicio en la ruta: el mismo alfabeto que admite Control (letras, digitos, punto, guion y guion bajo). */
+private val SERVICE_CODE = Regex("^[A-Za-z0-9._-]{1,64}$")
+
 // ---------- filas (snake_case, tal cual salen de las RPC) ----------
 
 @Serializable
@@ -182,6 +246,9 @@ internal object EconomyRpcErrors {
             "PRODUCT_NOT_AVAILABLE" -> CanonicalErrorCode.PRODUCT_NOT_AVAILABLE.exception()
             "ORDER_NOT_FOUND" -> CanonicalErrorCode.ORDER_NOT_FOUND.exception()
             "ORDER_PENDING_LIMIT" -> CanonicalErrorCode.ORDER_PENDING_LIMIT.exception()
+            // F28 (FA52): canje de servicio. Inexistente, inactivo u oculto = la misma respuesta (sin sondeo del catalogo).
+            "SERVICE_NOT_FOUND" -> CanonicalErrorCode.NOT_FOUND.exception("El servicio no existe o no esta a la venta.")
+            "SERVICE_NOT_PURCHASABLE" -> CanonicalErrorCode.NOT_PURCHASABLE.exception("Este servicio no se puede canjear con OposiTickets.")
             // Guardar (FA26): NOT_FOUND = pregunta inexistente o sin ningun examen abrible (misma respuesta, sin sondeo).
             "NOT_FOUND" -> CanonicalErrorCode.NOT_FOUND.exception()
             "SAVED_LIMIT_REACHED" -> CanonicalErrorCode.SAVED_LIMIT_REACHED.exception()
@@ -276,6 +343,57 @@ internal class EconomyService(
                 val perEuro = if (it.moneda == "EUR" && it.precioCentimos > 0) Math.round(it.cantidadTickets * 100.0 / it.precioCentimos * 100.0) / 100.0 else null
                 TicketPackDto(it.codigo, it.nombre, it.descripcion, it.cantidadTickets, it.precioCentimos, it.moneda, it.destacado, it.etiquetaPromocional, base.takeIf { b -> b }, perEuro)
             },
+        )
+    }
+
+    /**
+     * D6-39 (FA52). El Market de la app en tres secciones como maximo (OPOSITICKETS, POTENCIADORES, SERVICIOS); la base decide que
+     * se ensena (activo y visible, por posicion) y cuantos usos le quedan al usuario. Aqui se comprueba la forma: una seccion
+     * desconocida, repetida o fuera de orden es un error de contrato (falla cerrado), nunca se reinventa.
+     */
+    suspend fun marketCatalog(userId: CanonicalUserId): MarketCatalogResponse {
+        val response = canonicalUpstreamIo { upstream.rpc("app_market_catalog", buildJsonObject { put("p_usuario", userId.value) }.toString()) }
+        if (!response.ok) throw EconomyRpcErrors.failure("app_market_catalog", response)
+        val catalog = runCatching { json.decodeFromString(MarketCatalogResponse.serializer(), response.body) }
+            .getOrElse { throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception(cause = it) }
+        val codes = catalog.secciones.map { it.codigo }
+        if (codes != MARKET_SECTIONS.filter { it in codes } || catalog.secciones.any { it.items.isEmpty() || it.items.any { i -> i.disponibles < 0 } }) {
+            throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+        }
+        return catalog
+    }
+
+    /**
+     * D6-40 (FA52). Canjear un servicio con OT: debito en el libro + activacion en UNA transaccion de la base, bajo el cerrojo de la
+     * cartera; la misma clave y el mismo cuerpo repiten el resultado (y la activacion tal y como esta ahora).
+     */
+    suspend fun redeemService(userId: CanonicalUserId, code: String, request: ServiceRedeemRequest, key: IdempotencyKey): ServiceRedeemResult {
+        val codigo = code.trim()
+        if (!SERVICE_CODE.matches(codigo)) throw validationError(ErrorIssue("codigo", CanonicalIssue.INVALID_FORMAT))
+        request.expectedPrice?.let { if (it < 1) throw validationError(ErrorIssue("expectedPrice", CanonicalIssue.OUT_OF_RANGE)) }
+        val rows = try {
+            rpc<ServiceRedeemRow>(
+                "app_redeem_service",
+                buildJsonObject {
+                    put("p_usuario", userId.value)
+                    put("p_codigo", codigo)
+                    put("p_idem_key", key.value)
+                    request.expectedPrice?.let { put("p_expected_price", it) }
+                }.toString(),
+            )
+        } catch (e: BackendDomainException) {
+            // el mismo codigo que el canje de examen, con el texto del servicio
+            if (e.errorCode == CanonicalErrorCode.PRICE_CHANGED.name) {
+                throw CanonicalErrorCode.PRICE_CHANGED.exception("El precio del servicio ha cambiado. Revisalo antes de canjear.", details = e.details)
+            }
+            throw e
+        }
+        val row = rows.singleOrNull() ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+        val activation = row.activacion ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+        if (!activation.id.isUuid() || activation.usosRestantes < 0) throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+        return ServiceRedeemResult(
+            ServiceRedeemResponse(row.saldo, activation.copy(id = activation.id.lowercase(), activaHasta = activation.activaHasta?.let(::iso))),
+            replayed = row.outcome == "REPLAY",
         )
     }
 

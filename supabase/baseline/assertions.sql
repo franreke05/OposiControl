@@ -4730,3 +4730,94 @@ begin
   raise notice 'OK F27 stats fix';
 end $$;
 rollback;
+
+-- ============ 20261114400000..400200 (F28, FA52): Market services, redeem with OT, consumables in the daily challenge ============
+begin;
+insert into auth.users (id, email, aud, role, email_confirmed_at) values
+  ('a0000000-0000-0000-0000-000000002801', 'f28-1@test.local', 'authenticated', 'authenticated', now()),
+  ('a0000000-0000-0000-0000-000000002802', 'f28-2@test.local', 'authenticated', 'authenticated', now());
+insert into public.especialidades (id, codigo, nombre, slug, activa) values ('e1000000-0000-0000-0000-000000002801', 'F28G', 'F28G', 'f28g', true);
+insert into public.comunidades_autonomas (id, codigo, nombre, slug) values ('c1000000-0000-0000-0000-000000002801', 'F28G', 'Com F28G', 'com-f28g');
+insert into public.perfiles_usuario (usuario_id, nombre_mostrar, username, onboarding_completado, estado_cuenta, especialidad_principal_id) values
+  ('a0000000-0000-0000-0000-000000002801', 'u1', 'f28g_1', true, 'activa', 'e1000000-0000-0000-0000-000000002801'),
+  ('a0000000-0000-0000-0000-000000002802', 'u2', 'f28g_2', true, 'activa', 'e1000000-0000-0000-0000-000000002801')
+  on conflict (usuario_id) do update set especialidad_principal_id = excluded.especialidad_principal_id;
+insert into public.transacciones_cartera (usuario_id, tipo, cantidad, descripcion, referencia_tipo, idempotency_key) values
+  ('a0000000-0000-0000-0000-000000002801', 'ajuste', 100, 'f28', 'admin', 'f28g-seed-1'), ('a0000000-0000-0000-0000-000000002802', 'ajuste', 100, 'f28', 'admin', 'f28g-seed-2');
+insert into public.planes_suscripcion (id, codigo, nombre, nivel, activo, visible, posicion) values ('b2800000-0000-0000-0000-0000000028a1', 'gratuito_f28g', 'Gratuito', 0, true, true, -1);
+insert into public.beneficios_plan (plan_id, codigo_beneficio, valor_integer) values ('b2800000-0000-0000-0000-0000000028a1', 'ot_reto_diario', 40), ('b2800000-0000-0000-0000-0000000028a1', 'ot_bonus_racha', 20);
+set local session_replication_role = replica;
+insert into public.examenes (id, codigo_examen, especialidad_id, comunidad_id, titulo, tipo_examen, tipo_acceso, activo, publicado_en)
+  values ('e5000000-0000-0000-0000-000000002801', 'F28G-1', 'e1000000-0000-0000-0000-000000002801', 'c1000000-0000-0000-0000-000000002801', 'F28G', 'rafaga', 'premium', true, now() - interval '1 day');
+insert into public.preguntas (id, codigo_pregunta, tipo_pregunta, titulo, activa) values ('f8000000-0000-0000-0000-000000002801', 'F28G-Q1', 'rafaga', 'Q', true);
+insert into public.opciones_pregunta (id, pregunta_id, letra, texto_opcion, posicion) values
+  ('0e800000-0000-0000-0000-000000002801', 'f8000000-0000-0000-0000-000000002801', 'A', 'Si', 1), ('0e800000-0000-0000-0000-000000002802', 'f8000000-0000-0000-0000-000000002801', 'B', 'No', 2);
+insert into public.soluciones_pregunta (pregunta_id, opcion_correcta_id, razonamiento) values ('f8000000-0000-0000-0000-000000002801', '0e800000-0000-0000-0000-000000002801', 'x');
+insert into public.preguntas_examen (examen_id, pregunta_id, posicion, numero_en_examen) values ('e5000000-0000-0000-0000-000000002801', 'f8000000-0000-0000-0000-000000002801', 1, 1);
+set local session_replication_role = origin;
+insert into public.rachas_usuario (usuario_id, racha_actual_dias, mejor_racha_dias, ultima_actividad_fecha) values
+  ('a0000000-0000-0000-0000-000000002801', 4, 4, private.reto_today(clock_timestamp()) - 1), ('a0000000-0000-0000-0000-000000002802', 4, 4, private.reto_today(clock_timestamp()) - 1);
+do $f28$
+declare
+  u1 constant uuid := 'a0000000-0000-0000-0000-000000002801';
+  u2 constant uuid := 'a0000000-0000-0000-0000-000000002802';
+  r record;
+  cat jsonb;
+  t jsonb;
+  a jsonb;
+  reto uuid;
+  reto2 uuid;
+  v_state text;
+begin
+  -- servicios: the 3 sections, derived from the type when left empty; the checks
+  assert (select count(*) from public.servicios where codigo in ('protector_racha', 'protector_tickets', 'protector_dual', 'potenciador_x2', 'potenciador_x3', 'potenciador_x4', 'doble_oportunidad', 'triple_oportunidad')) = 8, 'F28: PLACEHOLDER seed';
+  insert into public.servicios (codigo, nombre, tipo_servicio, precio_tickets) values ('f28g_tut', 'Tutoria', 'tutoria', 10);
+  assert (select seccion from public.servicios where codigo = 'f28g_tut') = 'SERVICIOS', 'F28: seccion derived from the type';
+  begin
+    update public.servicios set seccion = 'OTRA' where codigo = 'f28g_tut';
+  exception when check_violation then v_state := 'check';
+  end;
+  assert v_state = 'check', 'F28: servicios_seccion_check';
+  -- catalog: fixed order, only active + visible
+  update public.servicios set visible = false where codigo = 'potenciador_x4';
+  cat := public.app_market_catalog(u1);
+  assert (select string_agg(s ->> 'codigo', ',') from jsonb_array_elements(cat -> 'secciones') s) in ('POTENCIADORES,SERVICIOS', 'OPOSITICKETS,POTENCIADORES,SERVICIOS'), 'F28: section order ' || cat::text;
+  assert not (cat::text like '%potenciador_x4%'), 'F28: a hidden service is not listed';
+  -- redeem: one debit, one activation, replay, refusals write nothing
+  select * into r from public.app_redeem_service(u1, 'protector_racha', 'f28g-k1', 20);
+  assert r.outcome = 'CREATED' and r.saldo = 80 and (r.activacion ->> 'usosRestantes')::int = 1, 'F28: redeem';
+  select * into r from public.app_redeem_service(u1, 'protector_racha', 'f28g-k1', 20);
+  assert r.outcome = 'REPLAY' and (select count(*) from public.transacciones_cartera where usuario_id = u1 and tipo = 'compra_servicio') = 1, 'F28: replay never debits twice';
+  -- each refusal: the domain code and nothing written (this block has no pg_temp helpers: inline handlers)
+  v_state := null; begin perform public.app_redeem_service(u1, 'potenciador_x4', 'f28g-k2', null); exception when others then v_state := sqlerrm; end;
+  assert v_state = 'SERVICE_NOT_FOUND', 'F28: hidden = not on sale, got ' || coalesce(v_state, 'no error');
+  v_state := null; begin perform public.app_redeem_service(u1, 'f28g_tut', 'f28g-k3', null); exception when others then v_state := sqlerrm; end;
+  assert v_state = 'SERVICE_NOT_PURCHASABLE', 'F28: tutoria not redeemed with OT, got ' || coalesce(v_state, 'no error');
+  update public.servicios set precio_tickets = 500 where codigo = 'triple_oportunidad';  -- more than the 80 OT left
+  v_state := null; begin perform public.app_redeem_service(u1, 'triple_oportunidad', 'f28g-k4', null); exception when others then v_state := sqlerrm; end;
+  assert v_state = 'INSUFFICIENT_BALANCE', 'F28: insufficient balance, got ' || coalesce(v_state, 'no error');
+  assert (select saldo_tickets from public.carteras_usuario where usuario_id = u1) = 80, 'F28: refusals write nothing';
+  -- the protector keeps the streak of a failed reto
+  select * into r from public.app_redeem_service(u2, 'potenciador_x3', 'f28g-k5', null);
+  t := public.app_get_daily_challenge(u1);
+  reto := (t ->> 'retoId')::uuid;
+  assert (t #>> '{consumibles,protectorRacha}')::int = 1, 'F28: streak panel counter';
+  a := public.app_answer_daily_challenge(u1, reto, 'f8000000-0000-0000-0000-000000002801', '0e800000-0000-0000-0000-000000002802');
+  assert a ->> 'estado' = 'FALLADO' and a #>> '{consumiblesUsados,0}' = 'protector_racha' and (a #>> '{racha,actual}')::int = 5, 'F28: protector_racha ' || a::text;
+  assert (select protector_usado_id is not null from public.registros_reto_diario where usuario_id = u1 and reto_id = reto), 'F28: protector_usado_id filled';
+  assert (select estado from public.activaciones_servicio_usuario where usuario_id = u1) = 'usada', 'F28: the protector is spent';
+  -- the potenciador multiplies only the base; the claim credits the extra once, outside the free caps
+  reto2 := (public.app_get_daily_challenge(u2) ->> 'retoId')::uuid;
+  a := public.app_answer_daily_challenge(u2, reto2, 'f8000000-0000-0000-0000-000000002801', '0e800000-0000-0000-0000-000000002801');
+  assert a ->> 'estado' = 'SUPERADO' and (a #>> '{recompensa,extraPotenciador}')::int = 80 and (a #>> '{recompensa,total}')::int = 140, 'F28: potenciador ' || a::text;
+  perform public.app_claim_daily_challenge(u2, reto2);
+  perform public.app_claim_daily_challenge(u2, reto2);
+  assert (select count(*) from public.transacciones_cartera where usuario_id = u2 and tipo = 'potenciador' and cantidad = 80) = 1, 'F28: the potenciador extra is credited once';
+  -- grants: the client roles can neither run the RPCs nor read the held answers
+  assert not has_function_privilege('authenticated', 'public.app_redeem_service(uuid,text,text,integer)', 'execute')
+     and not has_function_privilege('anon', 'public.app_market_catalog(uuid)', 'execute')
+     and not has_function_privilege('authenticated', 'public.app_answer_daily_challenge(uuid,uuid,uuid,uuid,boolean)', 'execute')
+     and not has_table_privilege('authenticated', 'public.reto_oportunidades_pendientes', 'select'), 'F28: client grants';
+  raise notice 'OK F28 consumables';
+end $f28$;
+rollback;

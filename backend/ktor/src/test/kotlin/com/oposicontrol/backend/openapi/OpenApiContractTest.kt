@@ -171,6 +171,9 @@ class OpenApiContractTest {
         "D6-13" to "GET /api/v1/app/payments/orders/{orderId}",
         "D6-14" to "POST /api/v1/app/payments/orders/{orderId}/verify",
         "W-01" to "POST /api/v1/webhooks/payments/{provider}",
+        // FA52 (F28): Market de consumibles en tres secciones y canje de un consumible con OT, TARGET.
+        "D6-39" to "GET /api/v1/app/market/servicios",
+        "D6-40" to "POST /api/v1/app/wallet/servicios/{codigo}/canje",
         // FA24: reportar una pregunta (feedback), contrato propio y no deprecado.
         "D5-15" to "POST /api/v1/app/feedback/pregunta",
         // FA26: Guardar + OposiTeca (V1, solo preguntas).
@@ -219,7 +222,7 @@ class OpenApiContractTest {
     )
 
     /** Contratos con `Idempotency-Key!` (REQUIRED) o `Idempotency-Key?` (OPTIONAL). */
-    private val idempotencyRequired = setOf("D1-18", "D2-22", "D2-38", "D2-57", "D2-58", "D2-62", "D2-03", "D2-09", "D2-68", "D4-03", "D4-09", "D6-03", "D6-12")
+    private val idempotencyRequired = setOf("D1-18", "D2-22", "D2-38", "D2-57", "D2-58", "D2-62", "D2-03", "D2-09", "D2-68", "D4-03", "D4-09", "D6-03", "D6-12", "D6-40")
     private val idempotencyOptional = setOf("D2-06", "D2-10", "D6-14", "D5-15", "D5-06", "D5-07")
 
     /** contractId -> (max, default) del limit de las listas paginadas. */

@@ -1,0 +1,9 @@
+# F28 consumibles del Market (f28/consumibles, decision del propietario 2026-11-14, enmienda FA52): tres migraciones que se aplican a MAIN en este orden.
+# Acta y anexo al runbook: docs/ledger/2026/11/2026-11-14-f28-consumibles.md. Uso con el script de siempre, una a una:
+#   MANIFEST=ops/deploy/v1/main-migrations-2026-11-f28.manifest bash ops/deploy/v1/apply-main-migration.sh supabase/migrations/<version>_*.sql
+# version  blob(git hash-object, 12)  predecesora(debe estar en supabase_migrations antes de aplicar)  clase
+# Predecesora tecnica de 20261114400000: 20261109100000 (F20, ya en MAIN). Orden del plan: despues de F20b y F27 (sin dependencia de cuerpo con ellas).
+# Si cambia un blob, se rehacen este manifiesto y el ensayo (docs/ledger/2026/11/rehearse-f28-2026-11.sh).
+20261114400000 3628dd8594bb 20261109100000 apply
+20261114400100 0c3eb01e7251 20261114400000 apply
+20261114400200 a624ab9a49d6 20261114400100 apply

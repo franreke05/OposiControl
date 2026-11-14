@@ -36,6 +36,19 @@ data class MarketService(
     val priceTickets: Int? = null,
     val priceCents: Int? = null,
     val active: Boolean = true,
+    // F28 (FA52): escaparate de la app y metadatos de consumible.
+    /** `false` = no se vende en la app aunque esté activo. */
+    val visible: Boolean = true,
+    /** Orden dentro de su sección (ascendente). */
+    val position: Int = 0,
+    /** OPOSITICKETS, POTENCIADORES o SERVICIOS; `null` = la base la deriva del tipo. */
+    val section: String? = null,
+    /** Usos que da una compra (`null` = uno). */
+    val uses: Int? = null,
+    /** Horas de vida de una activación (`null` = no caduca). */
+    val durationHours: Int? = null,
+    /** Multiplicador del potenciador sobre la recompensa base del reto diario. */
+    val multiplier: Double? = null,
 ) {
     /** Un servicio ofrecido sin ningún precio no se puede adquirir. */
     val isOfferedWithoutPrice: Boolean get() = active && priceTickets == null && priceCents == null

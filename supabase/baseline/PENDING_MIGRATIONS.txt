@@ -51,3 +51,6 @@
 20261114200000_v1_biblioteca_pregunta
 20261114200100_v1_practica_examenes
 20261114300000_v1_stats_fix
+20261114400000_v1_servicios_catalogo
+20261114400100_v1_servicios_canje
+20261114400200_v1_consumibles_efectos

@@ -205,6 +205,7 @@ data class PackDto(
     val posicion: Int = 1,
 )
 
+@OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
 @Serializable
 data class ServiceDto(
     val id: String = "",
@@ -215,6 +216,14 @@ data class ServiceDto(
     @SerialName("precio_tickets") val precioTickets: Int? = null,
     @SerialName("precio_centimos") val precioCentimos: Int? = null,
     val activo: Boolean = true,
+    // F28 (FA52). visible y posicion viajan SIEMPRE (el Json del cliente no codifica valores por defecto y el servidor
+    // conserva lo guardado cuando no llegan); los anulables vacios no viajan y el servidor los borra con null explicito.
+    @kotlinx.serialization.EncodeDefault val visible: Boolean = true,
+    @kotlinx.serialization.EncodeDefault val posicion: Int = 0,
+    val seccion: String? = null,
+    val usos: Int? = null,
+    @SerialName("duracion_horas") val duracionHoras: Int? = null,
+    val multiplicador: Double? = null,
 )
 
 @Serializable
@@ -319,6 +328,12 @@ private fun ServiceDto.toDomain() = MarketService(
     priceTickets = precioTickets,
     priceCents = precioCentimos,
     active = activo,
+    visible = visible,
+    position = posicion,
+    section = seccion,
+    uses = usos,
+    durationHours = duracionHoras,
+    multiplier = multiplicador,
 )
 
 private fun MarketService.toDto() = ServiceDto(
@@ -330,6 +345,12 @@ private fun MarketService.toDto() = ServiceDto(
     precioTickets = priceTickets,
     precioCentimos = priceCents,
     activo = active,
+    visible = visible,
+    posicion = position,
+    seccion = section,
+    usos = uses,
+    duracionHoras = durationHours,
+    multiplicador = multiplier,
 )
 
 private fun PromotionDto.toDomain() = MarketPromotion(

@@ -69,6 +69,8 @@ internal const val WEBHOOK_BODY_MAX_BYTES: Long = 64L * 1024
  *
  *  - D6-03 `POST /api/v1/app/wallet/canjes`                          canjear un examen con OT (`Idempotency-Key` obligatoria)
  *  - D6-11 `GET  /api/v1/app/wallet/paquetes`                        paquetes de OT en venta (solo completos: cantidad y precio fijados)
+ *  - D6-39 `GET  /api/v1/app/market/servicios`                       Market en tres secciones (FA52, F28)
+ *  - D6-40 `POST /api/v1/app/wallet/servicios/{codigo}/canje`        canjear un consumible con OT (FA52, F28; `Idempotency-Key` obligatoria)
  *  - D6-12 `POST /api/v1/app/payments/orders`                        crear un pedido de pago (`Idempotency-Key` obligatoria)
  *  - D6-13 `GET  /api/v1/app/payments/orders/{orderId}`              estado de un pedido propio
  *  - D6-14 `POST /api/v1/app/payments/orders/{orderId}/verify`       confirmar con justificante opaco
@@ -104,6 +106,34 @@ internal fun Route.economyRoutes(runtime: EconomyRuntime?) {
             call.economyGate(runtime, EconomyOperation.PACKS)
             requireOnlyKnownQueryParams(call.request.queryParameters, emptySet())
             call.respond(rt.economy.packs())
+        }
+        // F28 (FA52) D6-39: el Market en tres secciones como maximo, con los usos que le quedan al usuario de cada servicio.
+        get("/market/servicios") {
+            val rt = runtime.orMisconfigured()
+            val identity = call.economyGate(runtime, EconomyOperation.PACKS)
+            requireOnlyKnownQueryParams(call.request.queryParameters, emptySet())
+            call.respond(rt.economy.marketCatalog(identity.userId))
+        }
+        // F28 (FA52) D6-40: canjear un servicio (consumible) con OT. Idempotency-Key obligatoria; cuerpo opcional {expectedPrice}.
+        post("/wallet/servicios/{codigo}/canje") {
+            val rt = runtime.orMisconfigured()
+            val identity = call.economyIdentity()
+            requireOnlyKnownQueryParams(call.request.queryParameters, emptySet())
+            call.requireJsonNumber("expectedPrice")
+            val request = call.receiveCanonicalCommand<ServiceRedeemRequest>(nullableFields = setOf("expectedPrice"))
+            val result = rt.economy.redeemService(identity.userId, call.parameters["codigo"].orEmpty(), request, call.idempotencyKey())
+            if (result.replayed) {
+                call.response.header(IdempotencyHeaders.REPLAYED, "true")
+                call.respond(HttpStatusCode.OK, result.response)
+            } else {
+                call.respond(HttpStatusCode.Created, result.response)
+            }
+        }.install(CanonicalIdempotency) {
+            routeTemplate = "/api/v1/app/wallet/servicios/{codigo}/canje"
+            required = true
+            this.store = store
+            before = { call -> call.economyGate(runtime, EconomyOperation.REDEEM) }
+            actor = { call -> call.economyIdentity().userId.value }
         }
         route("/payments/orders") {
             post {

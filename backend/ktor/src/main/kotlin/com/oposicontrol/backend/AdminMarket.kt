@@ -60,6 +60,23 @@ data class AdminServiceDto(
     @SerialName("precio_tickets") val precioTickets: Int? = null,
     @SerialName("precio_centimos") val precioCentimos: Int? = null,
     @EncodeDefault val activo: Boolean = true,
+    // F28 (FA52, migracion 20261114400000): escaparate de la app y metadatos de consumible.
+    /**
+     * `false` = no se vende en la app aunque este activo. Anulable A PROPOSITO, como [posicion]: un panel anterior a F28 no
+     * los manda y el upsert `merge-duplicates` conserva entonces el valor guardado (con un valor por defecto aqui, cada
+     * guardado de un panel viejo devolveria el servicio a visible y a la posicion 0). En una fila nueva manda el DEFAULT de la base.
+     */
+    val visible: Boolean? = null,
+    /** Orden dentro de su seccion (ascendente). */
+    val posicion: Int? = null,
+    /** Una de [SERVICE_SECTIONS]; `null` = la base la deriva del tipo (trigger `trg_servicios_seccion`). */
+    val seccion: String? = null,
+    /** Usos que da UNA compra; `null` = 1 activacion de 1 uso. */
+    val usos: Int? = null,
+    /** Vida de una activacion desde la compra; `null` = no caduca. */
+    @SerialName("duracion_horas") val duracionHoras: Int? = null,
+    /** Factor del potenciador sobre la recompensa base del reto diario (1..10). */
+    val multiplicador: Double? = null,
 )
 
 @OptIn(ExperimentalSerializationApi::class)
@@ -139,8 +156,28 @@ internal fun AdminServiceDto.validated(): AdminServiceDto {
             "Un servicio activo necesita precio en OposiTickets o en dinero; si no, no se puede adquirir.",
         )
     }
-    return copy(codigo = codigo.trim(), nombre = nombre.trim(), tipoServicio = tipoServicio.trim())
+    // F28: los mismos limites que los CHECK de la migracion 20261114400000, dichos antes de llegar a la base.
+    // (El tipo NO se valida aqui a proposito: lo fija el CHECK de la tabla, ver AdminMarketTest.serviceTypeIsNotConstrainedToAGuessedEnum.)
+    val section = seccion?.trim()?.uppercase()?.ifEmpty { null }
+    if (section != null && section !in SERVICE_SECTIONS) {
+        reject("SERVICE_SECTION_INVALID", "La sección debe ser una de: ${SERVICE_SECTIONS.joinToString(", ")}.")
+    }
+    if (posicion != null && posicion < 0) reject("SERVICE_POSITION_NEGATIVE", "La posición no puede ser negativa.")
+    if (usos != null && usos !in 1..100) reject("SERVICE_USES_OUT_OF_RANGE", "Los usos por compra van de 1 a 100.")
+    if (duracionHoras != null && duracionHoras !in 1..8760) {
+        reject("SERVICE_DURATION_OUT_OF_RANGE", "La duración va de 1 a 8760 horas (un año).")
+    }
+    if (multiplicador != null && (multiplicador.isNaN() || multiplicador < 1.0 || multiplicador > 10.0)) {
+        reject("SERVICE_MULTIPLIER_OUT_OF_RANGE", "El multiplicador va de 1 a 10.")
+    }
+    // Un potenciador sin multiplicador vale x1 en el reto (la base aplica coalesce a 1). El panel lo avisa y lo pide antes
+    // de guardar; aqui no se exige para no romper los guardados que ya existian (AdminMarketTest).
+    return copy(codigo = codigo.trim(), nombre = nombre.trim(), tipoServicio = tipoServicio.trim(), seccion = section)
 }
+
+
+/** CHECK `servicios_seccion_check` (F28): las tres secciones del Market que decidio el propietario. */
+internal val SERVICE_SECTIONS = listOf("OPOSITICKETS", "POTENCIADORES", "SERVICIOS")
 
 internal fun AdminPromotionDto.validated(): AdminPromotionDto {
     if (codigo.isBlank()) reject("PROMO_CODE_REQUIRED", "La promoción necesita un código.")

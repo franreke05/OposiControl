@@ -33,6 +33,8 @@ class ServerAuthoritativeTest {
                 "AttemptStartRequest", "AnswerRequest", "AttemptFinishRequest", "AbandonRequest",
                 // V1 economia (FA22): D6-03, D6-12, D6-14.
                 "ExamRedeemRequest", "PaymentOrderRequest", "PaymentVerifyRequest",
+                // F28 (FA52): D6-40.
+                "ServiceRedeemRequest",
                 // V1 wave 2 (FA29): D3-17.
                 "DailyChallengeAnswerRequest",
                 // V1 wave 4 (FA33): D3-25.
