@@ -335,6 +335,7 @@
 -- drop function if exists private.consumible_reservados(uuid, timestamptz);
 -- drop table if exists public.reto_consumibles_reservados;
 -- drop table if exists public.reto_oportunidades_pendientes;
+-- notify pgrst, 'reload schema';
 -- commit;
 -- ROLLBACK-END
 --
@@ -943,5 +944,9 @@ end;
 $$;
 revoke all on function public.app_claim_daily_challenge(uuid, uuid) from public, anon, authenticated;
 grant execute on function public.app_claim_daily_challenge(uuid, uuid) to service_role;
+
+-- PostgREST: the 4-argument app_answer_daily_challenge was dropped and the 5-argument one created; reload the schema cache at commit so the API never
+-- keeps resolving the old signature (review 2026-11-14).
+notify pgrst, 'reload schema';
 
 commit;

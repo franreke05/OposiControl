@@ -17,7 +17,9 @@
 --   * add tipo text (nullable: legacy rows have none; every V1 writer sets it), filas integer, detalle jsonb NOT NULL DEFAULT '{}', error text;
 --   * estado DEFAULT 'en_curso' (V1 writers insert (tipo) and rely on it) and iniciado_en DEFAULT now() (cooldown / watermark);
 --   * the estado CHECK keeps the four legacy values and admits the V1 ones (en_curso, ok, error).
--- Legacy columns, constraints, index, policy and grants are left as they are (the V1 bodies never use them). No data is rewritten.
+-- Legacy columns, constraints, index and policy are left as they are (the V1 bodies never use them). No data is rewritten.
+-- GRANTS (review 2026-11-14): revoke ALL on the table from anon and authenticated, on BOTH shapes (20261022101200 / 101700 already revoked select and
+-- authenticated DML; the MAIN capture still leaves MAINTAIN to both): the batches are server bookkeeping only (service role / security definer jobs).
 --
 -- ROLLBACK (manual, executed verbatim by the PG17 gate, where it is a no-op): only on the MAIN shape, the rows written by the V1 batch writers (tipo is not null:
 -- job bookkeeping that cannot exist in the pre-V1 shape) are deleted, the four columns are dropped and the legacy CHECK and defaults come back. After it the V1
@@ -36,6 +38,14 @@
 --       check (estado = any (array['pendiente'::text, 'ejecutando'::text, 'completado'::text, 'fallido'::text]));
 --     alter table public.lotes_actualizacion_ranking alter column estado set default 'pendiente'::text, alter column iniciado_en drop default;
 --     alter table public.lotes_actualizacion_ranking drop column if exists tipo, drop column if exists filas, drop column if exists detalle, drop column if exists error;
+--   end if;
+-- end
+-- $$;
+-- do $$
+-- begin
+--   -- the only privilege the earlier V1 revokes (20261022101200 / 101700) leave to the client roles; MAINTAIN exists from PostgreSQL 17 (MAIN, PG17 gate)
+--   if current_setting('server_version_num')::integer >= 170000 then
+--     execute 'grant maintain on table public.lotes_actualizacion_ranking to anon, authenticated';
 --   end if;
 -- end
 -- $$;
@@ -58,9 +68,9 @@
 --        (select count(*) from pg_constraint k where k.conrelid = 'public.lotes_actualizacion_ranking'::regclass and k.contype = 'c' and pg_get_constraintdef(k.oid) like '%estado%'
 --            and not (pg_get_constraintdef(k.oid) like '%''en_curso''%' and pg_get_constraintdef(k.oid) like '%''ok''%'))::bigint
 -- union all
--- select 'ranking_batches_open_to_clients',
---        (case when has_table_privilege('anon', 'public.lotes_actualizacion_ranking', 'select') or has_table_privilege('authenticated', 'public.lotes_actualizacion_ranking', 'select')
---              then 1 else 0 end)::bigint;
+-- select 'ranking_batches_open_to_clients:' || r.n || ':' || p.n,
+--        (case when has_table_privilege(r.n, 'public.lotes_actualizacion_ranking', p.n) then 1 else 0 end)::bigint
+--   from (values ('anon'), ('authenticated')) r(n), (values ('select'), ('insert'), ('update'), ('delete')) p(n);
 -- VERIFY-END
 
 begin;
@@ -92,5 +102,7 @@ begin
   end if;
 end
 $$;
+
+revoke all on table public.lotes_actualizacion_ranking from anon, authenticated;
 
 commit;

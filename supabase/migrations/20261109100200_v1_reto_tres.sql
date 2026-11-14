@@ -11,6 +11,9 @@
 --     main, non-annulled, active questions, regional rule), never repeating a question already in the reto, in a deterministic order per
 --     day and segment with its own salt (md5(fecha|especialidad|comunidad|fill|pregunta)). The stored tipo_slot is the source pool type
 --     (inmersiva_demo / razonada / rafaga), so a slot type can repeat (only rafaga today: 3 x RAFAGA). Positions stay compact 1..n.
+--     BY DESIGN there is NO uniqueness of tipo_slot per reto (no UNIQUE, no check): the owner decision is "always 3", and with only one type
+--     available (rafaga today) the repeat is the intended result. What never repeats is the QUESTION (the existing (reto, pregunta) key and the
+--     fill skipping questions already chosen). Review 2026-11-14: documented instead of enforced.
 --   * A segment with fewer than 3 eligible questions in total gets what exists (1 or 2); none = no row (NO_DISPONIBLE), as before.
 --   * Pass rule unchanged: aciertos_necesarios = ceil(2n/3) (3 -> 2, 2 -> 2, 1 -> 1). Streak, reward, window (DST), one row per day and
 --     segment, frozen row per user, first open without a global lock, answers, claim, media chain, attempts and ranking: unchanged.
