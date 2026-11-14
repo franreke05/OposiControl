@@ -107,13 +107,16 @@ internal fun Route.attemptRoutes(runtime: AttemptRuntime?) {
             val rt = runtime.orMisconfigured()
             val identity = call.gatedIdentity()
             val request = call.receiveCanonicalCommand<AttemptStartRequest>()
+            // FA51b: la primera pagina de D2-08 en linea; se valida ANTES de crear el intento.
+            val inline = parseInlineQuestions(call.request.queryParameters)
             if (request.modo == "DEMO") rt.demoIpLimit(call)
             val started = rt.attempts.start(identity.userId, call.pathUuid("examId"), request)
+            val response = inline?.let { rt.attempts.withInlineQuestions(identity.userId, started.response, it) } ?: started.response
             if (started.created) {
                 call.response.header(HttpHeaders.Location, "/api/v1/app/intentos/${started.response.intento.id}")
-                call.respond(HttpStatusCode.Created, started.response)
+                call.respond(HttpStatusCode.Created, response)
             } else {
-                call.respond(started.response)
+                call.respond(response)
             }
         }.measured(ExamOp.START, runtime?.metrics).install(CanonicalIdempotency) {
             routeTemplate = "/api/v1/app/examenes/{examId}/intentos"
@@ -159,13 +162,15 @@ internal fun Route.attemptRoutes(runtime: AttemptRuntime?) {
             get("/preguntas") {
                 val rt = runtime.orMisconfigured()
                 val identity = call.attemptGate(runtime, AttemptOperation.READ, "attemptId")
+                // FA51: `desde` (posicion 1-based) es la alternativa al cursor para retomar en una pregunta con UNA peticion; los dos a la vez = 400.
+                val from = parseQuestionsFrom(call.request.queryParameters)
                 val page = parseAttemptPage(
                     call.request.queryParameters,
                     AttemptService.QUESTIONS_DEFAULT_LIMIT,
                     AttemptService.QUESTIONS_MAX_LIMIT,
                     "preguntas",
                 )
-                call.respond(rt.attempts.questions(identity.userId, call.pathUuid("attemptId"), page))
+                call.respond(rt.attempts.questions(identity.userId, call.pathUuid("attemptId"), page, from))
             }.measured(ExamOp.QUESTION_PAGE, runtime?.metrics)
             put("/respuestas/{preguntaId}") {
                 val rt = runtime.orMisconfigured()

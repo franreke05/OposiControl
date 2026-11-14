@@ -53,6 +53,7 @@ class SavedItemsRoutesTest {
 
     private val upstream = Upstream()
     private val limited = CopyOnWriteArrayList<SavedOperation>()
+    private val signed = CopyOnWriteArrayList<Triple<String, String, Int>>()
     private var limitHit = false
 
     private fun Application.savedModule() {
@@ -62,7 +63,7 @@ class SavedItemsRoutesTest {
         routing {
             savedItemsRoutes(
                 SavedItemsRuntime(
-                    resolver, SavedItemsService(upstream),
+                    resolver, SavedItemsService(upstream, sign = { bucket, path, ttl -> signed += Triple(bucket, path, ttl); "https://storage.test/$bucket/$path?token=t" }, clock = { java.time.Instant.parse("2026-11-14T10:00:00Z") }),
                     limit = { op, _ -> limited += op; if (limitHit) throw CanonicalErrorCode.RATE_LIMITED.exception(retryAfterSeconds = 7) },
                 ),
             )
@@ -207,5 +208,144 @@ class SavedItemsRoutesTest {
         assertEquals(HttpStatusCode.BadRequest, client.getAs("/api/v1/app/opositeca?tipo=examen").status)
         assertEquals(HttpStatusCode.BadRequest, client.getAs("/api/v1/app/opositeca?orden=asc").status)
         assertEquals(HttpStatusCode.BadRequest, client.getAs("/api/v1/app/opositeca?limit=0").status)
+    }
+
+    // ---------- FA50: D4-24 tipoExamen, D4-27 detalle, D4-28 recurso ----------
+
+    private val docs = com.oposicontrol.backend.openapi.OpenApiDocs.locate()
+    private val checker = com.oposicontrol.backend.openapi.SchemaChecker(docs)
+
+    private fun assertConforms(contractId: String, status: String, body: String) {
+        val op = docs.operations().first { it.contractId == contractId }
+        val response = docs.responses(op).getValue(status)
+        val schema = ((response.value as Map<*, *>)["content"] as Map<*, *>).let { (it["application/json"] as Map<*, *>)["schema"] }
+        val problems = mutableListOf<String>()
+        checker.validate(com.oposicontrol.backend.openapi.OpenApiDocs.Node(schema, response.file), json.parseToJsonElement(body), "$", problems)
+        assertTrue(problems.isEmpty(), "$contractId $status does not conform to the frozen OpenAPI:\n${problems.joinToString("\n")}\n$body")
+    }
+
+    private val exam = "9e9e9e9e-9e9e-4e9e-8e9e-9e9e9e9e9e9e"
+    private val optA = "0a0a0a0a-0000-4000-8000-00000000000a"
+    private val optB = "0a0a0a0a-0000-4000-8000-00000000000b"
+    private val resource = "4f4f4f4f-4f4f-4f4f-8f4f-4f4f4f4f4f4f"
+
+    private fun detail(anulada: Boolean = false, tipoPregunta: String = "inmersiva", tipoExamen: String = "inmersivo") =
+        """{"outcome":"OK","pregunta_id":"$question","examen_id":"$exam","examen_titulo":"Inmersivo 2025","tipo_examen":"$tipoExamen","posicion":7,"anulada":$anulada,""" +
+            """"contenido":{"v":1,"codigo":"P-7","tipo":"$tipoPregunta","titulo":"Enunciado","opciones":[{"id":"$optB","letra":"B","texto":"No","posicion":2},{"id":"$optA","letra":"A","texto":"Si","posicion":1}],""" +
+            """"recursos":[{"id":"$resource","tipo":"audio","titulo":"Caso","posicion":1,"bucket":"recursos-pregunta","ruta":"preguntas/$question/$resource.mp3","mime":"audio/mpeg","bytes":1234,"durationMs":5000,"envelope":null}],""" +
+            """"etiquetas":[{"id":"7e7e7e7e-7e7e-4e7e-8e7e-7e7e7e7e7e7e","nombre":"Tema 1"}]},""" +
+            """"solucion":{"opcion_correcta_id":"$optA","razonamiento":"Porque si"}}"""
+
+    @Test
+    fun theSavedQuestionDetailIsAReviewItemOfTheChosenExamWithoutQuota() = testApplication {
+        application { savedModule() }
+        upstream.handler = { fn, _ -> if (fn == "app_saved_question_detail") SupabaseRawResponse(200, detail()) else SupabaseRawResponse(500, "{}") }
+        val r = createClient { }.getAs("/api/v1/app/opositeca/guardados/pregunta/${question.uppercase()}")
+        val body = r.bodyAsText()
+        assertEquals(HttpStatusCode.OK, r.status, body)
+        assertEquals("no-store", r.headers[HttpHeaders.CacheControl])
+        assertConforms("D4-27", "200", body)
+        val item = obj(body)
+        assertEquals(question, item["preguntaId"]!!.jsonPrimitive.content)
+        assertEquals(7, item["posicion"]!!.jsonPrimitive.content.toInt())
+        assertEquals("Enunciado", item["enunciado"]!!.jsonPrimitive.content)
+        assertEquals("inmersiva", item["tipoPregunta"]!!.jsonPrimitive.content)
+        assertEquals(listOf("A", "B"), item["opciones"]!!.jsonArray.map { it.jsonObject["letra"]!!.jsonPrimitive.content }, "options by position")
+        assertEquals("UNANSWERED", item["status"]!!.jsonPrimitive.content)
+        assertEquals(optA, item["correctAnswer"]!!.jsonObject["opcionId"]!!.jsonPrimitive.content)
+        assertEquals("A", item["correctAnswer"]!!.jsonObject["letra"]!!.jsonPrimitive.content)
+        assertEquals(exam, item["examenId"]!!.jsonPrimitive.content)
+        assertEquals("Inmersivo 2025", item["examenTitulo"]!!.jsonPrimitive.content)
+        assertEquals("inmersivo", item["tipoExamen"]!!.jsonPrimitive.content)
+        assertEquals("false", item["anulada"]!!.jsonPrimitive.content)
+        val res = item["resources"]!!.jsonArray.single().jsonObject
+        assertEquals(resource, res["id"]!!.jsonPrimitive.content)
+        assertEquals("audio", res["tipo"]!!.jsonPrimitive.content)
+        assertTrue("ruta" !in res && "bucket" !in res, "the internal Storage path is never served: $res")
+        assertEquals(listOf("Tema 1"), item["etiquetas"]!!.jsonArray.map { it.jsonObject["nombre"]!!.jsonPrimitive.content })
+        val (fn, args) = upstream.rpcs.single()
+        assertEquals("app_saved_question_detail", fn, "one call; the daily limiter (app_reveal_attempt_questions) is never touched")
+        assertEquals(mapOf("p_usuario" to TEST_UID, "p_pregunta" to question), obj(args).mapValues { it.value.jsonPrimitive.content })
+        assertEquals(listOf(SavedOperation.READ), limited.toList())
+    }
+
+    @Test
+    fun theExplanationFollowsTheReviewPolicyAndAnAnnulledQuestionHidesTheSolution() = testApplication {
+        application { savedModule() }
+        val client = createClient { }
+        val previous = ExplanationPolicy.visible
+        try {
+            ExplanationPolicy.visible = true
+            upstream.handler = { _, _ -> SupabaseRawResponse(200, detail(tipoPregunta = "razonada", tipoExamen = "razonado")) }
+            val shown = obj(client.getAs("/api/v1/app/opositeca/guardados/pregunta/$question").bodyAsText())
+            assertEquals("Porque si", shown["explanation"]!!.jsonObject["razonamiento"]!!.jsonPrimitive.content)
+            assertEquals("razonado", shown["tipoExamen"]!!.jsonPrimitive.content)
+            upstream.handler = { _, _ -> SupabaseRawResponse(200, detail(anulada = true)) }
+            val annulled = client.getAs("/api/v1/app/opositeca/guardados/pregunta/$question").bodyAsText()
+            assertConforms("D4-27", "200", annulled)
+            val a = obj(annulled)
+            assertEquals("ANNULLED", a["status"]!!.jsonPrimitive.content)
+            assertEquals("true", a["anulada"]!!.jsonPrimitive.content)
+            assertNull(a["correctAnswer"], "annulled: no correct answer, as in the review")
+            assertNull(a["explanation"])
+            ExplanationPolicy.visible = false
+            upstream.handler = { _, _ -> SupabaseRawResponse(200, detail()) }
+            assertNull(obj(client.getAs("/api/v1/app/opositeca/guardados/pregunta/$question").bodyAsText())["explanation"], "EXPLANATIONS_VISIBLE off: no explanation")
+        } finally {
+            ExplanationPolicy.visible = previous
+        }
+    }
+
+    @Test
+    fun notSavedOrNoAccessIs404AndABadIdIs400BeforeTheDatabase() = testApplication {
+        application { savedModule() }
+        val client = createClient { }
+        upstream.handler = { _, _ -> SupabaseRawResponse(200, """{"outcome":"NOT_FOUND"}""") }
+        val missing = client.getAs("/api/v1/app/opositeca/guardados/pregunta/$question")
+        assertEquals(HttpStatusCode.NotFound, missing.status)
+        assertEquals("NOT_FOUND", code(missing.bodyAsText()))
+        assertEquals(HttpStatusCode.NotFound, client.getAs("/api/v1/app/opositeca/guardados/pregunta/$question/recursos/$resource").status)
+        upstream.rpcs.clear()
+        assertEquals(HttpStatusCode.BadRequest, client.getAs("/api/v1/app/opositeca/guardados/pregunta/no-es-uuid").status)
+        assertEquals(HttpStatusCode.BadRequest, client.getAs("/api/v1/app/opositeca/guardados/pregunta/$question?x=1").status)
+        assertEquals(HttpStatusCode.BadRequest, client.getAs("/api/v1/app/opositeca/guardados/pregunta/$question/recursos/nope").status)
+        assertEquals(HttpStatusCode.Unauthorized, client.getAs("/api/v1/app/opositeca/guardados/pregunta/$question", token = null).status)
+        assertTrue(upstream.rpcs.isEmpty())
+        upstream.handler = { _, _ -> SupabaseRawResponse(200, """{"outcome":"OK"}""") }
+        assertEquals(HttpStatusCode.BadGateway, client.getAs("/api/v1/app/opositeca/guardados/pregunta/$question").status, "a partial row is a contract error")
+    }
+
+    @Test
+    fun aResourceOfTheSavedQuestionIsSignedLikeTheAttemptOnes() = testApplication {
+        application { savedModule() }
+        val client = createClient { }
+        upstream.handler = { _, _ -> SupabaseRawResponse(200, detail()) }
+        val r = client.getAs("/api/v1/app/opositeca/guardados/pregunta/$question/recursos/${resource.uppercase()}")
+        val body = r.bodyAsText()
+        assertEquals(HttpStatusCode.OK, r.status, body)
+        assertConforms("D4-28", "200", body)
+        assertEquals("https://storage.test/recursos-pregunta/preguntas/$question/$resource.mp3?token=t", obj(body)["url"]!!.jsonPrimitive.content)
+        assertEquals("2026-11-14T10:05:00Z", obj(body)["expiresAt"]!!.jsonPrimitive.content)
+        assertEquals(listOf(Triple("recursos-pregunta", "preguntas/$question/$resource.mp3", 300)), signed.toList())
+        val other = "5e5e5e5e-5e5e-4e5e-8e5e-5e5e5e5e5e5e"
+        val notThere = client.getAs("/api/v1/app/opositeca/guardados/pregunta/$question/recursos/$other")
+        assertEquals(HttpStatusCode.NotFound, notThere.status)
+        assertEquals("RESOURCE_NOT_FOUND", code(notThere.bodyAsText()))
+        assertEquals(1, signed.size, "nothing outside the question is signed")
+    }
+
+    @Test
+    fun theListCarriesTheExamType() = testApplication {
+        application { savedModule() }
+        upstream.handler = { _, _ ->
+            SupabaseRawResponse(
+                200,
+                """[{"id":"8d8d8d8d-8d8d-4d8d-8d8d-000000000001","tipo":"pregunta","target_id":"$question","guardado_en":"2026-10-16T10:00:00.000000+00:00","accesible":true,""" +
+                    """"titulo":"T","examen_id":"$exam","examen_titulo":"E","tipo_examen":"rafaga"}]""",
+            )
+        }
+        val body = createClient { }.getAs("/api/v1/app/opositeca").bodyAsText()
+        assertConforms("D4-24", "200", body)
+        assertEquals("rafaga", obj(body)["items"]!!.jsonArray.single().jsonObject["pregunta"]!!.jsonObject["tipoExamen"]!!.jsonPrimitive.content)
     }
 }

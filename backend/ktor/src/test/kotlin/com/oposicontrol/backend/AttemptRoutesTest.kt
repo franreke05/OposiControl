@@ -626,6 +626,142 @@ class AttemptRoutesTest {
         assertFalse(upstream.urls.any { "primera_opcion_id" in it || "tiempo_respuesta" in it }, upstream.urls.toString())
     }
 
+    // =================================================================== D2-03 primera pagina en linea (FA51b)
+
+    private fun pagedQuestions(total: Int): (String) -> String = { uri ->
+        val after = Regex("posicion=gt\\.(\\d+)").find(uri)!!.groupValues[1].toInt()
+        val limit = Regex("limit=(\\d+)").find(uri)!!.groupValues[1].toInt()
+        "[" + (1..total).filter { it > after }.take(limit).joinToString(",") { questionRow(it) } + "]"
+    }
+
+    @Test
+    fun startWithIncluirPreguntasCarriesTheFirstD208PageAndRevealsOnlyIt() = testApplication {
+        application { attemptModule() }
+        upstream.examById = examRow()
+        upstream.attemptRow = attemptRow(respondidas = 0)
+        upstream.questionPage = pagedQuestions(9)
+        val response = client.call(HttpMethod.Post, "$start?incluirPreguntas=true", key = key1)
+        val body = response.bodyAsText()
+        assertEquals(HttpStatusCode.Created, response.status, body)
+        assertConforms("D2-03", "201", body)
+        val page = obj(body)["preguntas"]!!.jsonObject
+        assertEquals((1..9).toList(), page["items"]!!.jsonArray.map { it.jsonObject["posicion"]!!.jsonPrimitive.int }, "the D2-08 default page (10) of a 9-question attempt")
+        assertNull(page["nextCursor"])
+        assertEquals((1..9).map { q(it) }, upstream.rpcBodies("app_reveal_attempt_questions").single()["p_preguntas"]!!.jsonArray.map { it.jsonPrimitive.content })
+        // the inline page IS the D2-08 page: same items, and its cursor continues on D2-08
+        val viaD208 = client.call(HttpMethod.Get, "$base/preguntas").bodyAsText()
+        assertEquals(obj(viaD208)["items"], page["items"])
+        // without the flag (or with false) the body is unchanged
+        val plain = client.call(HttpMethod.Post, "$start?incluirPreguntas=false", key = key2)
+        assertNull(obj(plain.bodyAsText())["preguntas"])
+    }
+
+    @Test
+    fun startWithDesdeResumesAtThatPositionAndALimitErrorNeverFailsTheStart() = testApplication {
+        application { attemptModule() }
+        upstream.examById = examRow()
+        upstream.startOutcome = """{"outcome":"RESUMED","intento_id":"$attempt"}"""
+        upstream.attemptRow = attemptRow(respondidas = 0)
+        upstream.questionPage = pagedQuestions(9)
+        val resumed = client.call(HttpMethod.Post, "$start?desde=8", key = key1)
+        val body = resumed.bodyAsText()
+        assertEquals(HttpStatusCode.OK, resumed.status, body)
+        assertConforms("D2-03", "200", body)
+        assertEquals("true", obj(body)["reanudado"]!!.jsonPrimitive.content)
+        val page = obj(body)["preguntas"]!!.jsonObject
+        assertEquals(listOf(8, 9), page["items"]!!.jsonArray.map { it.jsonObject["posicion"]!!.jsonPrimitive.int })
+        assertNull(page["nextCursor"])
+        // the page would exceed the daily limit: the start answers without preguntas (D2-08 then gives the 429 with Retry-After)
+        upstream.revealOutcome = """{"outcome":"DAILY_LIMIT_REACHED","retry_after_seconds":60}"""
+        val blocked = client.call(HttpMethod.Post, "$start?incluirPreguntas=true", key = key2)
+        assertEquals(HttpStatusCode.OK, blocked.status, blocked.bodyAsText())
+        assertNull(obj(blocked.bodyAsText())["preguntas"])
+        assertEquals(HttpStatusCode.TooManyRequests, client.call(HttpMethod.Get, "$base/preguntas").status)
+    }
+
+    @Test
+    fun startRejectsABadInlineRequestBeforeCreatingAnything() = testApplication {
+        application { attemptModule() }
+        upstream.examById = examRow()
+        upstream.attemptRow = attemptRow(respondidas = 0)
+        for ((i, pair) in listOf("incluirPreguntas=si" to "incluirPreguntas", "desde=0" to "desde", "desde=abc" to "desde").withIndex()) {
+            val (query, field) = pair
+            val r = client.call(HttpMethod.Post, "$start?$query", key = "0a0a0a0a-0000-4000-8000-00000000020$i")
+            val body = r.bodyAsText()
+            assertEquals(HttpStatusCode.BadRequest, r.status, "$query -> $body")
+            assertEquals("VALIDATION", code(body))
+            assertEquals(field, obj(body)["details"]!!.jsonObject["issues"]!!.jsonArray.single().jsonObject["field"]!!.jsonPrimitive.content)
+        }
+        assertEquals(0, upstream.rpcBodies("app_start_exam_attempt").size, "no attempt is created")
+    }
+
+    // =================================================================== D2-08 desde (FA51)
+
+    @Test
+    fun desdeStartsThePageAtThatPositionRevealsOnlyThatPageAndContinuesByCursor() = testApplication {
+        application { attemptModule() }
+        upstream.attemptRow = attemptRow()
+        upstream.questionPage = { uri ->
+            val after = Regex("posicion=gt\\.(\\d+)").find(uri)!!.groupValues[1].toInt()
+            val limit = Regex("limit=(\\d+)").find(uri)!!.groupValues[1].toInt()
+            "[" + (1..6).filter { it > after }.take(limit).joinToString(",") { questionRow(it) } + "]"
+        }
+        val first = client.call(HttpMethod.Get, "$base/preguntas?desde=3&limit=2")
+        val body = first.bodyAsText()
+        assertEquals(HttpStatusCode.OK, first.status, body)
+        assertConforms("D2-08", "200", body)
+        assertEquals(listOf(3, 4), obj(body)["items"]!!.jsonArray.map { it.jsonObject["posicion"]!!.jsonPrimitive.int })
+        assertTrue(upstream.urls.last { "revisiones_pregunta(" in it }.contains("posicion=gt.2&order=posicion.asc&limit=3"), "desde N = posicion > N - 1, one row more")
+        // the daily limiter sees ONLY the questions of the returned page, exactly as when the page is reached by cursor
+        assertEquals(listOf(q(3), q(4)), upstream.rpcBodies("app_reveal_attempt_questions").single()["p_preguntas"]!!.jsonArray.map { it.jsonPrimitive.content })
+        val cursor = obj(body)["nextCursor"]!!.jsonPrimitive.content
+        val next = client.call(HttpMethod.Get, "$base/preguntas?cursor=$cursor&limit=2").bodyAsText()
+        assertEquals(listOf(5, 6), obj(next)["items"]!!.jsonArray.map { it.jsonObject["posicion"]!!.jsonPrimitive.int }, "the returned cursor continues as usual")
+        assertNull(obj(next)["nextCursor"])
+        // desde=1 is the first page; beyond the last posicion = empty page, no cursor, nothing revealed
+        val one = client.call(HttpMethod.Get, "$base/preguntas?desde=1&limit=2").bodyAsText()
+        assertEquals(listOf(1, 2), obj(one)["items"]!!.jsonArray.map { it.jsonObject["posicion"]!!.jsonPrimitive.int })
+        val reveals = upstream.rpcBodies("app_reveal_attempt_questions").size
+        val beyond = client.call(HttpMethod.Get, "$base/preguntas?desde=7")
+        assertEquals(HttpStatusCode.OK, beyond.status)
+        assertConforms("D2-08", "200", beyond.bodyAsText())
+        assertEquals(0, obj(beyond.bodyAsText())["items"]!!.jsonArray.size)
+        assertNull(obj(beyond.bodyAsText())["nextCursor"])
+        assertEquals(reveals, upstream.rpcBodies("app_reveal_attempt_questions").size, "an empty page reveals nothing")
+        // last page boundary: desde = last posicion
+        val last = client.call(HttpMethod.Get, "$base/preguntas?desde=6").bodyAsText()
+        assertEquals(listOf(6), obj(last)["items"]!!.jsonArray.map { it.jsonObject["posicion"]!!.jsonPrimitive.int })
+        assertNull(obj(last)["nextCursor"])
+    }
+
+    @Test
+    fun desdeIsValidatedBeforeTheUpstreamAndExcludesTheCursor() = testApplication {
+        application { attemptModule() }
+        upstream.attemptRow = attemptRow()
+        upstream.questionPage = { "[${questionRow(1)},${questionRow(2)}]" }
+        val cursor = obj(client.call(HttpMethod.Get, "$base/preguntas?limit=1").bodyAsText())["nextCursor"]!!.jsonPrimitive.content
+        val before = upstream.sent.size
+        for ((query, issue) in listOf(
+            "desde=2&cursor=$cursor" to ISSUE_DESDE_WITH_CURSOR,
+            "desde=0" to "OUT_OF_RANGE",
+            "desde=-3" to "OUT_OF_RANGE",
+            "desde=201" to "OUT_OF_RANGE",
+            "desde=abc" to "INVALID_FORMAT",
+            "desde=2.5" to "INVALID_FORMAT",
+            "desde=" to "INVALID_FORMAT",
+            "desde=2&desde=3" to "INVALID_FORMAT",
+        )) {
+            val r = client.call(HttpMethod.Get, "$base/preguntas?$query")
+            val body = r.bodyAsText()
+            assertEquals(HttpStatusCode.BadRequest, r.status, "$query -> $body")
+            assertEquals("VALIDATION", code(body), query)
+            val issues = obj(body)["details"]!!.jsonObject["issues"]!!.jsonArray.map { it.jsonObject }
+            assertEquals(listOf("desde" to issue), issues.map { it["field"]!!.jsonPrimitive.content to it["issue"]!!.jsonPrimitive.content }, query)
+        }
+        assertEquals(before, upstream.sent.size, "an invalid desde never reaches the upstream")
+        assertEquals(HttpStatusCode.OK, client.call(HttpMethod.Get, "$base/preguntas?desde=200").status, "the upper bound is valid")
+    }
+
     // =================================================================== D2-09
 
     @Test

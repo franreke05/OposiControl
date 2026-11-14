@@ -114,7 +114,12 @@ internal data class AttemptGridItem(
 internal data class AttemptView(val intento: AttemptDto, val grid: List<AttemptGridItem>)
 
 @Serializable
-internal data class AttemptStartResponse(val intento: AttemptDto, val reanudado: Boolean)
+internal data class AttemptStartResponse(
+    val intento: AttemptDto,
+    val reanudado: Boolean,
+    /** FA51b: la primera pagina de D2-08 en linea (`incluirPreguntas=true` o `desde=N`); ausente si no se pidio o si esa pagina no se pudo servir (p. ej. DAILY_LIMIT_REACHED). */
+    val preguntas: AttemptQuestionPage? = null,
+)
 
 @Serializable
 internal data class QuestionOptionDto(val id: String, val letra: String, val texto: String)
@@ -343,6 +348,54 @@ internal fun parseAttemptPage(params: Parameters, default: Int, max: Int, list: 
         scope = CursorScope(sort = listOf("posicion asc"), filters = mapOf("lista" to list)),
     )
 
+/**
+ * FA51 (D2-08): `desde` = posicion 1-based (la del grid de D2-07) desde la que empieza la pagina, alternativa al cursor para retomar en la pregunta N con UNA peticion.
+ * Ausente = `null`. Con `cursor` a la vez, no entero, < 1 o > [AttemptGateway.MAX_ATTEMPT_QUESTIONS] = 400 VALIDATION (campo `desde`).
+ */
+internal fun parseQuestionsFrom(params: Parameters): Int? {
+    val raw = params.getAll("desde") ?: return null
+    val issue = when {
+        !params["cursor"].isNullOrEmpty() -> ISSUE_DESDE_WITH_CURSOR
+        raw.size != 1 -> CanonicalIssue.INVALID_FORMAT
+        else -> raw.single().trim().toIntOrNull().let { value ->
+            when {
+                value == null || raw.single().trim() != value.toString() -> CanonicalIssue.INVALID_FORMAT
+                value < 1 || value > AttemptGateway.MAX_ATTEMPT_QUESTIONS -> CanonicalIssue.OUT_OF_RANGE
+                else -> return value
+            }
+        }
+    }
+    throw validationError(ErrorIssue("desde", issue))
+}
+
+/** FA51b: la pagina de D2-08 que D2-03 devuelve en linea: [from] `null` = desde la primera. */
+internal data class InlineQuestionsRequest(val page: CursorPageRequest, val from: Int?)
+
+/**
+ * FA51b (D2-03): `incluirPreguntas=true` (pagina 1) o `desde=N` (pagina desde N; implica incluir) piden la primera pagina de D2-08 en la respuesta del arranque,
+ * con el tamano por defecto de D2-08 (10). Sin ninguno de los dos = `null` (respuesta de siempre). `incluirPreguntas` distinto de true/false, `desde`
+ * invalido = 400 VALIDATION ANTES de crear el intento.
+ */
+internal fun parseInlineQuestions(params: Parameters): InlineQuestionsRequest? {
+    val include = params.getAll("incluirPreguntas")?.let { values ->
+        when (values.singleOrNull()?.trim()?.lowercase()) {
+            "true" -> true
+            "false" -> false
+            else -> throw validationError(ErrorIssue("incluirPreguntas", CanonicalIssue.INVALID_FORMAT))
+        }
+    }
+    val from = parseQuestionsFrom(params)
+    if (include != true && from == null) {
+        return null
+    }
+    if (!params["cursor"].isNullOrEmpty()) throw validationError(ErrorIssue("cursor", CanonicalIssue.UNKNOWN_FIELD))
+    // Pagina por defecto de D2-08 (10): el contrato de D2-03 no lleva parametros de paginacion; el nextCursor devuelto sigue en D2-08.
+    return InlineQuestionsRequest(parseAttemptPage(Parameters.Empty, AttemptService.QUESTIONS_DEFAULT_LIMIT, AttemptService.QUESTIONS_MAX_LIMIT, "preguntas"), from)
+}
+
+/** FA51: `desde` y `cursor` son excluyentes. */
+internal const val ISSUE_DESDE_WITH_CURSOR = "MUTUALLY_EXCLUSIVE"
+
 /** La clave del cursor de posicion: UN entero >= 1. Cualquier otra forma es 400 INVALID_CURSOR. */
 internal fun positionAfter(keys: List<JsonElement>?): Int {
     if (keys == null) return 0
@@ -497,9 +550,11 @@ internal class AttemptService(
     }
 
     // ----- D2-08 -----
-    suspend fun questions(userId: CanonicalUserId, attemptId: String, page: CursorPageRequest): AttemptQuestionPage = withUpstreamIo {
+    suspend fun questions(userId: CanonicalUserId, attemptId: String, page: CursorPageRequest, from: Int? = null): AttemptQuestionPage = withUpstreamIo {
         val row = ownedAttempt(userId, attemptId)
-        val rows = gateway.questionPage(row.id, positionAfter(page.after), page.fetchLimit, open = row.estado != FINISHED)
+        // FA51: `desde` N = la pagina que empieza en la posicion N (posicion > N - 1); el cupo es el mismo: solo se revela lo que trae ESTA pagina.
+        val after = from?.let { it - 1 } ?: positionAfter(page.after)
+        val rows = gateway.questionPage(row.id, after, page.fetchLimit, open = row.estado != FINISHED)
         val cut = page.page(rows) { listOf(JsonPrimitive(it.posicion)) }
         // Limitador diario (C-L1): lo que la pagina va a REVELAR se registra antes de servirla; un intento finalizado ya se vio.
         if (row.estado != FINISHED && cut.items.isNotEmpty()) {
@@ -547,6 +602,21 @@ internal class AttemptService(
             },
             nextCursor = cut.nextCursor,
         )
+    }
+
+    // ----- D2-03 + FA51b -----
+    /**
+     * La respuesta del arranque con la primera pagina de D2-08 en linea: es EXACTAMENTE [questions] (misma lectura, mismo registro en el limitador diario: solo
+     * se revelan las preguntas de esa pagina). Si esa pagina no se puede servir con un error de dominio (p. ej. 429 DAILY_LIMIT_REACHED), el arranque NO falla:
+     * `preguntas` queda ausente y el cliente pide D2-08 (que devuelve ese error con su Retry-After). El intento ya existe y la respuesta del arranque no cambia.
+     */
+    suspend fun withInlineQuestions(userId: CanonicalUserId, started: AttemptStartResponse, inline: InlineQuestionsRequest): AttemptStartResponse {
+        val page = try {
+            questions(userId, started.intento.id, inline.page, inline.from)
+        } catch (failure: BackendDomainException) {
+            return started
+        }
+        return started.copy(preguntas = page)
     }
 
     // ----- D2-09 -----
@@ -1035,7 +1105,7 @@ internal class AttemptService(
 
         /** Vida de la URL firmada: corta (un enlace filtrado caduca pronto); el cliente pide otra al caducar. */
         internal const val RESOURCE_URL_TTL_SECONDS = 300
-        private val OPTION_LETTERS = setOf("A", "B", "C", "D")
+        internal val OPTION_LETTERS = setOf("A", "B", "C", "D")
 
         /** DEC-013 (default tecnico): correctas / evaluables * 10, half-up a 2 decimales. Sin evaluables, 0. */
         internal fun gradeOf(correct: Int, evaluable: Int): BigDecimal =

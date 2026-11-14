@@ -27,12 +27,16 @@ import kotlinx.serialization.json.put
 //   D4-21 DELETE /api/v1/app/opositeca/guardados/{tipo}/{targetId}   quitar (idempotente: 204 este o no)
 //   D4-24 GET    /api/v1/app/opositeca                               la OposiTeca (keyset `guardadoEn desc, id desc`)
 //   D4-26 GET    /api/v1/app/opositeca/guardados/{tipo}?ids=...      cuales de hasta 50 ids estan guardados (estado inicial del corazon)
+//   D4-27 GET    /api/v1/app/opositeca/guardados/{tipo}/{targetId}                    FA50: la pregunta guardada entera (hoja de la Biblioteca), sin cupo
+//   D4-28 GET    /api/v1/app/opositeca/guardados/{tipo}/{targetId}/recursos/{recursoId} FA50: URL firmada de un recurso de esa pregunta
 //
 // Identidad = SOLO el `sub` del JWT. El acceso (puerta de especialidad + veredicto unico) y el tope los decide la base, en UNA
 // funcion por comando bajo un cerrojo por usuario; Ktor valida la forma, limita por usuario y traduce errores.
 
 internal const val SAVED_TIPO_PREGUNTA = "pregunta"
 internal const val SAVED_STATE_MAX_IDS = 50
+private const val STATUS_ANNULLED = "ANNULLED"
+private const val STATUS_UNANSWERED = "UNANSWERED"
 
 internal enum class SavedOperation(val limit: OposiBotsAuthOperation) {
     WRITE(OposiBotsAuthOperation.SAVED_WRITE),
@@ -51,10 +55,11 @@ internal class SavedItemsRuntime(
             environment: (String) -> String? = System::getenv,
         ): SavedItemsRuntime? {
             val upstream = TransportEconomyUpstream.fromEnvironment(environment) ?: return null
+            val storage = SupabaseRequestTransport.fromEnvironment(environment)
             val limiter = auth?.rateLimiter
             return SavedItemsRuntime(
                 resolver = resolver,
-                service = SavedItemsService(upstream),
+                service = SavedItemsService(upstream, sign = storage?.let { t -> { bucket, path, ttl -> t.storageSignedUrl(bucket, path, ttl) } }),
                 limit = { operation, userId ->
                     if (limiter != null) {
                         val decision = limiter.checkSubject(operation.limit, userId.value)
@@ -72,7 +77,54 @@ internal class SavedItemsRuntime(
 internal data class SavedItemDto(val tipo: String, val targetId: String, val guardadoEn: String)
 
 @Serializable
-internal data class SavedQuestionDto(val titulo: String, val examenId: String, val examenTitulo: String)
+internal data class SavedQuestionDto(
+    val titulo: String,
+    val examenId: String,
+    val examenTitulo: String,
+    /** FA50 (aditivo): el tipo del examen elegido (rafaga | razonado | inmersivo). */
+    val tipoExamen: String? = null,
+)
+
+/**
+ * D4-27 (FA50): la MISMA forma que un elemento de la revision (D2-65 `ReviewItem`) para una pregunta suelta, mas el examen elegido. No hay intento: `status` es ANNULLED
+ * (anulada en ese examen) o UNANSWERED, y respuesta / tiempos van vacios. Contenido y solucion VIVOS (las mismas funciones que congelan las revisiones).
+ */
+@Serializable
+internal data class SavedQuestionDetailDto(
+    val posicion: Int,
+    val preguntaId: String,
+    val codigoPregunta: String,
+    val tipoPregunta: String,
+    val enunciado: String,
+    val opciones: List<QuestionOptionDto>,
+    val status: String,
+    val firstAnswer: ReviewFirstAnswer? = null,
+    val finalAnswer: ReviewFinalAnswer? = null,
+    val cambioRespuesta: Boolean,
+    val esPrimeraRespuesta: Boolean,
+    val correctAnswer: ReviewCorrectAnswer? = null,
+    val explanation: ReviewExplanation? = null,
+    val resources: List<AttemptResourceDto>,
+    val timings: ReviewTimings,
+    val etiquetas: List<ReviewTag>,
+    val examenId: String,
+    val examenTitulo: String,
+    val tipoExamen: String,
+    val anulada: Boolean,
+)
+
+@Serializable
+private data class SavedDetailRow(
+    val outcome: String,
+    @SerialName("pregunta_id") val preguntaId: String? = null,
+    @SerialName("examen_id") val examenId: String? = null,
+    @SerialName("examen_titulo") val examenTitulo: String? = null,
+    @SerialName("tipo_examen") val tipoExamen: String? = null,
+    val posicion: Int? = null,
+    val anulada: Boolean = false,
+    val contenido: RevisionContent? = null,
+    val solucion: RevisionSolution? = null,
+)
 
 @Serializable
 internal data class SavedEntryDto(
@@ -106,6 +158,7 @@ private data class ListRow(
     val titulo: String? = null,
     @SerialName("examen_id") val examenId: String? = null,
     @SerialName("examen_titulo") val examenTitulo: String? = null,
+    @SerialName("tipo_examen") val tipoExamen: String? = null,
 )
 
 internal data class SavedListQuery(val tipo: String?, val page: CursorPageRequest)
@@ -152,7 +205,91 @@ internal fun parseSavedIds(tipo: String, raw: String?): List<String> {
 internal class SavedItemsService(
     private val upstream: EconomyUpstream,
     private val json: Json = Json { ignoreUnknownKeys = true },
+    /** FA50 D4-28: firma de Storage (bucket, ruta, ttl) -> URL. `null` = sin Storage configurado: el acceso a un recurso falla cerrado (503). */
+    private val sign: ((String, String, Int) -> String)? = null,
+    private val clock: () -> java.time.Instant = java.time.Instant::now,
 ) {
+    // ----- D4-27 (FA50) -----
+    /**
+     * La pregunta guardada entera para la hoja de la Biblioteca. Solo si el usuario la guardo Y puede abrir alguno de sus examenes (lo decide la base, una funcion);
+     * si no, 404 NOT_FOUND (no guardada, sin acceso o inexistente: indistinguibles). No toca el limitador diario: no gasta cupo. Correccion y explicacion siguen las
+     * mismas reglas que la revision: sin correcta ni explicacion si esta anulada; la explicacion solo con [ExplanationPolicy.visible].
+     */
+    suspend fun questionDetail(userId: CanonicalUserId, questionId: String): SavedQuestionDetailDto {
+        val row = detailRow(userId, questionId)
+        val content = row.contenido ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+        val annulled = row.anulada
+        val options = content.opciones.sortedBy { it.posicion }.map { option ->
+            QuestionOptionDto(
+                id = option.id,
+                letra = option.letra.takeIf { it in AttemptService.OPTION_LETTERS } ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception(),
+                texto = option.texto,
+            )
+        }
+        val solution = row.solucion
+        return SavedQuestionDetailDto(
+            posicion = row.posicion?.takeIf { it >= 1 } ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception(),
+            preguntaId = row.preguntaId?.takeIf { it.isUuid() } ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception(),
+            codigoPregunta = content.codigo ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception(),
+            tipoPregunta = savedQuestionType(content.tipo),
+            enunciado = content.titulo ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception(),
+            opciones = options,
+            status = if (annulled) STATUS_ANNULLED else STATUS_UNANSWERED,
+            cambioRespuesta = false,
+            esPrimeraRespuesta = false,
+            timings = ReviewTimings(),
+            correctAnswer = solution?.opcionCorrectaId?.takeUnless { annulled }?.let { correctId ->
+                options.firstOrNull { it.id == correctId }?.let { ReviewCorrectAnswer(opcionId = correctId, letra = it.letra) }
+            },
+            explanation = solution?.razonamiento?.takeIf { ExplanationPolicy.visible && !annulled && it.isNotBlank() }
+                ?.let { ReviewExplanation(razonamiento = it, razonamientoRico = solution.razonamientoRico) },
+            resources = content.recursos.sortedWith(compareBy({ it.posicion }, { it.id })).mapNotNull(QuestionResources::dto),
+            etiquetas = content.etiquetas.distinctBy { it.id }.sortedBy { it.nombre }.map { ReviewTag(it.id, it.nombre) },
+            examenId = row.examenId?.takeIf { it.isUuid() } ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception(),
+            examenTitulo = row.examenTitulo.orEmpty(),
+            tipoExamen = ExamKind.fromWireOrNull(row.tipoExamen)?.wire ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception(),
+            anulada = annulled,
+        )
+    }
+
+    // ----- D4-28 (FA50) -----
+    /** URL firmada y temporal de un recurso de la pregunta guardada (misma autorizacion que D4-27; misma validacion de bucket y ruta que D2-66). */
+    suspend fun resourceAccess(userId: CanonicalUserId, questionId: String, resourceId: String): AttemptResourceAccess {
+        val row = detailRow(userId, questionId)
+        val resource = row.contenido?.recursos?.firstOrNull { it.id == resourceId }
+        val signer = sign ?: throw CanonicalErrorCode.UPSTREAM_UNAVAILABLE.exception(retryAfterSeconds = 2)
+        return canonicalUpstreamIo { QuestionResources.access(resource, resourceId, clock(), signer) }
+    }
+
+    private suspend fun detailRow(userId: CanonicalUserId, questionId: String): SavedDetailRow {
+        val body = buildJsonObject {
+            put("p_usuario", userId.value)
+            put("p_pregunta", questionId)
+        }.toString()
+        val response = canonicalUpstreamIo { upstream.rpc("app_saved_question_detail", body) }
+        if (!response.ok) throw EconomyRpcErrors.failure("app_saved_question_detail", response)
+        val element = runCatching { json.parseToJsonElement(response.body) }.getOrElse { throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception(cause = it) }
+        val obj = when (element) {
+            is kotlinx.serialization.json.JsonObject -> element
+            is kotlinx.serialization.json.JsonArray -> element.singleOrNull() as? kotlinx.serialization.json.JsonObject
+            else -> null
+        } ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+        val row = runCatching { json.decodeFromJsonElement(SavedDetailRow.serializer(), obj) }
+            .getOrElse { throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception(cause = it) }
+        return when (row.outcome) {
+            "OK" -> row
+            "NOT_FOUND" -> throw CanonicalErrorCode.NOT_FOUND.exception()
+            else -> throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+        }
+    }
+
+    private fun savedQuestionType(value: String?): String = when (value) {
+        "rafaga" -> "rafaga"
+        "razonada", "guiada" -> "razonada"
+        "inmersiva" -> "inmersiva"
+        else -> throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+    }
+
     suspend fun save(userId: CanonicalUserId, tipo: String, targetId: String): SavedItemDto {
         val row = rpc<SaveRow>("app_save_item", args(userId, tipo, targetId)).singleOrNull() ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
         return SavedItemDto(tipo, targetId, row.guardadoEn)
@@ -185,7 +322,11 @@ internal class SavedItemsService(
         val page = query.page.page(rows) { KeysetPosition(it.guardadoEn, it.id).toKeys() }
         return SavedPageDto(
             items = page.items.map { row ->
-                val question = if (row.accesible && row.titulo != null && row.examenId != null) SavedQuestionDto(row.titulo, row.examenId, row.examenTitulo.orEmpty()) else null
+                val question = if (row.accesible && row.titulo != null && row.examenId != null) {
+                    SavedQuestionDto(row.titulo, row.examenId, row.examenTitulo.orEmpty(), ExamKind.fromWireOrNull(row.tipoExamen)?.wire)
+                } else {
+                    null
+                }
                 SavedEntryDto(row.tipo, row.targetId, row.guardadoEn, question != null, question)
             },
             nextCursor = page.nextCursor,
@@ -248,6 +389,22 @@ internal fun Route.savedItemsRoutes(runtime: SavedItemsRuntime?) {
                 val target = validateSavedTarget(tipo, call.parameters["targetId"].orEmpty().trim())
                 runtime!!.service.unsave(identity.userId, tipo, target)
                 call.respond(HttpStatusCode.NoContent)
+            }
+            // FA50: la pregunta guardada en la hoja de la Biblioteca (D4-27) y la URL firmada de uno de sus recursos (D4-28). Lectura: limitador CATALOG_READ.
+            // Mismo recurso que D4-20 / D4-21 (`/{tipo}/{targetId}`, tipo = pregunta): GET = leerlo entero.
+            get("/{tipo}/{targetId}") {
+                val identity = call.savedGate(runtime, SavedOperation.READ)
+                requireOnlyKnownQueryParams(call.request.queryParameters, emptySet())
+                val target = validateSavedTarget(call.parameters["tipo"].orEmpty().trim(), call.parameters["targetId"].orEmpty().trim())
+                call.respond(runtime!!.service.questionDetail(identity.userId, target))
+            }
+            get("/{tipo}/{targetId}/recursos/{recursoId}") {
+                val identity = call.savedGate(runtime, SavedOperation.READ)
+                requireOnlyKnownQueryParams(call.request.queryParameters, emptySet())
+                val target = validateSavedTarget(call.parameters["tipo"].orEmpty().trim(), call.parameters["targetId"].orEmpty().trim())
+                val resource = call.parameters["recursoId"].orEmpty().trim()
+                if (!resource.isUuid()) throw validationError(ErrorIssue("recursoId", CanonicalIssue.INVALID_FORMAT))
+                call.respond(runtime!!.service.resourceAccess(identity.userId, target, resource.lowercase()))
             }
         }
     }
