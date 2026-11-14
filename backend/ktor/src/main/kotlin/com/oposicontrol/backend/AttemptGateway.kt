@@ -246,6 +246,9 @@ internal data class AttemptCommandOutcome(
     @SerialName("retry_after_seconds") val retryAfterSeconds: Int? = null,
 )
 
+/** FA47 / FA47b: lo que devuelve `app_practice_availability`. */
+internal data class PracticeAvailabilityRow(val preguntas: Int, val examenesAdquiridos: Int)
+
 internal class AttemptGateway(
     private val upstream: AttemptUpstream,
     private val json: Json = Json { ignoreUnknownKeys = true },
@@ -276,16 +279,25 @@ internal class AttemptGateway(
         )
     }
 
-    /** FA47 D2-68: practica nueva de [size] preguntas (`app_start_practice_attempt`, 20261109100100). */
-    fun startPractice(userId: String, size: Int): AttemptCommandOutcome {
-        require(userId.isUuid()) { "ids" }
-        return decodeOutcome(
-            upstream.rpc("app_start_practice_attempt", buildJsonObject { put("p_usuario_id", userId); put("p_preguntas", size) }.toString()),
-        )
+    /**
+     * FA47 D2-68: practica nueva de [size] preguntas (`app_start_practice_attempt`, 20261109100100). FA47b (20261114200100): con [examIds] solo de esos examenes
+     * (ya validados: 1..50 uuids distintos); sin ellos no se envia `p_examen_ids` (mismo comportamiento que antes).
+     */
+    fun startPractice(userId: String, size: Int, examIds: List<String>? = null): AttemptCommandOutcome {
+        require(userId.isUuid() && (examIds == null || examIds.all { it.isUuid() })) { "ids" }
+        val body = buildJsonObject {
+            put("p_usuario_id", userId)
+            put("p_preguntas", size)
+            if (examIds != null) put("p_examen_ids", kotlinx.serialization.json.buildJsonArray { examIds.forEach { add(JsonPrimitive(it)) } })
+        }
+        return decodeOutcome(upstream.rpc("app_start_practice_attempt", body.toString()))
     }
 
-    /** FA47 D2-67: preguntas que una practica puede sortear ahora (`app_practice_availability`, acotado a 200 en la base). */
-    fun practiceAvailability(userId: String): Int {
+    /**
+     * FA47 D2-67: preguntas que una practica puede sortear ahora (`app_practice_availability`, acotado a 200 en la base) y, FA47b (20261114200100), cuantos examenes
+     * distintos tiene adquiridos el usuario (el conjunto de D2-13 `vista=ADQUIRIDOS`).
+     */
+    fun practiceAvailability(userId: String): PracticeAvailabilityRow {
         require(userId.isUuid()) { "ids" }
         val element = json.parseToJsonElement(upstream.rpc("app_practice_availability", buildJsonObject { put("p_usuario_id", userId) }.toString()))
         val row = when (element) {
@@ -293,7 +305,9 @@ internal class AttemptGateway(
             is JsonArray -> element.singleOrNull() as? JsonObject
             else -> null
         } ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
-        return (row["preguntas"] as? JsonPrimitive)?.content?.toIntOrNull() ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+        fun count(key: String) = (row[key] as? JsonPrimitive)?.takeIf { !it.isString }?.content?.toIntOrNull()?.takeIf { it >= 0 }
+            ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+        return PracticeAvailabilityRow(preguntas = count("preguntas"), examenesAdquiridos = count("examenes_adquiridos"))
     }
 
     /** Limitador diario (C-L1): registra las preguntas que una pagina va a revelar; `DAILY_LIMIT_REACHED` si la ventana no da. */

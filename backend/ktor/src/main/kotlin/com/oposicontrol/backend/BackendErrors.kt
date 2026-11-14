@@ -1097,6 +1097,9 @@ enum class CanonicalErrorCode(val status: HttpStatusCode, val defaultMessage: St
     /** EX14: el recurso no esta en ninguna revision ligada a ese intento (o su ubicacion no es la del contrato). */
     RESOURCE_NOT_FOUND(HttpStatusCode.NotFound, "El recurso no existe."),
 
+    /** FA47b (D2-68): algun examen elegido para la practica no existe, no esta publicado, es de otra especialidad o el usuario no puede abrirlo. */
+    PRACTICE_EXAM_NOT_ACCESSIBLE(HttpStatusCode.UnprocessableEntity, "Alguno de los examenes elegidos no esta disponible para practicar."),
+
     // Noticias admin (`openapi/news/news.yaml`, D4-01..D4-11).
     NEWS_NOT_FOUND(HttpStatusCode.NotFound, "La noticia no existe."),
     NEWS_NOT_EDITABLE(HttpStatusCode.Conflict, "Solo se pueden editar las noticias en borrador o programadas."),

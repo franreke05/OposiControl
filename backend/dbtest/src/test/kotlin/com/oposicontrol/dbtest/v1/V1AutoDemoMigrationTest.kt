@@ -151,7 +151,7 @@ class V1AutoDemoMigrationTest {
 
     @Test
     // 20261109100100_v1_practica (F23) redefines app_start_exam_attempt on top of this one: left out too (it requires it).
-    fun theBackfillSwitchesExistingExamsOnAndTheVerifyAndRollbackBehave() = V1Db.escenario(sin = setOf(migration, "20261109100100_v1_practica")) { c ->
+    fun theBackfillSwitchesExistingExamsOnAndTheVerifyAndRollbackBehave() = V1Db.escenario(sin = setOf(migration, "20261109100100_v1_practica", "20261114200100_v1_practica_examenes")) { c ->
         c.ejecutar(seed(", demo_disponible", ", false"))
         assertEquals("EXAM_LOCKED", c.outcome(c.startDemo()), "negative control: without the migration an unmarked exam offers no demo")
         c.ejecutar(Slice0Db.leer("supabase/migrations/$migration.sql"))

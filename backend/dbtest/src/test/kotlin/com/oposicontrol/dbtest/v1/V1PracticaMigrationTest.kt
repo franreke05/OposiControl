@@ -172,7 +172,7 @@ class V1PracticaMigrationTest {
     }
 
     @Test
-    fun withoutTheMigrationThereIsNoPractice() = V1Db.escenario(sin = setOf(migration)) { c ->
+    fun withoutTheMigrationThereIsNoPractice() = V1Db.escenario(sin = setOf(migration, "20261114200100_v1_practica_examenes")) { c ->
         c.ejecutar(seed)
         assertEquals("0", c.unico("select count(*)::text from pg_proc where proname in ('app_start_practice_attempt', 'app_practice_availability')"))
         assertEquals("0", c.unico("select count(*)::text from information_schema.columns where table_name = 'intentos_examen' and column_name = 'es_practica'"))

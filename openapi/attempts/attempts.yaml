@@ -522,7 +522,7 @@ components:
         x-pagination: NONE
         x-idempotency: NONE
         x-error-codes: [UNAUTHENTICATED, RATE_LIMITED]
-        description: 'FA47 (owner decision 2026-11-09, OposiQuizzes rapidos): the number of questions (capped at 200) a quick practice test (D2-68) can draw from right now: active, main, non-annulled questions of the PUBLISHED exams of the user specialty that the user can open (access state FREE, GRANTED or SUBSCRIPTION). 0 = nothing to practise (no access yet: the client invites to the Market). Per-user read limit.'
+        description: 'FA47 (owner decision 2026-11-09, OposiQuizzes rapidos): the number of questions (capped at 200) a quick practice test (D2-68) can draw from right now: active, main, non-annulled questions of the PUBLISHED exams of the user specialty that the user can open (access state FREE, GRANTED or SUBSCRIPTION). 0 = nothing to practise (no access yet: the client invites to the Market). Per-user read limit. FA47b (owner plan 2026-11-14, additive): examenesAdquiridos = the number of distinct exams the user has acquired, exactly the set D2-13 lists with vista=ADQUIRIDOS (a current grant of any motive on an active, published exam of the user specialty; a free exam without a grant is not counted); the client shows Generar examen only when it is 3 or more.'
         security:
           - bearerAuth: []
         responses:
@@ -552,8 +552,8 @@ components:
         x-roles: [USER]
         x-pagination: NONE
         x-idempotency: REQUIRED
-        x-error-codes: [VALIDATION, IDEMPOTENCY_KEY_REQUIRED, IDEMPOTENCY_KEY_INVALID, UNAUTHENTICATED, EXAM_EMPTY, IDEMPOTENCY_KEY_IN_PROGRESS, IDEMPOTENCY_KEY_REUSED, RATE_LIMITED]
-        description: 'FA47 (owner decision 2026-11-09, OposiQuizzes rapidos): creates a NEW practice attempt (intento.origen QUICK_QUIZ, examenId null, tipoExamen rafaga) with numPreguntas random questions (fewer when fewer are available) drawn from the D2-67 pool; a previous open practice attempt is closed (abandonado). The attempt is then served and answered by the usual attempt operations (D2-07..D2-12, D2-65, D2-66) with the correction revealed on answer (DEC-015). PRACTICE ONLY: it never counts for ranking, league, Nota media, statistics, streak, OposiTickets, referral or Mis examenes, it is not the first answer of any question, and a later real first answer to a question already seen corrected here does not count for ranking or statistics (same rule as the demo, C-D4). Questions are revealed under the daily plan limit like a normal attempt unless every question comes from a GRANTED exam (D2-08 DAILY_LIMIT_REACHED). 409 EXAM_EMPTY = nothing to practise. Starts are limited per user (429 RATE_LIMITED).'
+        x-error-codes: [VALIDATION, IDEMPOTENCY_KEY_REQUIRED, IDEMPOTENCY_KEY_INVALID, UNAUTHENTICATED, EXAM_EMPTY, IDEMPOTENCY_KEY_IN_PROGRESS, IDEMPOTENCY_KEY_REUSED, PRACTICE_EXAM_NOT_ACCESSIBLE, RATE_LIMITED]
+        description: 'FA47 (owner decision 2026-11-09, OposiQuizzes rapidos): creates a NEW practice attempt (intento.origen QUICK_QUIZ, examenId null, tipoExamen rafaga) with numPreguntas random questions (fewer when fewer are available) drawn from the D2-67 pool; a previous open practice attempt is closed (abandonado). The attempt is then served and answered by the usual attempt operations (D2-07..D2-12, D2-65, D2-66) with the correction revealed on answer (DEC-015). PRACTICE ONLY: it never counts for ranking, league, Nota media, statistics, streak, OposiTickets, referral or Mis examenes, it is not the first answer of any question, and a later real first answer to a question already seen corrected here does not count for ranking or statistics (same rule as the demo, C-D4). Questions are revealed under the daily plan limit like a normal attempt unless every question comes from a GRANTED exam (D2-08 DAILY_LIMIT_REACHED). 409 EXAM_EMPTY = nothing to practise. Starts are limited per user (429 RATE_LIMITED). FA47b (owner plan 2026-11-14, additive): optional examenIds = 1 to 50 distinct exam ids the user chose; the questions are drawn ONLY from those exams (same rules: main, non-annulled, active, with a solution). Every chosen exam must be in the D2-67 scope (active, published, user specialty, access state FREE, GRANTED or SUBSCRIPTION; free exams count as owned), otherwise 422 PRACTICE_EXAM_NOT_ACCESSIBLE and nothing is created (a missing, draft, foreign or locked exam are indistinguishable). Chosen exams with no servable question = 409 EXAM_EMPTY. Absent examenIds = every exam of the scope (FA47 behaviour). The daily limit rule, the per-user cap and the never-counts rules are unchanged.'
         security:
           - bearerAuth: []
         parameters:
@@ -583,7 +583,7 @@ components:
                   $ref: '#/components/schemas/AttemptStartResponse'
           '400':
             $ref: '../common/errors.yaml#/components/responses/BadRequest'
-            description: 'VALIDATION (numPreguntas not 5, 10 or 20), IDEMPOTENCY_KEY_REQUIRED or IDEMPOTENCY_KEY_INVALID.'
+            description: 'VALIDATION (numPreguntas not 5, 10 or 20; examenIds empty, more than 50, not uuids or repeated: issue OUT_OF_RANGE, INVALID_FORMAT or DUPLICATE on field examenIds), IDEMPOTENCY_KEY_REQUIRED or IDEMPOTENCY_KEY_INVALID.'
           '401':
             $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
           '409':
@@ -591,7 +591,7 @@ components:
             description: 'EXAM_EMPTY (no question the user can practise) or IDEMPOTENCY_KEY_IN_PROGRESS.'
           '422':
             $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
-            description: 'IDEMPOTENCY_KEY_REUSED.'
+            description: 'IDEMPOTENCY_KEY_REUSED or PRACTICE_EXAM_NOT_ACCESSIBLE (FA47b: a chosen exam is not in the practice scope).'
           '429':
             $ref: '../common/errors.yaml#/components/responses/RateLimited'
           '503':
@@ -723,10 +723,22 @@ components:
         numPreguntas:
           type: integer
           enum: [5, 10, 20]
+        examenIds:
+          type: array
+          minItems: 1
+          maxItems: 50
+          uniqueItems: true
+          description: 'FA47b (optional): the exams to draw from (1 to 50 distinct ids). Absent = every exam the user can practise.'
+          items:
+            $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
     QuickQuizAvailability:
       type: object
-      required: [preguntas, tamanos]
+      required: [preguntas, tamanos, examenesAdquiridos]
       properties:
+        examenesAdquiridos:
+          type: integer
+          minimum: 0
+          description: 'FA47b: distinct exams of D2-13 vista=ADQUIRIDOS (server total, not a page). The client shows Generar examen when >= 3.'
         preguntas:
           type: integer
           minimum: 0

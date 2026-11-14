@@ -1,5 +1,10 @@
 # Current State
 
+## Generar examen: practica de los examenes elegidos (F23b, FA47b) — 2026-11-14 (rama local `f23/quick-quiz`, sin push) — `CURRENT_IMPLEMENTATION`, NO aplicada a MAIN
+
+- D2-68 acepta `examenIds` opcional (1..50, cada uno en el alcance de la practica; fuera = 422 `PRACTICE_EXAM_NOT_ACCESSIBLE`); D2-67 devuelve `examenesAdquiridos` (conjunto de D2-13 `vista=ADQUIRIDOS`; el cliente ensena "Generar examen" con >= 3). Marcado `es_demo` / `es_practica` sin cambios.
+- Migracion PENDIENTE `20261114200100_v1_practica_examenes` (predecesora F23). Manifiesto `ops/deploy/v1/main-migrations-2026-11-f23b.manifest`; ensayo `docs/ledger/2026/11/rehearse-f23b-2026-11.sh`; acta `docs/ledger/2026/11/2026-11-14-f23b-practica-examenes.md`. Misma imagen nueva que F23, ORDEN migracion -> imagen.
+
 ## OposiQuizzes rapidos / practica (F23) — 2026-11-09 (rama local `f23/quick-quiz` desde develop `08ea7f0f`, sin push) — `CURRENT_IMPLEMENTATION`, NO aplicada a MAIN
 
 - Decision del propietario 2026-11-09: test aleatorio de 5 / 10 / 20 preguntas SOLO de los examenes que el usuario puede abrir (FREE / GRANTED / SUBSCRIPTION) de su especialidad; sin acceso, Home invita al Market. Solo practica: corregida y con resultado, nunca ranking, liga, racha, estadisticas, OT, referido ni Mis examenes.

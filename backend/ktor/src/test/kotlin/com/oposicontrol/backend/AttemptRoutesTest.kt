@@ -87,7 +87,7 @@ class AttemptRoutesTest {
         var finishOutcome = """{"outcome":"OK","already":false}"""
         var abandonOutcome = """{"outcome":"OK","already":false}"""
         var practiceOutcome = """{"outcome":"CREATED","intento_id":"$attempt","total":5}"""
-        var practiceAvailability = """{"preguntas":37}"""
+        var practiceAvailability = """{"preguntas":37,"examenes_adquiridos":4}"""
         var attemptRow: String? = null
 
         /** `intentos_examen.creado_por_comando` de la fila: false = intento que NO creo `app_start_exam_attempt` (legacy). */
@@ -1740,6 +1740,7 @@ class AttemptRoutesTest {
         assertConforms("D2-67", "200", body)
         assertEquals("37", obj(body)["preguntas"]!!.jsonPrimitive.content)
         assertEquals(listOf(5, 10, 20), obj(body)["tamanos"]!!.jsonArray.map { it.jsonPrimitive.int })
+        assertEquals(4, obj(body)["examenesAdquiridos"]!!.jsonPrimitive.int, "FA47b: the server total of acquired exams")
         assertEquals(listOf(mapOf("p_usuario_id" to TEST_UID)), upstream.rpcBodies("app_practice_availability").map { b -> b.mapValues { it.value.jsonPrimitive.content } })
         assertEquals(listOf(AttemptOperation.READ), limited)
         assertEquals(HttpStatusCode.Unauthorized, client.call(HttpMethod.Get, "/api/v1/app/practicas/disponibilidad", token = null).status)
@@ -1787,5 +1788,69 @@ class AttemptRoutesTest {
         upstream.practiceOutcome = """{"outcome":"PRACTICE_LIMIT"}"""
         val limit = client.call(HttpMethod.Post, "/api/v1/app/practicas", body = """{"numPreguntas":20}""", key = "0a0a0a0a-0000-4000-8000-000000000003")
         assertEquals(HttpStatusCode.TooManyRequests, limit.status)
+    }
+
+    // ---------- FA47b: practica de los examenes elegidos (D2-68 examenIds, D2-67 examenesAdquiridos) ----------
+
+    @Test
+    fun quickQuizAvailabilityWithoutTheAcquiredCountIsAContractError() = testApplication {
+        application { attemptModule() }
+        upstream.practiceAvailability = """{"preguntas":37}"""
+        val response = client.call(HttpMethod.Get, "/api/v1/app/practicas/disponibilidad")
+        assertEquals(HttpStatusCode.BadGateway, response.status, "the image needs migration 20261114200100: fail closed, never a guessed count")
+        assertEquals("UPSTREAM_CONTRACT_ERROR", code(response.bodyAsText()))
+    }
+
+    @Test
+    fun quickQuizStartFromChosenExamsSendsThemToTheDatabase() = testApplication {
+        application { attemptModule() }
+        upstream.attemptRow = practiceRow()
+        val other = "b1b1b1b1-0000-4000-8000-000000000002"
+        val response = client.call(HttpMethod.Post, "/api/v1/app/practicas", body = """{"numPreguntas":10,"examenIds":["${exam.uppercase()}","$other"]}""", key = key1)
+        val body = response.bodyAsText()
+        assertEquals(HttpStatusCode.Created, response.status, body)
+        assertConforms("D2-68", "201", body)
+        val sent = upstream.rpcBodies("app_start_practice_attempt").single()
+        assertEquals("10", sent["p_preguntas"]!!.jsonPrimitive.content)
+        assertEquals(listOf(exam.lowercase(), other), sent["p_examen_ids"]!!.jsonArray.map { it.jsonPrimitive.content }, "normalised to lower case, order kept")
+        // without examenIds the parameter is not sent at all (FA47 behaviour, and the call works against either function signature)
+        client.call(HttpMethod.Post, "/api/v1/app/practicas", body = """{"numPreguntas":5}""", key = key2)
+        assertNull(upstream.rpcBodies("app_start_practice_attempt").last()["p_examen_ids"])
+    }
+
+    @Test
+    fun quickQuizStartRejectsMalformedChoicesBeforeTheDatabase() = testApplication {
+        application { attemptModule() }
+        val tooMany = (1..51).joinToString(",") { "\"b1b1b1b1-0000-4000-8000-${it.toString().padStart(12, '0')}\"" }
+        val cases = listOf(
+            """{"numPreguntas":5,"examenIds":[]}""" to "OUT_OF_RANGE",
+            """{"numPreguntas":5,"examenIds":[$tooMany]}""" to "OUT_OF_RANGE",
+            """{"numPreguntas":5,"examenIds":["no-es-uuid"]}""" to "INVALID_FORMAT",
+            """{"numPreguntas":5,"examenIds":["$exam","${exam.uppercase()}"]}""" to "DUPLICATE",
+        )
+        cases.forEachIndexed { i, (payload, issue) ->
+            val r = client.call(HttpMethod.Post, "/api/v1/app/practicas", body = payload, key = "0a0a0a0a-0000-4000-8000-00000000010$i")
+            val body = r.bodyAsText()
+            assertEquals(HttpStatusCode.BadRequest, r.status, body)
+            assertEquals("VALIDATION", code(body))
+            val issues = obj(body)["details"]!!.jsonObject["issues"]!!.jsonArray.map { it.jsonObject }
+            assertEquals(listOf("examenIds" to issue), issues.map { it["field"]!!.jsonPrimitive.content to it["issue"]!!.jsonPrimitive.content }, payload)
+        }
+        assertEquals(0, upstream.rpcBodies("app_start_practice_attempt").size, "nothing malformed reaches the database")
+    }
+
+    @Test
+    fun quickQuizStartWithAnExamTheUserCannotPractiseIs422() = testApplication {
+        application { attemptModule() }
+        upstream.practiceOutcome = """{"outcome":"EXAM_NOT_ACCESSIBLE","examen_ids":["$exam"]}"""
+        val r = client.call(HttpMethod.Post, "/api/v1/app/practicas", body = """{"numPreguntas":5,"examenIds":["$exam"]}""", key = key1)
+        val body = r.bodyAsText()
+        assertEquals(HttpStatusCode.UnprocessableEntity, r.status, body)
+        assertEquals("PRACTICE_EXAM_NOT_ACCESSIBLE", code(body))
+        assertConforms("D2-68", "422", body)
+        upstream.practiceOutcome = """{"outcome":"PRACTICE_EMPTY"}"""
+        val empty = client.call(HttpMethod.Post, "/api/v1/app/practicas", body = """{"numPreguntas":5,"examenIds":["$exam"]}""", key = key2)
+        assertEquals(HttpStatusCode.Conflict, empty.status, "chosen exams without servable questions")
+        assertEquals("EXAM_EMPTY", code(empty.bodyAsText()))
     }
 }
