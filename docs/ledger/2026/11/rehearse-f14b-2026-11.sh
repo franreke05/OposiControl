@@ -5,6 +5,7 @@
 # `f14b-2026-11-rehearsal` (PG17 Supabase 17.6.1.171 por el mismo digest que el gate), sin puerto publicado; se borra al terminar.
 # Ventana ensayada con el MISMO script y manifiesto que usara el propietario:
 #   MANIFEST=ops/deploy/v1/main-migrations-2026-11-f14b.manifest ops/deploy/v1/apply-main-migration.sh (REHEARSAL_CONTAINER), version tecleada.
+# Enmienda 2026-11-14: la migracion materializa el conjunto (private.demo_set_fijo); la sonda (semilla con replica, sin triggers) sigue viendo la vista previa md5.
 # Comprueba: negativas (version fuera del manifiesto; predecesora ausente), sonda funcional ANTES (examen de 12 preguntas: demo = posiciones 1..5, F14)
 # y DESPUES (las 5 primeras por md5(examen || pregunta): 2,5,6,7,11, en dos llamadas iguales), aplicar + VERIFY = 0 + registro, re-aplicar = STOP,
 # ROLLBACK con huella == punto de partida (md5 de los cuerpos incluido), re-aplicar con huella == primera aplicacion. La sonda se deshace.

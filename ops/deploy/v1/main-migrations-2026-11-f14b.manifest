@@ -5,4 +5,4 @@
 # Predecesora: 20261109100000 (F20, la ultima desplegada en MAIN). Solo exige que este registrada: F23 (20261109100100) y F20b (20261109100200),
 # si se aplican antes, no la bloquean (F14b no toca nada de ellas).
 # Si cambia el blob, se rehacen este manifiesto y el ensayo (docs/ledger/2026/11/rehearse-f14b-2026-11.sh).
-20261111100000 e5f53da4b749 20261109100000 apply
+20261111100000 21c0123c5b02 20261109100000 apply
