@@ -46,3 +46,4 @@
 20261109100000_v1_reto_por_tipo
 20261114400000_v1_servicios_catalogo
 20261114400100_v1_servicios_canje
+20261114400200_v1_consumibles_efectos

@@ -129,6 +129,27 @@ class ChallengeRoutesTest {
     }
 
     @Test
+    fun theRetryDecisionTravelsOnlyWhenTheClientMadeOneAndTheHeldAnswerIsServedVerbatim() = testApplication {
+        application { challengeModule() }
+        val client = createClient { }
+        val held = """{"esCorrecta":false,"estado":"EN_CURSO","aciertos":0,"respondidas":0,"oportunidad":{"disponible":true,"restantes":1}}"""
+        upstream.handler = { _, _ -> SupabaseRawResponse(200, held) }
+        val first = client.putJson("/api/v1/app/retos/$reto/respuestas/$pregunta", """{"opcionSeleccionadaId":"$opcion","usarOportunidad":null}""")
+        assertEquals(HttpStatusCode.OK, first.status, first.bodyAsText())
+        assertEquals(setOf("p_usuario", "p_reto", "p_pregunta", "p_opcion"), obj(upstream.rpcs.single().second).keys, "null = no decision: the 4-argument call (works on a database before F28)")
+        assertEquals("1", obj(first.bodyAsText())["oportunidad"]!!.jsonObject["restantes"]!!.jsonPrimitive.content)
+        assertTrue("opcionCorrectaId" !in obj(first.bodyAsText()), "no correction while held")
+        for (choice in listOf(true, false)) {
+            upstream.rpcs.clear()
+            client.putJson("/api/v1/app/retos/$reto/respuestas/$pregunta", """{"opcionSeleccionadaId":"$opcion","usarOportunidad":$choice}""")
+            assertEquals(choice.toString(), obj(upstream.rpcs.single().second)["p_usar_oportunidad"]!!.jsonPrimitive.content)
+        }
+        upstream.rpcs.clear()
+        assertEquals(HttpStatusCode.BadRequest, client.putJson("/api/v1/app/retos/$reto/respuestas/$pregunta", """{"opcionSeleccionadaId":"$opcion","usarOportunidad":"si"}""").status)
+        assertTrue(upstream.rpcs.isEmpty())
+    }
+
+    @Test
     fun answerIsFinalAndTheBodyIsStrict() = testApplication {
         application { challengeModule() }
         val client = createClient { }
