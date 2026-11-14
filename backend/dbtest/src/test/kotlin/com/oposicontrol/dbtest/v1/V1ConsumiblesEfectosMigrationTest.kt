@@ -71,7 +71,7 @@ class V1ConsumiblesEfectosMigrationTest {
     private fun Connection.j(json: String, path: String): String? = unico("select ('${json.replace("'", "''")}'::jsonb) #>> '{$path}'")
     private fun Connection.reto(u: String): String = j(today(u), "retoId")!!
     private fun Connection.answer(u: String, option: String, usar: Boolean? = null): String =
-        unico("select public.app_answer_daily_challenge('$u', '${reto(u)}', '$q', '$option', ${usar ?: "null"})::text")!!
+        unico("select public.app_answer_daily_challenge('$u', '${reto(u)}', '$q', '$option', ${usar ?: "null"}, true)::text")!!  // a caller that handles held answers
     private fun Connection.claim(u: String): String = unico("select public.app_claim_daily_challenge('$u', '${reto(u)}')::text")!!
     private fun Connection.streakRow(u: String): String =
         unico("select racha_actual_dias || '|' || (ultima_actividad_fecha = private.reto_today(clock_timestamp())) from public.rachas_usuario where usuario_id = '$u'")!!
@@ -174,7 +174,13 @@ class V1ConsumiblesEfectosMigrationTest {
         assertEquals("bonus_racha:20,reto_diario:40", c.ledger(pot), "claiming again pays nothing more")
         assertEquals("1", c.unico("select count(*)::text from public.ot_ganancias_diferidas where usuario_id = '$pot' and clave like 'potenciador:%'"), "deferred once")
         assertEquals("potenciador:0/1:activa,potenciador:1/1:usada", c.activations(pot).split(",").sorted().joinToString(","), "claiming again spends nothing more")
-        assertEquals("80", c.j(c.today(pot), "recompensa,extraPotenciador"))
+        // C2 re-review: the deferral of the extra expires -> a replay is REJECTED_CAP: not credited, frozen total = base + bonus, and the spent use comes BACK
+        c.ejecutar("update public.ot_ganancias_diferidas set estado = 'caducada' where usuario_id = '$pot' and clave like 'potenciador:%'")
+        val replay = c.claim(pot)
+        assertEquals("60|0", "${c.j(replay, "recompensa,total")}|${c.j(replay, "recompensa,extraPotenciador")}", replay)
+        assertEquals("potenciador:0/1:activa,potenciador:0/1:activa", c.activations(pot), "the x3 use is returned (usos_consumidos - 1, activa again)")
+        assertEquals("bonus_racha:20,reto_diario:40", c.ledger(pot))
+        assertEquals("0", c.j(c.today(pot), "recompensa,extraPotenciador"), "after the rejected replay the frozen extra is 0")
 
         c.answer(failed, ko)
         assertEquals("potenciador:0/1:activa", c.activations(failed), "a failed reto without a tickets protector pays nothing to multiply")
@@ -204,6 +210,11 @@ class V1ConsumiblesEfectosMigrationTest {
 
         val r = c.answer(unverified, ko)
         assertEquals("FALLADO|100", "${c.j(r, "estado")}|${c.j(r, "recompensa,total")}", "tickets protected (40 + 20) and the base doubled (+40)")
+        // review 2026-11-14: the Market (D6-39 disponibles) and the wallet (D6-01 usosRestantes) count the live reservations like the reto panel
+        assertEquals("0|0", c.unico(
+            "select private.servicio_disponibles('$unverified', s.id, now()) || '|' || (private.servicio_activacion_json(a.id, now()) ->> 'usosRestantes') " +
+                "from public.activaciones_servicio_usuario a join public.servicios s on s.id = a.servicio_id where a.usuario_id = '$unverified' and s.codigo = 'potenciador_x2'",
+        ))
         assertTrue(runCatching { c.claim(unverified) }.exceptionOrNull()?.message?.contains("EMAIL_UNVERIFIED") == true)
         assertEquals("protector_tickets:0/1:activa,potenciador:0/1:activa", c.activations(unverified), "a failed claim spends nothing")
         assertEquals("", c.ledger(unverified))
@@ -293,6 +304,32 @@ class V1ConsumiblesEfectosMigrationTest {
     }
 
     @Test
+    fun anActivationCancelledBetweenTheAnswerAndTheClaimIsNeverMarkedUsed() = V1Db.escenario { c ->
+        c.world(1)
+        val u = user(1)
+        c.buy(u, "potenciador_x2")
+        c.answer(u, ok)
+        c.ejecutar("update public.activaciones_servicio_usuario set estado = 'cancelada' where usuario_id = '$u'")
+        c.claim(u)
+        assertEquals("potenciador:0/1:cancelada", c.activations(u), "consumible_gastar only touches an ACTIVE activation")
+    }
+
+    @Test
+    fun aCallerThatDoesNotDeclareSupportIsNeverHeld() = V1Db.escenario { c ->
+        c.world(2)
+        val (old, nullDecision) = listOf(user(1), user(2))
+        listOf(old, nullDecision).forEach { c.buy(it, "doble_oportunidad") }
+        // the image running during the window: named 4-argument call -> p_usar_oportunidad NULL, p_admite_oportunidad false = false
+        val r = c.unico("select public.app_answer_daily_challenge(p_usuario => '$old', p_reto => '${c.reto(old)}', p_pregunta => '$q', p_opcion => '$ko')::text")!!
+        assertEquals("FALLADO|$ok", "${c.j(r, "estado")}|${c.j(r, "opcionCorrectaId")}", "never held: final at once, with its correction")
+        assertEquals("doble_oportunidad:0/1:activa", c.activations(old), "nothing spent")
+        // NULL decision without support, even with usar true, is false
+        val n = c.unico("select public.app_answer_daily_challenge('$nullDecision', '${c.reto(nullDecision)}', '$q', '$ko', true)::text")!!
+        assertEquals("FALLADO", c.j(n, "estado"))
+        assertEquals("0", c.unico("select count(*)::text from public.reto_oportunidades_pendientes"))
+    }
+
+    @Test
     fun aTripleOportunidadGivesTwoRetries() = V1Db.escenario { c ->
         c.world(1)
         val u = user(1)
@@ -309,7 +346,7 @@ class V1ConsumiblesEfectosMigrationTest {
     fun theVerifyBlockAndTheRollbackRestoreTheOldFunctions() = V1Db.escenario { c ->
         val verify = Slice0Db.verifyDe("supabase/migrations/$migration.sql")
         val rows = c.filas(verify)
-        assertEquals(8, rows.size, "VERIFY rows: $rows")
+        assertEquals(10, rows.size, "VERIFY rows: $rows")
         assertEquals(emptyList(), rows.filter { it[1] != "0" }, "every VERIFY counter is 0")
         c.ejecutar(Slice0Db.rollbackDe("supabase/migrations/$migration.sql"))
         val after = c.filas(verify).filter { it[1] != "0" }.map { it[0] }

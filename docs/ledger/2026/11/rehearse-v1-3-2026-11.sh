@@ -7,7 +7,7 @@
 # Comprueba: negativas (fuera del manifiesto; predecesora ausente); cada migracion aplicada + VERIFY = 0 + registrada; re-aplicar = STOP;
 # sondas ANTES/DESPUES/tras ROLLBACK: (a) F27: datos de partida escritos con las reglas de produccion y su relleno, y comportamiento en transaccion deshecha;
 # (b) 20261114500000: los trabajos de dificultad y ranking FALLAN en la forma de MAIN y funcionan tras la ventana; (c) una sola sobrecarga de
-# app_answer_daily_challenge (la de 5 argumentos); ROLLBACK inverso con huella == punto de partida; re-aplicar con huella == primera aplicacion.
+# app_answer_daily_challenge (la de 6 argumentos); ROLLBACK inverso con huella == punto de partida; re-aplicar con huella == primera aplicacion.
 # Uso (Git Bash, desde la raiz del arbol): bash docs/ledger/2026/11/rehearse-v1-3-2026-11.sh <directorio de salida>
 set -uo pipefail
 cd "$(dirname "$0")/../../../.." || exit 2
@@ -224,8 +224,8 @@ say "ok:   datos DESPUES (relleno F27: q11 cuenta; ranking reconstruido con la p
 after="$(probe)"; [ "$after" = "PROBE 1 1 true" ] || { cat "$TMPD/probe.err"; fail "sonda DESPUES: '$after'"; }
 say "ok:   sonda F27 DESPUES (la demo no quema; el primer intento real cuenta para ranking): $after"
 jafter="$(probe_jobs)"
-[ "$jafter" = "JOBS OK OK app_answer_daily_challenge(uuid,uuid,uuid,uuid,boolean)" ] || { cat "$TMPD/jobs.err"; fail "sonda de trabajos DESPUES: '$jafter'"; }
-say "ok:   sonda de trabajos DESPUES (dificultad y ranking OK; una sola sobrecarga del reto, la de 5 argumentos): $jafter"
+[ "$jafter" = "JOBS OK OK app_answer_daily_challenge(uuid,uuid,uuid,uuid,boolean,boolean)" ] || { cat "$TMPD/jobs.err"; fail "sonda de trabajos DESPUES: '$jafter'"; }
+say "ok:   sonda de trabajos DESPUES (dificultad y ranking OK; una sola sobrecarga del reto, la de 6 argumentos): $jafter"
 fingerprint "$OUT/fp_applied.txt"
 say "ok:   cambios de catalogo: $(diff "$OUT/fp_start.txt" "$OUT/fp_applied.txt" | grep -c '^[<>]') lineas (fp_start.txt vs fp_applied.txt)"
 

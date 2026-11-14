@@ -44,8 +44,8 @@ internal data class DailyChallengeAnswerRequest(
     val usarOportunidad: Boolean? = null,
     /**
      * C3 (revision 2026-11-14): `true` = este cliente sabe tratar la respuesta RETENIDA por una doble/triple oportunidad (oferta + `usarOportunidad`).
-     * Ausente / `false` / null = cliente que no la conoce: Ktor manda `p_usar_oportunidad = false` (nunca se retiene; una retenida previa queda rechazada) y
-     * `usarOportunidad` se ignora, para que un cliente viejo nunca deje el reto atascado.
+     * Ausente / `false` / null = cliente que no la conoce: Ktor manda `p_admite_oportunidad = false` y la base trata la decision como `false` (nunca se
+     * retiene; una retenida previa queda rechazada) y `usarOportunidad` se ignora, para que un cliente viejo nunca deje el reto atascado.
      */
     val admiteOportunidad: Boolean? = null,
 )
@@ -143,13 +143,11 @@ internal class ChallengeService(
                 put("p_reto", retoId.lowercase())
                 put("p_pregunta", questionId.lowercase())
                 put("p_opcion", request.opcionSeleccionadaId.lowercase())
-                // C3: solo un cliente que declara admiteOportunidad puede recibir una respuesta retenida; a los demas, false = nunca retener.
-                // (Necesita la base con 20261114400200: la imagen va DESPUES de las migraciones, orden de despliegue v1.3.)
-                if (request.admiteOportunidad == true) {
-                    request.usarOportunidad?.let { put("p_usar_oportunidad", it) }
-                } else {
-                    put("p_usar_oportunidad", false)
-                }
+                // C3: solo un cliente que declara admiteOportunidad puede recibir una respuesta retenida; sin el, la base decide false (nunca retener),
+                // igual que con la llamada de 4 argumentos de la imagen anterior. (Necesita la base con 20261114400200: la imagen va DESPUES.)
+                val admite = request.admiteOportunidad == true
+                put("p_admite_oportunidad", admite)
+                if (admite) request.usarOportunidad?.let { put("p_usar_oportunidad", it) }
             }.toString(),
         )
     }

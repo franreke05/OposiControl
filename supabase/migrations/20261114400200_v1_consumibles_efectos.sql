@@ -25,8 +25,11 @@
 --   * private.consumible_usable / consumible_restantes / consumible_gastar / consumibles_reto_json / reto_recompensa_json: the shared rules. A usable
 --     activation: estado 'activa', not expired (activa_hasta), uses left. The pick: soonest expiry, then the highest multiplier, then the oldest; locked FOR UPDATE
 --     under the per-user reto lock. Spending a use writes usado_en and usado_en_reto_id; the last use sets estado 'usada' (D6-01 consumibles and D6-39 disponibles follow).
---   * public.app_answer_daily_challenge(user, reto, question, option, p_usar_oportunidad boolean DEFAULT NULL) replaces the 4-argument function (same named
---     arguments + one optional: the old Ktor call keeps working; no overload, so PostgREST never sees two candidates):
+--   * public.app_answer_daily_challenge(user, reto, question, option, p_usar_oportunidad boolean DEFAULT NULL, p_admite_oportunidad boolean DEFAULT false)
+--     replaces the 4-argument function (same named arguments + two optional: the old Ktor call keeps working; no overload, so PostgREST never sees two
+--     candidates). p_admite_oportunidad = the caller handles held answers (Ktor: the client sent admiteOportunidad true). Without it the decision is
+--     FALSE whatever p_usar_oportunidad says (review 2026-11-14: the image 0bb7efe02086 still running during the window calls with 4 arguments; it must
+--     never hold an answer of a user who owns retries). With it:
 --       - doble/triple: a WRONG answer while the user has retry uses is HELD: nothing is stored, no correction, the answer says
 --         {"esCorrecta":false,"estado":"EN_CURSO","oportunidad":{"disponible":true,"restantes":n}}. Then: the same option with p_usar_oportunidad NULL = idempotent
 --         repeat of that offer; p_usar_oportunidad = false = decline (the held answer becomes final, normal flow); p_usar_oportunidad = true with ANOTHER option = spend
@@ -61,7 +64,7 @@
 -- spent: the user keeps them).
 -- ROLLBACK-BEGIN
 -- begin;
--- drop function if exists public.app_answer_daily_challenge(uuid, uuid, uuid, uuid, boolean);
+-- drop function if exists public.app_answer_daily_challenge(uuid, uuid, uuid, uuid, boolean, boolean);
 -- create or replace function public.app_answer_daily_challenge(p_usuario uuid, p_reto uuid, p_pregunta uuid, p_opcion uuid)
 -- returns jsonb
 -- language plpgsql
@@ -334,6 +337,37 @@
 -- drop function if exists private.consumible_gastar(uuid, uuid, timestamptz);
 -- drop function if exists private.consumible_restantes(uuid, text[], timestamptz);
 -- drop function if exists private.consumible_usable(uuid, text[], timestamptz);
+-- create or replace function private.servicio_disponibles(p_usuario uuid, p_servicio uuid, p_now timestamptz)
+-- returns integer
+-- language sql
+-- stable
+-- security definer
+-- set search_path = ''
+-- as $$
+--   select coalesce(sum(a.usos_disponibles - a.usos_consumidos), 0)::integer
+--     from public.activaciones_servicio_usuario a
+--    where a.usuario_id = p_usuario and a.servicio_id = p_servicio and a.estado = 'activa'
+--      and (a.activa_hasta is null or a.activa_hasta > p_now) and a.usos_consumidos < a.usos_disponibles
+-- $$;
+-- revoke all on function private.servicio_disponibles(uuid, uuid, timestamptz) from public, anon, authenticated;
+-- create or replace function private.servicio_activacion_json(p_activacion uuid, p_now timestamptz)
+-- returns jsonb
+-- language sql
+-- stable
+-- security definer
+-- set search_path = ''
+-- as $$
+--   select jsonb_strip_nulls(jsonb_build_object(
+--            'id', a.id, 'servicioCodigo', s.codigo, 'tipo', s.tipo_servicio,
+--            'estado', case when a.estado = 'activa' and a.activa_hasta is not null and a.activa_hasta <= p_now then 'caducada' else a.estado end,
+--            'usosRestantes', greatest(a.usos_disponibles - a.usos_consumidos, 0),
+--            'activaHasta', a.activa_hasta,
+--            'multiplicador', (a.metadatos ->> 'multiplicador')::double precision))
+--     from public.activaciones_servicio_usuario a join public.servicios s on s.id = a.servicio_id
+--    where a.id = p_activacion
+-- $$;
+-- revoke all on function private.servicio_activacion_json(uuid, timestamptz) from public, anon, authenticated;
+-- drop function if exists private.consumible_devolver(uuid, uuid);
 -- drop function if exists private.consumible_reservar(uuid, uuid, uuid, date);
 -- drop function if exists private.consumible_reservados(uuid, timestamptz);
 -- drop table if exists public.reto_consumibles_reservados;
@@ -345,18 +379,18 @@
 -- VERIFY (read only; every row must have failures = 0)
 -- VERIFY-BEGIN
 -- select 'answer_without_oportunidad_argument',
---        (case when to_regprocedure('public.app_answer_daily_challenge(uuid,uuid,uuid,uuid,boolean)') is not null
+--        (case when to_regprocedure('public.app_answer_daily_challenge(uuid,uuid,uuid,uuid,boolean,boolean)') is not null
 --                and to_regprocedure('public.app_answer_daily_challenge(uuid,uuid,uuid,uuid)') is null then 0 else 1 end)::bigint
 -- union all
 -- select 'answer_not_service_role_only',
---        (case when to_regprocedure('public.app_answer_daily_challenge(uuid,uuid,uuid,uuid,boolean)') is null then 1
---              when has_function_privilege('anon', 'public.app_answer_daily_challenge(uuid,uuid,uuid,uuid,boolean)', 'execute')
---                or has_function_privilege('authenticated', 'public.app_answer_daily_challenge(uuid,uuid,uuid,uuid,boolean)', 'execute')
---                or not has_function_privilege('service_role', 'public.app_answer_daily_challenge(uuid,uuid,uuid,uuid,boolean)', 'execute') then 1 else 0 end)::bigint
+--        (case when to_regprocedure('public.app_answer_daily_challenge(uuid,uuid,uuid,uuid,boolean,boolean)') is null then 1
+--              when has_function_privilege('anon', 'public.app_answer_daily_challenge(uuid,uuid,uuid,uuid,boolean,boolean)', 'execute')
+--                or has_function_privilege('authenticated', 'public.app_answer_daily_challenge(uuid,uuid,uuid,uuid,boolean,boolean)', 'execute')
+--                or not has_function_privilege('service_role', 'public.app_answer_daily_challenge(uuid,uuid,uuid,uuid,boolean,boolean)', 'execute') then 1 else 0 end)::bigint
 -- union all
 -- select 'answer_does_not_spend_consumables',
---        (case when (select p.prosrc from pg_proc p where p.oid = to_regprocedure('public.app_answer_daily_challenge(uuid,uuid,uuid,uuid,boolean)')) like '%protector_usado_id = v_protector%'
---                and (select p.prosrc from pg_proc p where p.oid = to_regprocedure('public.app_answer_daily_challenge(uuid,uuid,uuid,uuid,boolean)')) like '%multiplicador_aplicado = v_mult%' then 0 else 1 end)::bigint
+--        (case when (select p.prosrc from pg_proc p where p.oid = to_regprocedure('public.app_answer_daily_challenge(uuid,uuid,uuid,uuid,boolean,boolean)')) like '%protector_usado_id = v_protector%'
+--                and (select p.prosrc from pg_proc p where p.oid = to_regprocedure('public.app_answer_daily_challenge(uuid,uuid,uuid,uuid,boolean,boolean)')) like '%multiplicador_aplicado = v_mult%' then 0 else 1 end)::bigint
 -- union all
 -- select 'claim_does_not_credit_the_potenciador',
 --        (case when (select p.prosrc from pg_proc p where p.oid = to_regprocedure('public.app_claim_daily_challenge(uuid,uuid)')) like '%v_key_pot%' then 0 else 1 end)::bigint
@@ -370,6 +404,10 @@
 --        (case when to_regclass('public.reto_consumibles_reservados') is null
 --                or has_table_privilege('anon', 'public.reto_consumibles_reservados', 'select') or has_table_privilege('authenticated', 'public.reto_consumibles_reservados', 'select')
 --                or has_table_privilege('service_role', 'public.reto_consumibles_reservados', 'select') then 1 else 0 end)::bigint
+-- union all
+-- select 'market_counters_ignore_reservations:' || f.n,
+--        (case when (select p.prosrc from pg_proc p where p.oid = to_regprocedure(f.n)) like '%consumible_reservados%' then 0 else 1 end)::bigint
+--   from (values ('private.servicio_disponibles(uuid,uuid,timestamptz)'), ('private.servicio_activacion_json(uuid,timestamptz)')) f(n)
 -- union all
 -- select 'claim_does_not_spend_the_reservations',
 --        (case when (select p.prosrc from pg_proc p where p.oid = to_regprocedure('public.app_claim_daily_challenge(uuid,uuid)')) like '%reto_consumibles_reservados%' then 0 else 1 end)::bigint
@@ -476,7 +514,8 @@ as $$
 $$;
 revoke all on function private.consumible_restantes(uuid, text[], timestamptz) from public, anon, authenticated;
 
--- spends ONE use of an activation in a daily challenge; the last use closes it ('usada')
+-- spends ONE use of an ACTIVE activation in a daily challenge; the last use closes it ('usada'). An activation revoked (or closed) between the answer and the
+-- claim is left as it is (it never becomes 'usada').
 create or replace function private.consumible_gastar(p_activacion uuid, p_reto uuid, p_now timestamptz)
 returns void
 language sql
@@ -487,9 +526,56 @@ as $$
      set usos_consumidos = usos_consumidos + 1,
          estado = case when usos_consumidos + 1 >= usos_disponibles then 'usada' else estado end,
          usado_en = p_now, usado_en_reto_id = p_reto
-   where id = p_activacion
+   where id = p_activacion and estado = 'activa' and usos_consumidos < usos_disponibles  -- a revoked / closed activation is never touched (review 2026-11-14)
 $$;
 revoke all on function private.consumible_gastar(uuid, uuid, timestamptz) from public, anon, authenticated;
+
+-- gives back ONE use of an activation spent in this reto (C2: an extra that a cap finally rejects after its use was spent by a deferred claim)
+create or replace function private.consumible_devolver(p_activacion uuid, p_reto uuid)
+returns void
+language sql
+security definer
+set search_path = ''
+as $$
+  update public.activaciones_servicio_usuario
+     set usos_consumidos = usos_consumidos - 1,
+         estado = case when estado = 'usada' then 'activa' else estado end
+   where id = p_activacion and usado_en_reto_id = p_reto and usos_consumidos > 0 and estado in ('activa', 'usada')
+$$;
+revoke all on function private.consumible_devolver(uuid, uuid) from public, anon, authenticated;
+
+-- ---- 2b. the Market (D6-39 disponibles) and the wallet (D6-01 usosRestantes) count like the reto panel (D3-16): live reservations are not available
+--          (review 2026-11-14). Same bodies as 20261114400100 plus the reservation term.
+create or replace function private.servicio_disponibles(p_usuario uuid, p_servicio uuid, p_now timestamptz)
+returns integer
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select coalesce(sum(greatest(a.usos_disponibles - a.usos_consumidos - private.consumible_reservados(a.id, p_now), 0)), 0)::integer
+    from public.activaciones_servicio_usuario a
+   where a.usuario_id = p_usuario and a.servicio_id = p_servicio and a.estado = 'activa'
+     and (a.activa_hasta is null or a.activa_hasta > p_now) and a.usos_consumidos < a.usos_disponibles
+$$;
+revoke all on function private.servicio_disponibles(uuid, uuid, timestamptz) from public, anon, authenticated;
+create or replace function private.servicio_activacion_json(p_activacion uuid, p_now timestamptz)
+returns jsonb
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select jsonb_strip_nulls(jsonb_build_object(
+           'id', a.id, 'servicioCodigo', s.codigo, 'tipo', s.tipo_servicio,
+           'estado', case when a.estado = 'activa' and a.activa_hasta is not null and a.activa_hasta <= p_now then 'caducada' else a.estado end,
+           'usosRestantes', greatest(a.usos_disponibles - a.usos_consumidos - private.consumible_reservados(a.id, p_now), 0),
+           'activaHasta', a.activa_hasta,
+           'multiplicador', (a.metadatos ->> 'multiplicador')::double precision))
+    from public.activaciones_servicio_usuario a join public.servicios s on s.id = a.servicio_id
+   where a.id = p_activacion
+$$;
+revoke all on function private.servicio_activacion_json(uuid, timestamptz) from public, anon, authenticated;
 
 create or replace function private.consumibles_reto_json(p_usuario uuid, p_now timestamptz)
 returns jsonb
@@ -522,10 +608,12 @@ as $$
 $$;
 revoke all on function private.reto_recompensa_json(public.registros_reto_diario) from public, anon, authenticated;
 
--- ---- 3. answer: the 20261022103500 body plus the consumables (see the header). p_usar_oportunidad is new and defaults to NULL: the old 4-argument
---         call (named arguments, Ktor before F28) keeps working, so the function is replaced (dropped and created with 5 arguments) instead of overloaded.
+-- ---- 3. answer: the 20261022103500 body plus the consumables (see the header). p_usar_oportunidad (default NULL) and p_admite_oportunidad (default
+--         false) are new: the old 4-argument call (named arguments, Ktor image before F28) keeps working and, since it does not declare support, is NEVER
+--         held (NULL is treated as false); the function is replaced (dropped and created with 6 arguments) instead of overloaded.
 drop function if exists public.app_answer_daily_challenge(uuid, uuid, uuid, uuid);
-create or replace function public.app_answer_daily_challenge(p_usuario uuid, p_reto uuid, p_pregunta uuid, p_opcion uuid, p_usar_oportunidad boolean default null)
+create or replace function public.app_answer_daily_challenge(p_usuario uuid, p_reto uuid, p_pregunta uuid, p_opcion uuid, p_usar_oportunidad boolean default null,
+                                                              p_admite_oportunidad boolean default false)
 returns jsonb
 language plpgsql
 security definer
@@ -570,6 +658,8 @@ declare
   v_pot uuid;
   v_op uuid;
   v_usados text[] := '{}';
+  -- the caller's decision; a caller that does not declare support for held answers (old image, old client) = false: never held, a held one is declined
+  v_usar boolean := case when p_admite_oportunidad then p_usar_oportunidad else false end;
 begin
   if p_usuario is null or p_reto is null or p_pregunta is null or p_opcion is null then
     raise exception using errcode = 'P0001', message = 'NOT_FOUND';
@@ -613,7 +703,7 @@ begin
   select * into v_pend from public.reto_oportunidades_pendientes x where x.usuario_id = p_usuario and x.reto_id = p_reto and x.pregunta_id = p_pregunta;
   v_hay_pend := found;
   if v_hay_pend then
-    if p_usar_oportunidad is null then
+    if v_usar is null then
       if p_opcion <> v_pend.opcion_id then
         raise exception using errcode = 'P0001', message = 'ANSWER_LOCKED';  -- a different option needs the explicit choice to spend the retry
       end if;
@@ -621,7 +711,7 @@ begin
       return jsonb_strip_nulls(jsonb_build_object('esCorrecta', false, 'estado', 'EN_CURSO', 'aciertos', g.aciertos, 'respondidas', g.progreso,
         'oportunidad', jsonb_build_object('disponible', true, 'restantes', private.consumible_restantes(p_usuario, array['doble_oportunidad', 'triple_oportunidad'], v_now)),
         'racha', private.reto_streak_json(p_usuario, v_today)));
-    elsif not p_usar_oportunidad then
+    elsif not v_usar then
       v_opcion := v_pend.opcion_id;  -- declined: the held wrong answer becomes final
       delete from public.reto_oportunidades_pendientes x where x.usuario_id = p_usuario and x.reto_id = p_reto and x.pregunta_id = p_pregunta;
     else
@@ -638,8 +728,8 @@ begin
     end if;
   end if;
   v_ok := (v_opcion = v_correcta);
-  -- a wrong answer with a retry available is HELD (not stored, no correction) unless the user already declined (p_usar_oportunidad = false)
-  if not v_ok and p_usar_oportunidad is distinct from false
+  -- a wrong answer with a retry available is HELD (not stored, no correction) unless the user already declined (v_usar = false)
+  if not v_ok and v_usar is distinct from false
      and private.consumible_restantes(p_usuario, array['doble_oportunidad', 'triple_oportunidad'], v_now) > 0 then
     insert into public.reto_oportunidades_pendientes (usuario_id, reto_id, pregunta_id, opcion_id, creado_en) values (p_usuario, p_reto, p_pregunta, v_opcion, v_now);
     return jsonb_strip_nulls(jsonb_build_object('esCorrecta', false, 'estado', 'EN_CURSO', 'aciertos', g.aciertos, 'respondidas', g.progreso,
@@ -750,8 +840,8 @@ begin
     'racha', private.reto_streak_json(p_usuario, v_today)));
 end;
 $$;
-revoke all on function public.app_answer_daily_challenge(uuid, uuid, uuid, uuid, boolean) from public, anon, authenticated;
-grant execute on function public.app_answer_daily_challenge(uuid, uuid, uuid, uuid, boolean) to service_role;
+revoke all on function public.app_answer_daily_challenge(uuid, uuid, uuid, uuid, boolean, boolean) from public, anon, authenticated;
+grant execute on function public.app_answer_daily_challenge(uuid, uuid, uuid, uuid, boolean, boolean) to service_role;
 
 -- ---- 4. today: the 20261022101200 body; the reward also shows for a failed reto saved by a tickets protector, the potenciador part, the held retry and the counters
 create or replace function public.app_get_daily_challenge(p_usuario uuid)
@@ -910,7 +1000,12 @@ begin
       -- not credited: the frozen total is what is paid (recompensa.extraPotenciador = 0) and the potenciador use goes back to the user
       update public.registros_reto_diario set recompensa_total_tickets = recompensa_base_tickets + bonus_racha_tickets
        where usuario_id = p_usuario and reto_id = p_reto returning * into g;
-      delete from public.reto_consumibles_reservados r where r.usuario_id = p_usuario and r.reto_id = p_reto and r.activacion_id = g.potenciador_usado_id;
+      if exists (select 1 from public.reto_consumibles_reservados r where r.usuario_id = p_usuario and r.reto_id = p_reto and r.activacion_id = g.potenciador_usado_id) then
+        delete from public.reto_consumibles_reservados r where r.usuario_id = p_usuario and r.reto_id = p_reto and r.activacion_id = g.potenciador_usado_id;
+      else
+        -- a replay after a deferral that expired: the use was spent by the first (deferred) claim -> give it back
+        perform private.consumible_devolver(g.potenciador_usado_id, p_reto);
+      end if;
     else
       v_pend := v_pend or c.estado = 'DEFERRED';
     end if;

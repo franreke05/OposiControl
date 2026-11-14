@@ -4827,7 +4827,7 @@ begin
   -- grants: the client roles can neither run the RPCs nor read the held answers
   assert not has_function_privilege('authenticated', 'public.app_redeem_service(uuid,text,text,integer)', 'execute')
      and not has_function_privilege('anon', 'public.app_market_catalog(uuid)', 'execute')
-     and not has_function_privilege('authenticated', 'public.app_answer_daily_challenge(uuid,uuid,uuid,uuid,boolean)', 'execute')
+     and not has_function_privilege('authenticated', 'public.app_answer_daily_challenge(uuid,uuid,uuid,uuid,boolean,boolean)', 'execute')
      and not has_table_privilege('authenticated', 'public.reto_oportunidades_pendientes', 'select'), 'F28: client grants';
   raise notice 'OK F28 consumables';
 end $f28$;
