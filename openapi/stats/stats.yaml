@@ -1,5 +1,8 @@
 # STATS (FA32, V1 wave 3): Nota media, Evolucion, Debilidades by tag, summaries and question difficulty of the CURRENT user. Design: E1-V1-ENGAGEMENT-DESIGN.md section 2 (E2 conditions C-S1..C-S4).
-# Only the FIRST answer to each question counts (first_response of the exam attempts): never a demo row, never a challenge answer, never an annulled question, never a skip. Everything is written by the database in the
+# FA54 (F27, owner 2026-11-14, migration 20261114300000; CONTRACT_FREEZE.md record PENDING_OWNER in the OposiBot repo), text-only: two first-answer counts. aciertos / fallos / tags (Debilidades) = the user's FIRST answer to
+# each question in a real exam, a practice (D2-68) or the daily challenge (D3-17); Nota media, Evolucion, league (preguntasValidas) and ranking = the FIRST answer to each question in an attempt that counts for ranking (the
+# user's first real attempt of the exam; never a practice, a reto, a demo or a repeat attempt). A demo or a practice never burns a question. Never an annulled question, never a skip. The rest below stands.
+# (Before FA54:) Only the FIRST answer to each question counts (first_response of the exam attempts): never a demo row, never a challenge answer, never an annulled question, never a skip. Everything is written by the database in the
 # same transaction as that first answer (exactly once) and read from single-row or indexed tables. Own data only: no endpoint returns another user's numbers or identity. Windows, steps and minimums are Control
 # configuration (configuracion_v1 and ligas_nivel), never constants of the app. No endpoint triggers a recompute.
 components:
@@ -16,7 +19,7 @@ components:
         x-pagination: NONE
         x-idempotency: NONE
         x-error-codes: [UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
-        description: 'Always 200 for an active account (a user with no first answer gets valor null and zeros). notaMedia.valor = correct / N x 10 over the LAST N first answers, N = the window of the league the user is in (Control: 50 in the first league, 100 afterwards); provisional = fewer than N first answers exist (the value is over what exists). evolucion.valor = notaMedia now minus the stored reference, recomputed every evolucion.cada new first answers (Control, default 20); null until the first reference exists. totales.aciertos / fallos count first answers; noContestadas = skipped or unanswered questions of finished, non-demo exam attempts.'
+        description: 'Always 200 for an active account (a user with no first answer gets valor null and zeros). FA54: notaMedia.valor = max(0, A - sum over the wrong answers of E/(n-1)) / N x 10, HALF-UP to 2 decimals, over the LAST N ranking first answers (A = correct, n = options of the question, penalty frozen in each attempt; an attempt without penalty weighs a wrong answer 0); the same formula as the attempt grade, skipped questions excluded, N = the window of the league the user is in (Control: 50 in the first league, 100 afterwards); provisional = fewer than N first answers exist (the value is over what exists). evolucion.valor = notaMedia now minus the stored reference, recomputed every evolucion.cada new first answers (Control, default 20); null until the first reference exists. totales.aciertos / fallos count first answers of real exams, practices and the daily challenge; noContestadas (FA54) = distinct questions left skipped or unanswered in finished real-exam or practice attempts and never answered since (aciertos + fallos + noContestadas = distinct questions met).'
         security:
           - bearerAuth: []
         responses:
@@ -207,7 +210,7 @@ components:
             respondidas:
               type: integer
               minimum: 0
-              description: 'First answers inside the window (at most ventana).'
+              description: 'Ranking first answers inside the window (at most ventana).'
             provisional:
               type: boolean
         evolucion:
@@ -262,7 +265,7 @@ components:
         preguntasValidas:
           type: integer
           minimum: 0
-          description: 'First answers counted (decides the league).'
+          description: 'Ranking first answers counted (decides the league; FA54: only attempts that count for ranking).'
         totales:
           type: object
           required: [aciertos, fallos, noContestadas]

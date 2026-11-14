@@ -1,0 +1,7 @@
+# F27 estadisticas bien contadas (f27/stats-fix, decision del propietario 2026-11-14, enmienda FA54): migracion que se aplica a MAIN DESPUES de F23.
+# Acta y anexo al runbook: docs/ledger/2026/11/2026-11-14-f27-stats-fix.md. Uso con el script de siempre:
+#   MANIFEST=ops/deploy/v1/main-migrations-2026-11-f27.manifest bash ops/deploy/v1/apply-main-migration.sh supabase/migrations/20261114300000_v1_stats_fix.sql
+# version  blob(git hash-object, 12)  predecesora(debe estar en supabase_migrations antes de aplicar)  clase
+# Cadena: F20 20261109100000 -> F20b 20261109100200 y F14b 20261111100000 (independientes) -> F23 20261109100100 -> F27. Requisito duro: F23 (intentos_examen.es_practica).
+# Si cambia el blob, se rehacen este manifiesto y el ensayo (docs/ledger/2026/11/rehearse-f27-2026-11.sh).
+20261114300000 cdc1901baaa3 20261109100100 apply
