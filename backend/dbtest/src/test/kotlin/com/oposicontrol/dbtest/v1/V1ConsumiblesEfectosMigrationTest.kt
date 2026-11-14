@@ -122,7 +122,10 @@ class V1ConsumiblesEfectosMigrationTest {
         val t = c.answer(tickets, ko)
         assertEquals("FALLADO|40|20|60", listOf("estado", "recompensa,base", "recompensa,bonusRacha", "recompensa,total").joinToString("|") { c.j(t, it)!! }, t)
         assertEquals("4|false", c.streakRow(tickets), "the streak breaks")
+        assertEquals("protector_tickets:0/1:activa", c.activations(tickets), "C2: the tickets protector is reserved at answer time, not spent")
+        assertEquals("0", c.j(c.today(tickets), "consumibles,protectorTickets"), "reserved: no longer offered")
         assertEquals("60", c.j(c.claim(tickets), "recompensa,total"))
+        assertEquals("protector_tickets:1/1:usada", c.activations(tickets), "spent by the claim")
         assertEquals("bonus_racha:20,reto_diario:40", c.ledger(tickets), "a failed reto saved by the protector is paid like a passed one")
         assertEquals("FALLADO", c.j(c.today(tickets), "estado"))
 
@@ -131,8 +134,10 @@ class V1ConsumiblesEfectosMigrationTest {
         assertEquals("60|5|true", "${c.j(d, "recompensa,total")}|${c.streakRow(dual)}")
 
         val b = c.answer(both, ko)
-        assertEquals("""["protector_tickets", "protector_racha"]""", c.j(b, "consumiblesUsados"), "no dual: one of each")
+        assertEquals("""["protector_racha", "protector_tickets"]""", c.j(b, "consumiblesUsados"), "no dual: one of each")
         assertEquals("60|5|true", "${c.j(b, "recompensa,total")}|${c.streakRow(both)}")
+        assertEquals("protector_racha:1/1:usada,protector_tickets:0/1:activa", c.activations(both), "the streak one acts now; the tickets one waits for the claim")
+        c.claim(both)
         assertEquals("protector_racha:1/1:usada,protector_tickets:1/1:usada", c.activations(both))
 
         val p = c.answer(passed, ok)
@@ -156,13 +161,16 @@ class V1ConsumiblesEfectosMigrationTest {
             listOf("estado", "recompensa,base", "recompensa,bonusRacha", "recompensa,multiplicador", "recompensa,extraPotenciador", "recompensa,total").joinToString("|") { c.j(r, it)!! },
             r,
         )
-        assertEquals("potenciador:0/1:activa,potenciador:1/1:usada", c.activations(pot).split(",").sorted().joinToString(","), "one per reto (the x3 first: same expiry, higher multiplier)")
+        assertEquals("potenciador:0/1:activa,potenciador:0/1:activa", c.activations(pot), "C2: reserved at answer time, spent by the claim")
+        assertEquals("1", c.j(c.today(pot), "consumibles,potenciador"), "the reserved x3 is no longer offered")
         assertEquals("3", c.unico("select multiplicador_aplicado::int from public.registros_reto_diario where usuario_id = '$pot'"))
         val cl = c.claim(pot)
+        assertEquals("potenciador:0/1:activa,potenciador:1/1:usada", c.activations(pot).split(",").sorted().joinToString(","), "one per reto (the x3 first: same expiry, higher multiplier)")
         assertEquals("140|true|80", listOf("recompensa,total", "recompensa,reclamada", "recompensa,extraPotenciador").joinToString("|") { c.j(cl, it)!! })
         assertEquals("bonus_racha:20,potenciador:80,reto_diario:40", c.ledger(pot))
         c.claim(pot)
         assertEquals("bonus_racha:20,potenciador:80,reto_diario:40", c.ledger(pot), "claiming again pays nothing more")
+        assertEquals("potenciador:0/1:activa,potenciador:1/1:usada", c.activations(pot).split(",").sorted().joinToString(","), "claiming again spends nothing more")
         assertEquals("80", c.j(c.today(pot), "recompensa,extraPotenciador"))
 
         c.answer(failed, ko)
@@ -170,6 +178,33 @@ class V1ConsumiblesEfectosMigrationTest {
 
         val n = c.answer(noBonus, ok)
         assertEquals("40|0|80", listOf("recompensa,base", "recompensa,bonusRacha", "recompensa,total").joinToString("|") { c.j(n, it)!! }, "x2 of 40, no streak bonus")
+    }
+
+    @Test
+    fun aFailedClaimKeepsTheReservedConsumablesAndAnUnclaimedReservationFreesItself() = V1Db.escenario { c ->
+        c.world(2)
+        val (unverified, idle) = listOf(user(1), user(2))
+        c.streak(unverified, 4)
+        c.buy(unverified, "protector_tickets"); c.buy(unverified, "potenciador_x2")
+        c.buy(idle, "potenciador_x2")
+        c.ejecutar("update auth.users set email_confirmed_at = null where id = '$unverified'")
+
+        val r = c.answer(unverified, ko)
+        assertEquals("FALLADO|100", "${c.j(r, "estado")}|${c.j(r, "recompensa,total")}", "tickets protected (40 + 20) and the base doubled (+40)")
+        assertTrue(runCatching { c.claim(unverified) }.exceptionOrNull()?.message?.contains("EMAIL_UNVERIFIED") == true)
+        assertEquals("protector_tickets:0/1:activa,potenciador:0/1:activa", c.activations(unverified), "a failed claim spends nothing")
+        assertEquals("", c.ledger(unverified))
+        c.ejecutar("update auth.users set email_confirmed_at = now() where id = '$unverified'")
+        assertEquals("100", c.j(c.claim(unverified), "recompensa,total"))
+        assertEquals("protector_tickets:1/1:usada,potenciador:1/1:usada", c.activations(unverified), "the successful claim spends both, once")
+        assertEquals("bonus_racha:20,potenciador:40,reto_diario:40", c.ledger(unverified))
+        assertEquals("0", c.unico("select count(*)::text from public.reto_consumibles_reservados where usuario_id = '$unverified'"))
+
+        c.answer(idle, ok)
+        assertEquals("0", c.j(c.today(idle), "consumibles,potenciador"), "reserved while the reto can be claimed")
+        c.ejecutar("update public.reto_consumibles_reservados set reclamable_hasta = private.reto_today(clock_timestamp()) - 1 where usuario_id = '$idle'")
+        assertEquals("1", c.j(c.today(idle), "consumibles,potenciador"), "never claimed: after the last claim day the use is free again")
+        assertEquals("potenciador:0/1:activa", c.activations(idle))
     }
 
     @Test
@@ -225,7 +260,7 @@ class V1ConsumiblesEfectosMigrationTest {
     fun theVerifyBlockAndTheRollbackRestoreTheOldFunctions() = V1Db.escenario { c ->
         val verify = Slice0Db.verifyDe("supabase/migrations/$migration.sql")
         val rows = c.filas(verify)
-        assertEquals(6, rows.size, "VERIFY rows: $rows")
+        assertEquals(8, rows.size, "VERIFY rows: $rows")
         assertEquals(emptyList(), rows.filter { it[1] != "0" }, "every VERIFY counter is 0")
         c.ejecutar(Slice0Db.rollbackDe("supabase/migrations/$migration.sql"))
         val after = c.filas(verify).filter { it[1] != "0" }.map { it[0] }

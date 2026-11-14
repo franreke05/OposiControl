@@ -18,7 +18,7 @@
 --   * doble/triple oportunidad "deshace la pregunta respondida, otorgandole una oportunidad adicional. Antes de que aparezcan los recursos ... pop-up
 --                       preguntando si desea utilizarlo" -> after a wrong answer, BEFORE the correction, the user may answer that question again.
 --   * modo_papel ("el usuario pagara por el numero de examenes que quiera pasar a PDF") and carta_ccaa_comodin ("no en MVP ... gamificacion distinta"):
---     no behaviour defined -> purchasable but INERT (20261114400100); nothing here.
+--     no behaviour defined -> NOT purchasable in 1.3 (20261114400100, review C4); nothing here.
 --
 -- WHAT IT DOES
 --   * public.reto_oportunidades_pendientes: the wrong answer HELD while the user decides (one row per user, reto, question; no client access).
@@ -38,14 +38,23 @@
 --         The reto stays FALLADO (superado false, reto_contadores unchanged); a saved streak advances exactly like a passed day.
 --       - potenciador: when the reward base > 0 (passed, or failed with tickets protected) ONE potenciador multiplies the base: extra = floor(base x m) - base,
 --         recompensa_total_tickets = base + extra + bonus, multiplicador_aplicado = m (frozen at purchase), potenciador_usado_id.
+--       - C2 (review 2026-11-14): what only pays at CLAIM time is RESERVED at answer time and SPENT at claim time: the potenciador, and the protector that only
+--         keeps the tickets (protector_tickets, or a dual used for the tickets alone). A reservation (public.reto_consumibles_reservados) holds one use until
+--         the last claim day of that reto (completion day + reto_reclamar_dias); usable / remaining counts subtract live reservations, so one use is never
+--         promised twice. A claim that fails (RETO_CLAIM_EXPIRED, EMAIL_UNVERIFIED, RETO_CLAIM_NOT_ELIGIBLE, OT_EARN_CAP_REACHED) rolls back and spends
+--         nothing; an unclaimed reservation frees itself after the claim window. What acts at answer time is still spent at answer time (protector_racha, a
+--         dual that saves the streak, doble/triple oportunidad).
 --       - the answer adds consumiblesUsados (types spent by this answer) and recompensa.multiplicador / recompensa.extraPotenciador when a potenciador applied.
 --   * public.app_get_daily_challenge: reward also shown for a FAILED reto that pays (tickets protector), potenciador part, preguntas[].oportunidadPendiente
 --     (held answer waiting for the decision), protectorUsado (type) and consumibles {protectorRacha, protectorTickets, protectorDual, potenciador, oportunidades}.
 --   * public.app_claim_daily_challenge: claimable when completed AND (passed OR total > 0); the potenciador extra is credited as ONE 'potenciador' ledger
---     movement (key potenciador:<user>:<dia>, outside the free-earn caps: it was bought with OT) in the same all-or-nothing transaction as base and bonus.
+--     movement (key potenciador:<user>:<dia>, outside the free-earn caps: it was bought with OT) in the same all-or-nothing transaction as base and bonus;
+--     the reserved uses of that reto are spent in that same transaction (C2). OWNER DECISION D1 pending: c_potenciador_en_topes (one constant in the claim)
+--     routes the extra through public.app_credit_free_ot ('reto_diario', same key) so it counts in the daily/weekly free-OT caps; today false = outside.
 --
 -- ROLLBACK (manual, executed verbatim by the PG17 gate): the previous bodies come back verbatim (answer 20261022103500 with 4 arguments; today and claim
--- 20261022101200). Activations already spent stay spent; held answers are dropped (the user answers again).
+-- 20261022101200). Activations already spent stay spent; held answers are dropped (the user answers again); reservations are dropped (those uses were never
+-- spent: the user keeps them).
 -- ROLLBACK-BEGIN
 -- begin;
 -- drop function if exists public.app_answer_daily_challenge(uuid, uuid, uuid, uuid, boolean);
@@ -322,6 +331,9 @@
 -- drop function if exists private.consumible_gastar(uuid, uuid, timestamptz);
 -- drop function if exists private.consumible_restantes(uuid, text[], timestamptz);
 -- drop function if exists private.consumible_usable(uuid, text[], timestamptz);
+-- drop function if exists private.consumible_reservar(uuid, uuid, uuid, date);
+-- drop function if exists private.consumible_reservados(uuid, timestamptz);
+-- drop table if exists public.reto_consumibles_reservados;
 -- drop table if exists public.reto_oportunidades_pendientes;
 -- commit;
 -- ROLLBACK-END
@@ -349,6 +361,14 @@
 --        (case when to_regclass('public.reto_oportunidades_pendientes') is null
 --                or has_table_privilege('anon', 'public.reto_oportunidades_pendientes', 'select') or has_table_privilege('authenticated', 'public.reto_oportunidades_pendientes', 'select')
 --                or has_table_privilege('service_role', 'public.reto_oportunidades_pendientes', 'select') then 1 else 0 end)::bigint
+-- union all
+-- select 'reservations_readable_by_clients',
+--        (case when to_regclass('public.reto_consumibles_reservados') is null
+--                or has_table_privilege('anon', 'public.reto_consumibles_reservados', 'select') or has_table_privilege('authenticated', 'public.reto_consumibles_reservados', 'select')
+--                or has_table_privilege('service_role', 'public.reto_consumibles_reservados', 'select') then 1 else 0 end)::bigint
+-- union all
+-- select 'claim_does_not_spend_the_reservations',
+--        (case when (select p.prosrc from pg_proc p where p.oid = to_regprocedure('public.app_claim_daily_challenge(uuid,uuid)')) like '%reto_consumibles_reservados%' then 0 else 1 end)::bigint
 -- union all
 -- select 'consumable_helpers_executable_by_clients',
 --        (case when to_regprocedure('private.consumible_usable(uuid,text[],timestamptz)') is null or to_regprocedure('private.consumible_gastar(uuid,uuid,timestamptz)') is null
@@ -383,7 +403,44 @@ create table if not exists public.reto_oportunidades_pendientes (
 alter table public.reto_oportunidades_pendientes enable row level security;
 revoke all on table public.reto_oportunidades_pendientes from public, anon, authenticated, service_role;
 
--- ---- 2. the user's usable activation of some types: soonest expiry first, then the highest multiplier, then the oldest (locked FOR UPDATE)
+-- ---- 1b. C2: one use of an activation RESERVED by a completed reto until its claim (spent by the claim; frees itself after the last claim day)
+create table if not exists public.reto_consumibles_reservados (
+  usuario_id uuid not null references auth.users(id) on delete cascade,
+  reto_id uuid not null references public.retos_diarios(id) on delete cascade,
+  activacion_id uuid not null references public.activaciones_servicio_usuario(id) on delete cascade,
+  reclamable_hasta date not null,
+  creado_en timestamptz not null default now(),
+  primary key (usuario_id, reto_id, activacion_id)
+);
+create index if not exists idx_reto_consumibles_reservados_activacion on public.reto_consumibles_reservados (activacion_id, reclamable_hasta);
+alter table public.reto_consumibles_reservados enable row level security;
+revoke all on table public.reto_consumibles_reservados from public, anon, authenticated, service_role;
+
+-- live reservations of one activation (claim window still open on the Madrid day of p_now)
+create or replace function private.consumible_reservados(p_activacion uuid, p_now timestamptz)
+returns integer
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select count(*)::integer from public.reto_consumibles_reservados x where x.activacion_id = p_activacion and x.reclamable_hasta >= private.reto_today(p_now)
+$$;
+revoke all on function private.consumible_reservados(uuid, timestamptz) from public, anon, authenticated;
+
+create or replace function private.consumible_reservar(p_usuario uuid, p_reto uuid, p_activacion uuid, p_hasta date)
+returns void
+language sql
+security definer
+set search_path = ''
+as $$
+  insert into public.reto_consumibles_reservados (usuario_id, reto_id, activacion_id, reclamable_hasta) values (p_usuario, p_reto, p_activacion, p_hasta)
+  on conflict do nothing
+$$;
+revoke all on function private.consumible_reservar(uuid, uuid, uuid, date) from public, anon, authenticated;
+
+-- ---- 2. the user's usable activation of some types: soonest expiry first, then the highest multiplier, then the oldest (locked FOR UPDATE); live reservations
+--         (C2) take their use out first
 create or replace function private.consumible_usable(p_usuario uuid, p_tipos text[], p_now timestamptz)
 returns uuid
 language sql
@@ -393,7 +450,7 @@ as $$
   select a.id
     from public.activaciones_servicio_usuario a join public.servicios s on s.id = a.servicio_id
    where a.usuario_id = p_usuario and s.tipo_servicio = any (p_tipos) and a.estado = 'activa'
-     and (a.activa_hasta is null or a.activa_hasta > p_now) and a.usos_consumidos < a.usos_disponibles
+     and (a.activa_hasta is null or a.activa_hasta > p_now) and a.usos_consumidos + private.consumible_reservados(a.id, p_now) < a.usos_disponibles
    order by a.activa_hasta nulls last, coalesce((a.metadatos ->> 'multiplicador')::numeric, s.multiplicador, 1) desc, a.activa_desde, a.id
    limit 1
    for update of a
@@ -408,7 +465,7 @@ stable
 security definer
 set search_path = ''
 as $$
-  select coalesce(sum(a.usos_disponibles - a.usos_consumidos), 0)::integer
+  select coalesce(sum(greatest(a.usos_disponibles - a.usos_consumidos - private.consumible_reservados(a.id, p_now), 0)), 0)::integer
     from public.activaciones_servicio_usuario a join public.servicios s on s.id = a.servicio_id
    where a.usuario_id = p_usuario and s.tipo_servicio = any (p_tipos) and a.estado = 'activa'
      and (a.activa_hasta is null or a.activa_hasta > p_now) and a.usos_consumidos < a.usos_disponibles
@@ -505,6 +562,7 @@ declare
   v_prot_racha uuid;
   v_prot_tickets uuid;
   v_protector uuid;
+  v_res_tickets uuid;
   v_pot uuid;
   v_op uuid;
   v_usados text[] := '{}';
@@ -619,24 +677,29 @@ begin
       v_dual := private.consumible_usable(p_usuario, array['protector_dual'], v_now);
       v_prot_racha := private.consumible_usable(p_usuario, array['protector_racha'], v_now);
       v_prot_tickets := private.consumible_usable(p_usuario, array['protector_tickets'], v_now);
+      -- C2: the protector that only keeps the TICKETS (v_res_tickets) pays at claim time, so it is reserved now and spent by the claim; a protector that
+      -- saves the streak acts now and is spent now.
       if v_alive and v_base + v_bonus > 0 then
         if v_dual is not null then
           v_protector := v_dual; v_save_streak := true; v_save_tickets := true;
         else
           if v_prot_racha is not null then v_protector := v_prot_racha; v_save_streak := true; end if;
           if v_prot_tickets is not null then
-            v_save_tickets := true;
-            if v_protector is null then v_protector := v_prot_tickets; else perform private.consumible_gastar(v_prot_tickets, p_reto, v_now); v_usados := v_usados || 'protector_tickets'::text; end if;
+            v_save_tickets := true; v_res_tickets := v_prot_tickets; v_protector := coalesce(v_protector, v_prot_tickets);
           end if;
         end if;
       elsif v_alive then
         v_protector := coalesce(v_prot_racha, v_dual); v_save_streak := v_protector is not null;
       elsif v_base + v_bonus > 0 then
-        v_protector := coalesce(v_prot_tickets, v_dual); v_save_tickets := v_protector is not null;
+        v_res_tickets := coalesce(v_prot_tickets, v_dual); v_protector := v_res_tickets; v_save_tickets := v_protector is not null;
       end if;
-      if v_protector is not null then
+      if v_protector is not null and v_protector is distinct from v_res_tickets then
         perform private.consumible_gastar(v_protector, p_reto, v_now);
         v_usados := v_usados || (select s.tipo_servicio from public.activaciones_servicio_usuario a join public.servicios s on s.id = a.servicio_id where a.id = v_protector);
+      end if;
+      if v_res_tickets is not null then
+        perform private.consumible_reservar(p_usuario, p_reto, v_res_tickets, v_today + private.config_int('reto_reclamar_dias', 3));
+        v_usados := v_usados || (select s.tipo_servicio from public.activaciones_servicio_usuario a join public.servicios s on s.id = a.servicio_id where a.id = v_res_tickets);
       end if;
       if not v_save_tickets then
         v_base := 0; v_bonus := 0;
@@ -656,14 +719,14 @@ begin
       update public.rachas_usuario set racha_actual_dias = st.racha_actual_dias, mejor_racha_dias = greatest(st.mejor_racha_dias, st.racha_actual_dias),
              ultima_actividad_fecha = st.ultima_actividad_fecha, actualizado_en = now() where usuario_id = p_usuario;
     end if;
-    -- ---- potenciador (F28): multiplies the BASE reward of this reto (never the streak bonus); one per reto, not cumulative
+    -- ---- potenciador (F28): multiplies the BASE reward of this reto (never the streak bonus); one per reto, not cumulative. C2: reserved now, spent by the claim.
     if v_base > 0 then
       v_pot := private.consumible_usable(p_usuario, array['potenciador'], v_now);
       if v_pot is not null then
         select greatest(coalesce((a.metadatos ->> 'multiplicador')::numeric, s.multiplicador, 1), 1) into v_mult
           from public.activaciones_servicio_usuario a join public.servicios s on s.id = a.servicio_id where a.id = v_pot;
         v_extra := floor(v_base * v_mult)::integer - v_base;
-        perform private.consumible_gastar(v_pot, p_reto, v_now);
+        perform private.consumible_reservar(p_usuario, p_reto, v_pot, v_today + private.config_int('reto_reclamar_dias', 3));
         v_usados := v_usados || 'potenciador'::text;
       end if;
     end if;
@@ -792,8 +855,12 @@ declare
   v_key_racha text;
   v_key_pot text;
   v_extra integer;
+  -- OWNER DECISION D1 (pending): true = the potenciador extra goes through public.app_credit_free_ot and counts in the daily/weekly free-OT caps.
+  c_potenciador_en_topes constant boolean := false;
   a record;
   b record;
+  c record;
+  v_res record;
   v_started boolean;
   v_pend boolean;
   v_confirmado timestamptz;
@@ -821,7 +888,7 @@ begin
   v_key_base := 'reto:' || p_usuario::text || ':' || g.dia::text || ':base';
   v_key_racha := 'racha:' || p_usuario::text || ':' || g.dia::text;
   v_key_pot := 'potenciador:' || p_usuario::text || ':' || g.dia::text;
-  v_started := exists (select 1 from public.ot_ganancias_diferidas q where q.usuario_id = p_usuario and q.clave in (v_key_base, v_key_racha))
+  v_started := exists (select 1 from public.ot_ganancias_diferidas q where q.usuario_id = p_usuario and q.clave in (v_key_base, v_key_racha, v_key_pot))
             or exists (select 1 from public.transacciones_cartera t where t.usuario_id = p_usuario and t.idempotency_key in (v_key_base, v_key_racha, v_key_pot));
   if not v_started then
     -- first claim attempt only: window and farming gates (W-9, W-6); once the earn started, replays never re-gate
@@ -849,10 +916,24 @@ begin
     raise exception using errcode = 'P0001', message = 'OT_EARN_CAP_REACHED';  -- rolls back a part that was already credited: all or nothing
   end if;
   v_extra := g.recompensa_total_tickets - g.recompensa_base_tickets - g.bonus_racha_tickets;
-  if v_extra > 0 then
-    perform private.reto_potenciador_abonar(p_usuario, p_reto, v_key_pot, v_extra, g.dia, g.multiplicador_aplicado, g.potenciador_usado_id);
-  end if;
   v_pend := a.estado = 'DEFERRED' or b.estado = 'DEFERRED';
+  if v_extra > 0 then
+    if c_potenciador_en_topes then
+      select * into c from public.app_credit_free_ot(p_usuario, 'reto_diario', v_extra, 'reto', p_reto, v_key_pot,
+                                                    jsonb_build_object('dia', g.dia, 'op', 'potenciador_reto', 'multiplicador', g.multiplicador_aplicado, 'activacion_id', g.potenciador_usado_id));
+      if c.estado = 'REJECTED_CAP' then
+        raise exception using errcode = 'P0001', message = 'OT_EARN_CAP_REACHED';
+      end if;
+      v_pend := v_pend or c.estado = 'DEFERRED';
+    else
+      perform private.reto_potenciador_abonar(p_usuario, p_reto, v_key_pot, v_extra, g.dia, g.multiplicador_aplicado, g.potenciador_usado_id);
+    end if;
+  end if;
+  -- C2: the claim went through (credited or deferred): spend the uses this reto reserved (potenciador, tickets protector), once
+  for v_res in select r.activacion_id from public.reto_consumibles_reservados r where r.usuario_id = p_usuario and r.reto_id = p_reto order by r.activacion_id loop
+    perform private.consumible_gastar(v_res.activacion_id, p_reto, v_now);
+  end loop;
+  delete from public.reto_consumibles_reservados r where r.usuario_id = p_usuario and r.reto_id = p_reto;
   if not v_pend then
     update public.registros_reto_diario set recompensa_entregada = true where usuario_id = p_usuario and reto_id = p_reto;
   end if;
