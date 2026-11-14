@@ -161,6 +161,8 @@ GET /api/v1/app/me/entitlement
 GET /api/v1/app/me/examenes
 GET /api/v1/app/me/invitacion
 GET /api/v1/app/me/invitaciones
+GET /api/v1/app/noticias
+GET /api/v1/app/noticias/{}
 GET /api/v1/app/oposired/canales
 GET /api/v1/app/oposired/categorias
 GET /api/v1/app/oposired/imagenes/{}

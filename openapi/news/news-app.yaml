@@ -1,0 +1,172 @@
+# APP NEWS read contracts (FA49, F25 owner decision 2026-11-11): D4-18 and D4-27. Read-only, bound to the JWT sub.
+# Source of truth: public.noticia (written by Control through D4-01..D4-11). Images live in the bucket news-assets and are
+# public (the bucket news-assets is PUBLIC): they are returned as public object URLs built by Ktor from the stored path. The painting rules of capas are docs/integration/NEWS_RENDERING_CONTRACT.md.
+components:
+  pathItems:
+    AppNews:
+      get:
+        operationId: listAppNews
+        summary: 'List the visible news of the current user specialty'
+        tags: [news]
+        x-contract-id: D4-18
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [USER]
+        x-pagination: CURSOR
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, INVALID_CURSOR, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, UPSTREAM_ERROR, UPSTREAM_CONTRACT_ERROR, UPSTREAM_UNAVAILABLE]
+        description: 'News of the main specialty of the user; a user without a specialty gets the visible news of every specialty. Newest first: keyset (fecha desc, id desc). Visible = the news type (tipo_noticia) is active and either estado published with publicar_desde null or past (fecha = published_at; same rule as the RLS policy noticia_select_publico), or estado scheduled whose publicar_desde has passed: there is no publishing job, so a due scheduled article is served exactly as a published one, with fecha = publicar_desde (the moment it became public). Future scheduled, draft and archived articles are never returned. No texto (body) in the list: only resumen. Image URLs are public object URLs of news-assets (they do not expire). Cache private, no-store.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/pagination.yaml#/components/parameters/Cursor'
+          - $ref: '../common/pagination.yaml#/components/parameters/LimitApp'
+        responses:
+          '200':
+            description: 'News page.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/PrivateNoStore'
+            content:
+              application/json:
+                schema:
+                  allOf:
+                    - $ref: '../common/pagination.yaml#/components/schemas/CursorPageEnvelope'
+                    - type: object
+                      required: [items]
+                      properties:
+                        items:
+                          type: array
+                          items:
+                            $ref: '#/components/schemas/AppNoticia'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+            description: 'VALIDATION or INVALID_CURSOR.'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '502':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamError'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    AppNewsItem:
+      parameters:
+        - $ref: '../common/identifiers.yaml#/components/parameters/NoticiaIdPath'
+      get:
+        operationId: getAppNews
+        summary: 'Get one visible news article with its body'
+        tags: [news]
+        x-contract-id: D4-27
+        x-implementation: TARGET
+        x-slice: null
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, NEWS_NOT_FOUND, UPSTREAM_ERROR, UPSTREAM_CONTRACT_ERROR, UPSTREAM_UNAVAILABLE]
+        description: 'Same visibility rule as D4-18 (a user without a specialty can open any visible article); texto is always present (empty string when the article has none). An article of another specialty than the user one, not yet visible, archived, a draft or of an inactive news type is 404 NEWS_NOT_FOUND. Cache private, no-store.'
+        security:
+          - bearerAuth: []
+        responses:
+          '200':
+            description: 'News article.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/PrivateNoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/AppNoticia'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+            description: 'VALIDATION (noticiaId is not a uuid).'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'NEWS_NOT_FOUND.'
+          '502':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamError'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+  headers:
+    PrivateNoStore:
+      description: 'private, no-store'
+      required: true
+      schema:
+        type: string
+        enum: ['private, no-store']
+  schemas:
+    AppNoticiaCapa:
+      type: object
+      description: 'One visible layer of the banner composition, in canvas px of the 1432 x 592 canvas (NEWS_RENDERING_CONTRACT.md section 5). Hidden layers are not returned. For an imagen layer, contenido is a public URL of a news-assets object or an empty string (an image that is not a news-assets object is never forwarded).'
+      required: [tipo, contenido, x, y, width, height, opacity, rotationDegrees, fontFamily, fontSizeSp, fontWeight, textColor, orden]
+      properties:
+        tipo:
+          type: string
+          enum: [titulo, texto, imagen]
+        contenido:
+          type: string
+        x:
+          type: integer
+        y:
+          type: integer
+        width:
+          type: integer
+        height:
+          type: integer
+        opacity:
+          type: integer
+          minimum: 0
+          maximum: 100
+        rotationDegrees:
+          type: integer
+        fontFamily:
+          type: string
+          description: 'sans (default), serif, mono, cursive. Open string: unknown = sans.'
+        fontSizeSp:
+          type: integer
+          minimum: 0
+          description: '0 = derived from tipo (titulo 72, others 48).'
+        fontWeight:
+          type: string
+          description: 'normal, medium, semibold, bold; empty = derived from tipo.'
+        textColor:
+          type: string
+          description: '#RRGGBB or empty (white).'
+        orden:
+          type: integer
+          description: 'Paint order, ascending (items are already sorted).'
+    AppNoticia:
+      type: object
+      required: [id, titulo, fecha, tipoFondo, capas]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        titulo:
+          type: string
+        resumen:
+          type: [string, 'null']
+          maxLength: 160
+          description: 'First non-empty paragraph of texto, cut to 160 characters (ending with an ellipsis when cut). Null when the article has no texto.'
+        fecha:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+        tipoFondo:
+          type: string
+          enum: [A, B, C]
+          description: 'Template accent when there is no backgroundUrl (A Cielo, B Menta, C Oro).'
+        backgroundUrl:
+          type: [string, 'null']
+          description: 'Public URL of the background image (news-assets), or null (paint the template).'
+        imagenUrl:
+          type: [string, 'null']
+          description: 'Public URL of the thumbnail image (news-assets), or null.'
+        capas:
+          type: array
+          items:
+            $ref: '#/components/schemas/AppNoticiaCapa'
+        texto:
+          type: [string, 'null']
+          description: 'Body. Only in D4-27 (always a string there); absent or null in the D4-18 list.'

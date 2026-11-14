@@ -155,6 +155,8 @@ GET	/api/v1/app/ranking	BOT	user-jwt	Consumer ranking: league, own position, top
 PUT	/api/v1/app/ranking/visibilidad	BOT	user-jwt	Consumer ranking: opt-in/out of the public handle (D3-25)	OposiBot
 GET	/api/v1/app/me/invitacion	BOT	user-jwt	Consumer referral: own code, counters, OT per invitation (D9-01)	OposiBot
 GET	/api/v1/app/me/invitaciones	BOT	user-jwt	Consumer referral: rewarded invitations, public handle only (D9-02)	OposiBot
+GET	/api/v1/app/noticias	BOT	user-jwt	Consumer news: visible news of the caller specialty (all when none), public images (D4-18, FA49)	OposiBot
+GET	/api/v1/app/noticias/{}	BOT	user-jwt	Consumer news: one visible news article with its body (D4-27, FA49)	OposiBot
 GET	/api/v1/app/reto-diario	BOT	user-jwt	Consumer app API: reto-diario	OposiBot
 GET	/api/v1/app/retos/hoy	BOT	user-jwt	Consumer challenge: today (D3-16)	OposiBot
 GET	/api/v1/app/retos/{}/preguntas/{}/recursos/{}	BOT	user-jwt	Consumer challenge: signed media of a challenge question (D3-19)	OposiBot
