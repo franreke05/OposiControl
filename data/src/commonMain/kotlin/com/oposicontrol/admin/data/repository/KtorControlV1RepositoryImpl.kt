@@ -6,6 +6,7 @@ import com.oposicontrol.admin.core.network.NetworkResultAdapter
 import com.oposicontrol.admin.data.local.SessionLocalDataSource
 import com.oposicontrol.admin.data.remote.api.adminAuthHeaders
 import com.oposicontrol.admin.domain.model.ConfigEntry
+import com.oposicontrol.admin.domain.model.EffectiveDemo
 import com.oposicontrol.admin.domain.model.ExamEconomy
 import com.oposicontrol.admin.domain.model.ExamEconomyDraft
 import com.oposicontrol.admin.domain.model.ExamEconomyPage
@@ -722,12 +723,23 @@ private data class OfficialQuestionsDto(
     val chequeo: GradingCheckDto? = null,
     val problema: String? = null,
     val avisos: List<String> = emptyList(),
+    val demoEfectiva: EffectiveDemoDto? = null,
 ) {
     fun toDomain() = OfficialQuestions(
         examenId, preguntas.map { it.toDomain() }, reservasDisponibles, chequeo?.let { GradingCheck(it.problema, it.avisos, it.regla) },
         problem = problema, warnings = avisos,
+        effectiveDemo = demoEfectiva?.let { EffectiveDemo(it.origen, it.preguntaIds, it.explicitaMarcadas, it.explicitaIncompleta) },
     )
 }
+
+/** C5: `demoEfectiva` de `GET .../preguntas-oficiales` (solo lectura). */
+@Serializable
+private data class EffectiveDemoDto(
+    val origen: String? = null,
+    val preguntaIds: List<String> = emptyList(),
+    val explicitaMarcadas: Int = 0,
+    val explicitaIncompleta: Boolean = false,
+)
 
 /** Cuerpo de `PUT .../preguntas-oficiales/{id}`: sin valores por defecto, así que `anulada` y `esReserva` viajan SIEMPRE. */
 @Serializable

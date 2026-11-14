@@ -371,6 +371,17 @@ data class OfficialQuestion(
     val isDemo: Boolean,
 )
 
+/**
+ * La demo que la app sirve de verdad para el examen (solo lectura, C5). [origin] = "EXPLICITA" | "AUTOMATICA" | null (sin demo).
+ * [explicitIncomplete] = hay preguntas marcadas como demo que no forman un set completo: la app las ignora y sirve la automática.
+ */
+data class EffectiveDemo(
+    val origin: String?,
+    val questionIds: List<String>,
+    val explicitMarked: Int,
+    val explicitIncomplete: Boolean,
+)
+
 data class OfficialQuestions(
     val examId: String,
     val questions: List<OfficialQuestion>,
@@ -380,6 +391,8 @@ data class OfficialQuestions(
     /** Solo tras guardar una marca: problema abierto del examen y avisos no bloqueantes que devolvió el servidor. */
     val problem: String? = null,
     val warnings: List<String> = emptyList(),
+    /** C5: `null` = el servidor conectado aún no lo sirve. */
+    val effectiveDemo: EffectiveDemo? = null,
 ) {
     val reserves: List<OfficialQuestion> get() = questions.filter { it.isReserve }.sortedBy { it.reserveOrder ?: Int.MAX_VALUE }
     val mainAnnulled: Int get() = questions.count { !it.isReserve && it.annulled }

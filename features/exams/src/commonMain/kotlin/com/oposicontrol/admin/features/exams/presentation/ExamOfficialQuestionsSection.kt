@@ -28,6 +28,7 @@ import com.oposicontrol.admin.core.ui.components.WorkspaceNotice
 import com.oposicontrol.admin.core.ui.components.WorkspaceNoticeTone
 import com.oposicontrol.admin.core.ui.components.WorkspacePill
 import com.oposicontrol.admin.core.ui.theme.Spacing
+import com.oposicontrol.admin.domain.model.EffectiveDemo
 import com.oposicontrol.admin.domain.model.GradingCheckTexts
 import com.oposicontrol.admin.domain.model.OfficialQuestion
 import com.oposicontrol.admin.domain.model.OfficialQuestionValidator
@@ -77,10 +78,13 @@ internal fun ExamOfficialQuestionsContent(state: OfficialQuestionsUiState, onInt
             // Resultado de la última escritura (funcion de servidor): problema abierto y avisos que no estén ya en el chequeo.
             data.problem?.takeIf { it != data.check?.problem }?.let { WorkspaceNotice(WorkspaceNoticeTone.DANGER, GradingCheckTexts.problem(it)) }
             data.warnings.filter { it !in data.check?.warnings.orEmpty() }.forEach { WorkspaceNotice(WorkspaceNoticeTone.WARNING, GradingCheckTexts.warning(it)) }
+            // C5: la demo que la app sirve de verdad (solo lectura) y el aviso si las marcas de demo se están ignorando.
+            effectiveDemoWarning(data.effectiveDemo)?.let { (title, detail) -> WorkspaceNotice(WorkspaceNoticeTone.WARNING, title, detail = detail) }
             Row(horizontalArrangement = Arrangement.spacedBy(Spacing.xxs)) {
                 WorkspacePill("${data.questions.size} preguntas")
                 WorkspacePill("${data.mainAnnulled} anuladas principales")
                 WorkspacePill("${data.reserves.size} reservas")
+                effectiveDemoLabel(data.effectiveDemo)?.let { WorkspacePill(it) }
             }
             AdminTable(
                 columns = listOf(
@@ -91,7 +95,7 @@ internal fun ExamOfficialQuestionsContent(state: OfficialQuestionsUiState, onInt
                 rows = data.questions.map { q ->
                     AdminTableRow(
                         key = q.questionId,
-                        cells = listOf(q.position.toString(), q.title.ifBlank { "Sin enunciado" }, marksLabel(q)),
+                        cells = listOf(q.position.toString(), q.title.ifBlank { "Sin enunciado" }, marksLabel(q, data.effectiveDemo)),
                         selected = q.questionId == state.selectedId,
                         supporting = q.annulmentReason?.takeIf { q.annulled },
                     )
@@ -159,8 +163,26 @@ internal fun ExamOfficialQuestionsContent(state: OfficialQuestionsUiState, onInt
     }
 }
 
-private fun marksLabel(q: OfficialQuestion): String = buildList {
+internal fun marksLabel(q: OfficialQuestion, demo: EffectiveDemo? = null): String = buildList {
     if (q.annulled) add("Anulada")
     if (q.isReserve) add("Reserva ${q.reserveOrder ?: "?"}")
     if (q.isDemo) add("Demo")
+    if (!q.isDemo && demo?.origin == "AUTOMATICA" && q.questionId in demo.questionIds) add("Demo automática")
 }.joinToString(" · ").ifEmpty { "—" }
+
+/** C5: la pastilla con la demo efectiva; `null` = el servidor no la sirve todavía. */
+internal fun effectiveDemoLabel(demo: EffectiveDemo?): String? = when {
+    demo == null -> null
+    demo.origin == "EXPLICITA" -> "Demo: marcada en Control (${demo.questionIds.size})"
+    demo.origin == "AUTOMATICA" -> "Demo: automática (${demo.questionIds.size})"
+    else -> "Sin demo"
+}
+
+/** C5: aviso cuando hay preguntas marcadas como demo que la app ignora (set incompleto). */
+internal fun effectiveDemoWarning(demo: EffectiveDemo?): Pair<String, String>? =
+    if (demo?.explicitIncomplete == true) {
+        "Demo marcada incompleta: la app no la usa" to
+            "Hay ${demo.explicitMarked} preguntas marcadas como demo pero no forman un set completo; la app sirve la demo automática hasta que el set marcado esté completo."
+    } else {
+        null
+    }

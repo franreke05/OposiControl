@@ -8,6 +8,7 @@ import java.security.MessageDigest
 import java.sql.Connection
 import kotlin.test.Test
 import kotlin.test.assertEquals
+import kotlin.test.assertNull
 import kotlin.test.assertNotEquals
 import kotlin.test.assertTrue
 
@@ -145,6 +146,42 @@ class V1DemoAleatoriaMigrationTest {
     }
 
     @Test
+    fun unflaggingAnExplicitSetHandsTheExamBackToTheFixedSet() = V1Db.escenario { c ->
+        c.ejecutar(seed)
+        // a complete explicit set from the start: nothing is fixed (the explicit set wins)
+        c.ejecutar("update public.preguntas_examen set es_demo = true where examen_id = '$big' and posicion in (2, 5, 6, 10, 12)")
+        assertEquals(emptyList(), c.fijado())
+        // C5: es_demo is now a trigger column: the explicit set becomes incomplete -> the fixed set is materialized at commit
+        c.ejecutar("update public.preguntas_examen set es_demo = false where examen_id = '$big' and posicion = 12")
+        assertEquals(expected(eligibleAtSeed), c.fijado())
+    }
+
+    private fun Connection.admin(exam: String = big): String = unico("select public.admin_exam_demo_efectiva('$exam')::text")!!
+    private fun Connection.adminField(json: String, path: String): String? = unico("select ('$json'::jsonb) #>> '{$path}'")
+    private fun Connection.adminIds(json: String): List<String> = filas("select jsonb_array_elements_text(('$json'::jsonb) -> 'pregunta_ids')").map { it[0]!! }
+
+    @Test
+    fun theAdminReadShowsTheEffectiveDemoAndAnIncompleteExplicitSet() = V1Db.escenario { c ->
+        c.ejecutar(seed)
+        c.fijar()
+        val auto = c.admin()
+        assertEquals("AUTOMATICA|0|false", listOf("origen", "explicita_marcadas", "explicita_incompleta").joinToString("|") { c.adminField(auto, it)!! })
+        assertEquals(expected(eligibleAtSeed), c.adminIds(auto))
+        c.ejecutar("update public.preguntas_examen set es_demo = true where examen_id = '$big' and posicion in (2, 5, 6)")
+        val partial = c.admin()
+        assertEquals("AUTOMATICA|3|true", listOf("origen", "explicita_marcadas", "explicita_incompleta").joinToString("|") { c.adminField(partial, it)!! },
+            "3 flagged of 5: the app silently serves the automatic set, Control is warned")
+        assertEquals(expected(eligibleAtSeed), c.adminIds(partial))
+        c.ejecutar("update public.preguntas_examen set es_demo = true where examen_id = '$big' and posicion in (10, 12)")
+        val explicit = c.admin()
+        assertEquals("EXPLICITA|5|false", listOf("origen", "explicita_marcadas", "explicita_incompleta").joinToString("|") { c.adminField(explicit, it)!! })
+        assertEquals(listOf(q(2), q(5), q(6), q(10), q(12)), c.adminIds(explicit))
+        val none = c.admin(small)
+        assertNull(c.adminField(none, "origen"), "fewer than N eligible: no demo")
+        assertEquals(emptyList(), c.adminIds(none))
+    }
+
+    @Test
     fun anAnnulledMemberIsReplacedAloneAndTheReplacementStays() = V1Db.escenario { c ->
         c.ejecutar(seed)
         c.fijar()
@@ -202,7 +239,7 @@ class V1DemoAleatoriaMigrationTest {
         assertEquals(expected(eligibleAtSeed), c.efectivas())
         val verify = Slice0Db.verifyDe("supabase/migrations/$migration.sql")
         val rows = c.filas(verify)
-        assertEquals(12, rows.size, "VERIFY rows: $rows")
+        assertEquals(14, rows.size, "VERIFY rows: $rows")
         assertEquals(emptyList(), rows.filter { it[1] != "0" }, "every VERIFY counter is 0")
         c.ejecutar("delete from private.demo_set_fijo where examen_id = '$big'")
         assertEquals(listOf("demo_aleatoria_published_exam_without_fixed_set"), c.filas(verify).filter { it[1] != "0" }.map { it[0] }, "VERIFY sees a published exam without its set")

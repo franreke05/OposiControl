@@ -14,19 +14,23 @@
 --    unlinked) is DELETED from the set and only that one is replaced by the next eligible question of the md5 rank that is not a member (it does not come back
 --    when it is restored: the replacement stays). If fewer than N eligible remain, the members stay and the set is completed when there are N again.
 -- 3. When: deferred constraint triggers (fire at COMMIT, so a whole import in one transaction is seen at once) on preguntas_examen (insert, delete, update of
---    anulada/es_reserva/examen_id/pregunta_id), preguntas (update of activa) and examenes (insert, update of publicado_en). Drafts are not materialized until they
+--    anulada/es_reserva/es_demo/examen_id/pregunta_id; es_demo: Control's explicit set going from complete to incomplete hands the exam back to the fixed set), preguntas (update of activa) and examenes (insert, update of publicado_en). Drafts are not materialized until they
 --    are published (Control may still be uploading questions). BACKFILL: the migration fixes the set of every exam already published.
 -- 4. Reading (private.demo_preguntas_efectivas, stable, the function every demo path already calls: public.demo_listo, private.exam_start_verdict,
 --    public.app_start_exam_attempt, private.app_congelar_preguntas_intento(..., true)): the eligible questions ordered members first, then by the md5 rank; the
 --    first N in exam order. With a stored set that is exactly the stored set; without one (draft, or a write that bypassed triggers) it is the md5 preview the
 --    first fixing will store. Fewer than N eligible = no demo (NULL, fail closed), unchanged. A change of 'demo_preguntas' is honoured at read time (members first).
 -- 5. Attempts already started never move (the set is frozen at start).
+-- 6. Control read (review 2026-11-14, C5): public.admin_exam_demo_efectiva(examen) -> jsonb {origen EXPLICITA | AUTOMATICA | null (no demo), pregunta_ids
+--    (the effective set, exam order), explicita_marcadas (questions flagged es_demo), explicita_incompleta (flagged but not a complete explicit set: the app
+--    silently serves the automatic one)}. Service role only; Ktor shows it in the official-questions admin read.
 -- No Ktor change, no contract shape change (FA44 text already says "automatically ... N"; FA48 text-only amendment in attempts.yaml).
 --
 -- ROLLBACK (manual, executed verbatim by the PG17 gate): drops the triggers, the fixing function and the table, and restores the F14 body of
 -- private.demo_preguntas_efectivas byte for byte (first N by posicion).
 -- ROLLBACK-BEGIN
 -- begin;
+-- drop function if exists public.admin_exam_demo_efectiva(uuid);
 -- drop trigger if exists trg_demo_set_fijo_preguntas_examen on public.preguntas_examen;
 -- drop trigger if exists trg_demo_set_fijo_preguntas on public.preguntas;
 -- drop trigger if exists trg_demo_set_fijo_examenes on public.examenes;
@@ -80,6 +84,16 @@
 --                or has_function_privilege('anon', f.n, 'execute')
 --                or has_function_privilege('authenticated', f.n, 'execute') then 1 else 0 end)::bigint as failures
 --   from (values ('private.demo_preguntas_efectivas(uuid)'), ('private.demo_set_fijar(uuid)')) f(n)
+-- union all
+-- select 'demo_efectiva_admin_read_not_service_role_only',
+--        (case when to_regprocedure('public.admin_exam_demo_efectiva(uuid)') is null
+--                or has_function_privilege('anon', 'public.admin_exam_demo_efectiva(uuid)', 'execute')
+--                or has_function_privilege('authenticated', 'public.admin_exam_demo_efectiva(uuid)', 'execute')
+--                or not has_function_privilege('service_role', 'public.admin_exam_demo_efectiva(uuid)', 'execute') then 1 else 0 end)::bigint
+-- union all
+-- select 'demo_aleatoria_trigger_ignores_es_demo',
+--        (case when exists (select 1 from pg_trigger t join pg_attribute a on a.attrelid = t.tgrelid and a.attnum = any (t.tgattr::int2[])
+--                            where t.tgname = 'trg_demo_set_fijo_preguntas_examen' and a.attname = 'es_demo') then 0 else 1 end)::bigint
 -- union all
 -- select 'demo_aleatoria_not_md5_ranked',
 --        (case when pg_get_functiondef(to_regprocedure('private.demo_preguntas_efectivas(uuid)')) like '%md5(p_examen::text || pe.pregunta_id::text)%'
@@ -249,7 +263,7 @@ $$;
 revoke all on function private.tg_demo_set_fijo_preguntas_examen() from public, anon, authenticated;
 drop trigger if exists trg_demo_set_fijo_preguntas_examen on public.preguntas_examen;
 create constraint trigger trg_demo_set_fijo_preguntas_examen
-  after insert or delete or update of anulada, es_reserva, examen_id, pregunta_id on public.preguntas_examen
+  after insert or delete or update of anulada, es_reserva, es_demo, examen_id, pregunta_id on public.preguntas_examen
   deferrable initially deferred
   for each row execute function private.tg_demo_set_fijo_preguntas_examen();
 
@@ -296,6 +310,30 @@ create constraint trigger trg_demo_set_fijo_examenes
   after insert or update of publicado_en on public.examenes
   deferrable initially deferred
   for each row execute function private.tg_demo_set_fijo_examenes();
+
+-- ---- 4b. Control read of the effective demo (C5): which set the app serves and whether Control's explicit flags are being ignored
+create or replace function public.admin_exam_demo_efectiva(p_examen uuid)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v uuid[] := private.demo_preguntas_efectivas(p_examen);
+  v_explicita boolean := private.demo_set_ok(p_examen);
+  v_marcadas integer;
+begin
+  select count(*)::integer into v_marcadas from public.preguntas_examen pe where pe.examen_id = p_examen and pe.es_demo;
+  return jsonb_build_object(
+    'origen', case when v is null then null when v_explicita then 'EXPLICITA' else 'AUTOMATICA' end,
+    'pregunta_ids', coalesce(to_jsonb(v), '[]'::jsonb),
+    'explicita_marcadas', v_marcadas,
+    'explicita_incompleta', v_marcadas > 0 and not v_explicita);
+end;
+$$;
+revoke all on function public.admin_exam_demo_efectiva(uuid) from public, anon, authenticated;
+grant execute on function public.admin_exam_demo_efectiva(uuid) to service_role;
 
 -- ---- 5. backfill: every exam already published gets its fixed set now
 select private.demo_set_fijar(e.id) from public.examenes e where e.publicado_en is not null;

@@ -64,8 +64,11 @@ class AdminControlOfficialQuestionsTest {
         assertFailsWith<BadRequestException> { OfficialQuestionFlags.parse(obj("""{"anulada":false,"esReserva":true,"ordenReserva":"1"}""")) }
     }
 
-    private fun fake(withReserveColumns: Boolean = true) = ControlFake { method, uri, _ ->
+    private fun fake(withReserveColumns: Boolean = true, demoProvisioned: Boolean = true) = ControlFake { method, uri, _ ->
         when {
+            uri.contains("/rpc/admin_exam_demo_efectiva") ->
+                if (demoProvisioned) V1StubResponse(200, """{"origen":"AUTOMATICA","pregunta_ids":["$q1","no-uuid"],"explicita_marcadas":1,"explicita_incompleta":true}""")
+                else V1StubResponse(404, """{"code":"PGRST202"}""")
             uri.contains("/rpc/admin_official_rules_check") -> V1StubResponse(200, """{"problema":null,"avisos":[],"regla":"REEMPLAZO_POR_RESERVA"}""")
             uri.contains("/rpc/admin_set_exam_question_flags") -> V1StubResponse(200, """{"changed":true,"problema":null,"avisos":["MORE_RESERVES_THAN_MAX","<b>x</b>"]}""")
             uri.contains("/rest/v1/preguntas_examen") ->
@@ -89,6 +92,15 @@ class AdminControlOfficialQuestionsTest {
         assertEquals(1, dto.preguntas[1].ordenReserva)
         assertEquals("<b>Plazo</b>", dto.preguntas[0].titulo)
         assertEquals("REEMPLAZO_POR_RESERVA", dto.chequeo?.regla)
+        // C5: the effective demo, read only; ids that are not uuids are dropped
+        assertEquals(AdminDemoEffectiveDto(origen = "AUTOMATICA", preguntaIds = listOf(q1), explicitaMarcadas = 1, explicitaIncompleta = true), dto.demoEfectiva)
+    }
+
+    @Test
+    fun aServerWithoutTheDemoReadStillListsTheQuestions() {
+        val dto = fake(demoProvisioned = false).gateway().officialQuestions(ControlFake.EXAM)!!
+        assertEquals(2, dto.preguntas.size)
+        assertNull(dto.demoEfectiva, "the function is missing (migration not applied): no demo block, no failure")
     }
 
     @Test

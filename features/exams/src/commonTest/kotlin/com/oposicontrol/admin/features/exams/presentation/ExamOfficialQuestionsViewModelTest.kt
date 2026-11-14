@@ -2,6 +2,7 @@ package com.oposicontrol.admin.features.exams.presentation
 
 import com.oposicontrol.admin.core.common.presentation.UiAsync
 import com.oposicontrol.admin.core.testing.TestDispatcherProvider
+import com.oposicontrol.admin.domain.model.EffectiveDemo
 import com.oposicontrol.admin.domain.model.OfficialQuestion
 import com.oposicontrol.admin.domain.model.OfficialQuestionDraft
 import com.oposicontrol.admin.domain.model.OfficialQuestionValidator
@@ -170,5 +171,20 @@ class ExamOfficialQuestionsViewModelTest {
         vm.dispatch(OfficialQuestionsIntent.Load("e1"))
         advanceUntilIdle()
         assertEquals("a", vm.state.value.selectedId)
+    }
+
+    @Test
+    fun theEffectiveDemoIsShownReadOnlyAndAnIgnoredExplicitSetWarns() {
+        assertEquals(null, effectiveDemoLabel(null), "an older server: nothing shown")
+        assertEquals("Demo: automática (5)", effectiveDemoLabel(EffectiveDemo("AUTOMATICA", List(5) { "q$it" }, 0, false)))
+        assertEquals("Demo: marcada en Control (5)", effectiveDemoLabel(EffectiveDemo("EXPLICITA", List(5) { "q$it" }, 5, false)))
+        assertEquals("Sin demo", effectiveDemoLabel(EffectiveDemo(null, emptyList(), 0, false)))
+        assertEquals(null, effectiveDemoWarning(EffectiveDemo("AUTOMATICA", listOf("q1"), 0, false)))
+        val warning = effectiveDemoWarning(EffectiveDemo("AUTOMATICA", listOf("q1"), 3, true))!!
+        assertTrue(warning.second.contains("3 preguntas marcadas"), warning.second)
+        val auto = EffectiveDemo("AUTOMATICA", listOf("a"), 0, false)
+        assertEquals("Demo automática", marksLabel(q("a", 1), auto))
+        assertEquals("—", marksLabel(q("b", 2), auto))
+        assertEquals("Demo", marksLabel(q("c", 3, demo = true), EffectiveDemo("EXPLICITA", listOf("c"), 1, false)))
     }
 }

@@ -206,4 +206,15 @@ class KtorControlV1RepositoryImplTest {
         assertTrue(!requests.single().text().contains("ordenReserva\":1"), requests.single().text())
         assertEquals(listOf("MORE_RESERVES_THAN_MAX"), assertIs<AppResult.Success<OfficialQuestions>>(result).value.warnings)
     }
+
+    @Test
+    fun theOfficialQuestionsReadCarriesTheEffectiveDemo() = runTest {
+        val requests = mutableListOf<HttpRequestData>()
+        val ok = repo(requests, body = """{"examenId":"e1","preguntas":[],"reservasDisponibles":true,"demoEfectiva":{"origen":"AUTOMATICA","preguntaIds":["q1","q2"],"explicitaMarcadas":2,"explicitaIncompleta":true}}""")
+            .officialQuestions("e1")
+        val demo = assertIs<AppResult.Success<OfficialQuestions>>(ok).value.effectiveDemo
+        assertEquals(com.oposicontrol.admin.domain.model.EffectiveDemo("AUTOMATICA", listOf("q1", "q2"), 2, true), demo)
+        val old = repo(mutableListOf(), body = """{"examenId":"e1","preguntas":[],"reservasDisponibles":true}""").officialQuestions("e1")
+        assertEquals(null, assertIs<AppResult.Success<OfficialQuestions>>(old).value.effectiveDemo, "an older server: no demo block")
+    }
 }

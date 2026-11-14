@@ -77,6 +77,19 @@ data class AdminOfficialQuestionDto(
     val esDemo: Boolean = false,
 )
 
+/**
+ * C5 (revision 2026-11-14): la demo que la app sirve DE VERDAD para el examen (`public.admin_exam_demo_efectiva`, migracion 20261111100000).
+ * `origen` = EXPLICITA (el set completo marcado en Control) | AUTOMATICA (el set fijo aleatorio) | null (sin demo: menos de N preguntas validas).
+ * `explicitaIncompleta` = hay preguntas marcadas como demo pero no forman un set completo: la app las ignora y sirve la automatica (antes, en silencio).
+ */
+@Serializable
+data class AdminDemoEffectiveDto(
+    val origen: String? = null,
+    val preguntaIds: List<String> = emptyList(),
+    val explicitaMarcadas: Int = 0,
+    val explicitaIncompleta: Boolean = false,
+)
+
 @Serializable
 data class AdminOfficialQuestionsDto(
     val examenId: String,
@@ -87,6 +100,8 @@ data class AdminOfficialQuestionsDto(
     /** Solo tras una escritura: resultado de `admin_set_exam_question_flags` (problema abierto y avisos no bloqueantes). */
     val problema: String? = null,
     val avisos: List<String> = emptyList(),
+    /** C5: solo lectura; `null` si el servidor conectado aun no tiene la funcion (migracion sin aplicar). */
+    val demoEfectiva: AdminDemoEffectiveDto? = null,
 )
 
 private const val OFFICIAL_COLUMNS_FULL = "pregunta_id,posicion,anulada,motivo_anulacion,es_reserva,orden_reserva,es_demo,preguntas(titulo)"
@@ -122,7 +137,27 @@ internal fun AdminControlV1Gateway.officialQuestions(examenId: String): AdminOff
         get(base + OFFICIAL_COLUMNS_LEGACY)
     }
     val rows = (json.parseToJsonElement(raw) as? JsonArray).orEmpty().mapNotNull { it.jsonObject.toOfficial() }
-    return AdminOfficialQuestionsDto(examenId, rows, withReserves, if (withReserves) officialRulesCheck(examenId) else null)
+    return AdminOfficialQuestionsDto(
+        examenId, rows, withReserves, if (withReserves) officialRulesCheck(examenId) else null,
+        demoEfectiva = if (withReserves) effectiveDemo(examenId) else null,
+    )
+}
+
+/** C5: la demo efectiva del examen; `null` si la funcion no esta provisionada o la respuesta no se entiende (la lectura principal no falla por esto). */
+internal fun AdminControlV1Gateway.effectiveDemo(examenId: String): AdminDemoEffectiveDto? = try {
+    val obj = json.parseToJsonElement(rpcOrNotProvisioned("admin_exam_demo_efectiva", buildJsonObject { put("p_examen", JsonPrimitive(examenId)) })).jsonObject
+    AdminDemoEffectiveDto(
+        origen = obj["origen"].contentOrNullSafe()?.takeIf { it == "EXPLICITA" || it == "AUTOMATICA" },
+        preguntaIds = (obj["pregunta_ids"] as? JsonArray).orEmpty().mapNotNull { it.contentOrNullSafe()?.takeIf(String::isUuid) },
+        explicitaMarcadas = obj["explicita_marcadas"].intOr(0),
+        explicitaIncompleta = obj["explicita_incompleta"].boolOrFalse(),
+    )
+} catch (_: BackendDomainException) {
+    null
+} catch (_: IllegalStateException) {
+    null
+} catch (_: IllegalArgumentException) {
+    null
 }
 
 internal fun AdminControlV1Gateway.setOfficialQuestionFlags(
