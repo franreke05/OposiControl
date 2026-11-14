@@ -149,16 +149,28 @@ class ChallengeRoutesTest {
         val client = createClient { }
         val held = """{"esCorrecta":false,"estado":"EN_CURSO","aciertos":0,"respondidas":0,"oportunidad":{"disponible":true,"restantes":1}}"""
         upstream.handler = { _, _ -> SupabaseRawResponse(200, held) }
-        val first = client.putJson("/api/v1/app/retos/$reto/respuestas/$pregunta", """{"opcionSeleccionadaId":"$opcion","usarOportunidad":null}""")
+        val first = client.putJson("/api/v1/app/retos/$reto/respuestas/$pregunta", """{"opcionSeleccionadaId":"$opcion","usarOportunidad":null,"admiteOportunidad":true}""")
         assertEquals(HttpStatusCode.OK, first.status, first.bodyAsText())
-        assertEquals(setOf("p_usuario", "p_reto", "p_pregunta", "p_opcion"), obj(upstream.rpcs.single().second).keys, "null = no decision: the 4-argument call (works on a database before F28)")
+        assertEquals(setOf("p_usuario", "p_reto", "p_pregunta", "p_opcion"), obj(upstream.rpcs.single().second).keys, "a client that supports it and made no decision: no p_usar_oportunidad (the offer may come)")
         assertEquals("1", obj(first.bodyAsText())["oportunidad"]!!.jsonObject["restantes"]!!.jsonPrimitive.content)
         assertTrue("opcionCorrectaId" !in obj(first.bodyAsText()), "no correction while held")
         for (choice in listOf(true, false)) {
             upstream.rpcs.clear()
-            client.putJson("/api/v1/app/retos/$reto/respuestas/$pregunta", """{"opcionSeleccionadaId":"$opcion","usarOportunidad":$choice}""")
+            client.putJson("/api/v1/app/retos/$reto/respuestas/$pregunta", """{"opcionSeleccionadaId":"$opcion","usarOportunidad":$choice,"admiteOportunidad":true}""")
             assertEquals(choice.toString(), obj(upstream.rpcs.single().second)["p_usar_oportunidad"]!!.jsonPrimitive.content)
         }
+        // C3: a client that does not declare admiteOportunidad never gets a held answer: Ktor always sends false (its usarOportunidad is ignored)
+        for (body in listOf(
+            """{"opcionSeleccionadaId":"$opcion"}""",
+            """{"opcionSeleccionadaId":"$opcion","admiteOportunidad":false}""",
+            """{"opcionSeleccionadaId":"$opcion","admiteOportunidad":null,"usarOportunidad":true}""",
+        )) {
+            upstream.rpcs.clear()
+            assertEquals(HttpStatusCode.OK, client.putJson("/api/v1/app/retos/$reto/respuestas/$pregunta", body).status, body)
+            assertEquals("false", obj(upstream.rpcs.single().second)["p_usar_oportunidad"]!!.jsonPrimitive.content, body)
+        }
+        upstream.rpcs.clear()
+        assertEquals(HttpStatusCode.BadRequest, client.putJson("/api/v1/app/retos/$reto/respuestas/$pregunta", """{"opcionSeleccionadaId":"$opcion","admiteOportunidad":"si"}""").status)
         upstream.rpcs.clear()
         assertEquals(HttpStatusCode.BadRequest, client.putJson("/api/v1/app/retos/$reto/respuestas/$pregunta", """{"opcionSeleccionadaId":"$opcion","usarOportunidad":"si"}""").status)
         assertTrue(upstream.rpcs.isEmpty())
@@ -173,7 +185,7 @@ class ChallengeRoutesTest {
         assertEquals(HttpStatusCode.OK, ok.status, ok.bodyAsText())
         val (fn, args) = upstream.rpcs.single()
         assertEquals("app_answer_daily_challenge", fn)
-        assertEquals(setOf("p_usuario", "p_reto", "p_pregunta", "p_opcion"), obj(args).keys)
+        assertEquals(setOf("p_usuario", "p_reto", "p_pregunta", "p_opcion", "p_usar_oportunidad"), obj(args).keys, "an old client (no admiteOportunidad): never held")
         assertEquals(reto, obj(args)["p_reto"]!!.jsonPrimitive.content)
         assertEquals(listOf(ChallengeOperation.WRITE), limited.toList())
         upstream.rpcs.clear()

@@ -42,6 +42,12 @@ internal data class DailyChallengeAnswerRequest(
     val opcionSeleccionadaId: String,
     /** FA52 (F28): tras un fallo retenido por una doble/triple oportunidad, `true` = gastar un uso y responder otra opcion; `false` = rechazarla (la respuesta retenida queda definitiva; en la primera respuesta: no ofrecerla). Ausente = sin decision. */
     val usarOportunidad: Boolean? = null,
+    /**
+     * C3 (revision 2026-11-14): `true` = este cliente sabe tratar la respuesta RETENIDA por una doble/triple oportunidad (oferta + `usarOportunidad`).
+     * Ausente / `false` / null = cliente que no la conoce: Ktor manda `p_usar_oportunidad = false` (nunca se retiene; una retenida previa queda rechazada) y
+     * `usarOportunidad` se ignora, para que un cliente viejo nunca deje el reto atascado.
+     */
+    val admiteOportunidad: Boolean? = null,
 )
 
 internal class ChallengeRuntime(
@@ -137,8 +143,13 @@ internal class ChallengeService(
                 put("p_reto", retoId.lowercase())
                 put("p_pregunta", questionId.lowercase())
                 put("p_opcion", request.opcionSeleccionadaId.lowercase())
-                // solo si el cliente decidio: un servidor con la base anterior a 20261114400200 sigue recibiendo la llamada de 4 argumentos
-                request.usarOportunidad?.let { put("p_usar_oportunidad", it) }
+                // C3: solo un cliente que declara admiteOportunidad puede recibir una respuesta retenida; a los demas, false = nunca retener.
+                // (Necesita la base con 20261114400200: la imagen va DESPUES de las migraciones, orden de despliegue v1.3.)
+                if (request.admiteOportunidad == true) {
+                    request.usarOportunidad?.let { put("p_usar_oportunidad", it) }
+                } else {
+                    put("p_usar_oportunidad", false)
+                }
             }.toString(),
         )
     }
@@ -192,7 +203,7 @@ internal fun Route.challengeRoutes(runtime: ChallengeRuntime?) {
         put("/retos/{retoId}/respuestas/{preguntaId}") {
             val identity = call.challengeGate(runtime, ChallengeOperation.WRITE)
             requireOnlyKnownQueryParams(call.request.queryParameters, emptySet())
-            val request = call.receiveCanonicalCommand<DailyChallengeAnswerRequest>(nullableFields = setOf("usarOportunidad"))
+            val request = call.receiveCanonicalCommand<DailyChallengeAnswerRequest>(nullableFields = setOf("usarOportunidad", "admiteOportunidad"))
             call.respond(
                 HttpStatusCode.OK,
                 runtime!!.service.answer(identity.userId, call.parameters["retoId"].orEmpty().trim(), call.parameters["preguntaId"].orEmpty().trim(), request),

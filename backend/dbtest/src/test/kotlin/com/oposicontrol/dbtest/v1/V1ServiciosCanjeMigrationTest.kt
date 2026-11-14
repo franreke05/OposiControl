@@ -71,7 +71,8 @@ class V1ServiciosCanjeMigrationTest {
         )
         assertEquals("1300|false|0|pack_tickets", listOf("0,items,0,cantidadTickets", "0,items,0,comprableConTickets", "0,items,0,disponibles", "0,items,0,tipo").joinToString("|") { c.j(cat, "secciones,$it")!! })
         assertEquals("false|500|1999", listOf("comprableConTickets", "precioTickets", "precioCentimos").joinToString("|") { c.j(cat, "secciones,2,items,0,$it")!! }, "tutoria is listed but not redeemed with OT")
-        assertEquals("true", c.j(cat, "secciones,0,items,2,comprableConTickets"), "modo papel: purchasable (inert in 1.3)")
+        assertEquals("false", c.j(cat, "secciones,0,items,2,comprableConTickets"), "modo papel: listed but NOT purchasable while it has no effect (C4)")
+        assertTrue(c.refused("papel", "k-papel").contains("SERVICE_NOT_PURCHASABLE"), "C4: an inert consumable is refused")
         assertEquals("4", c.j(cat, "secciones,1,items,5,multiplicador"))
         assertEquals("2", c.j(cat, "secciones,1,items,7,usos"))
         // buying twice adds up

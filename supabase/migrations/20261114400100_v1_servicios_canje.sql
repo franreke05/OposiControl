@@ -9,8 +9,10 @@
 --     (estado 'activa', not expired by activa_hasta, usos_consumidos < usos_disponibles). The ONE definition used by the catalog, the redeem
 --     answer and the consumable effects (20261114400200).
 --   * private.servicio_comprable(row): a service can be redeemed with OT when it is activo AND visible AND precio_tickets > 0 AND its type is
---     a consumable: the 7 POTENCIADORES types and modo_papel. carta_ccaa_comodin and modo_papel are purchasable but INERT in 1.3 (the client
---     documents only say "future version": no effect is defined); neither is seeded, so they are sold only if Control creates and activates them.
+--     a consumable WITH AN EFFECT in 1.3: the 6 types that act in the daily challenge (protector_racha / _tickets / _dual, potenciador, doble / triple
+--     oportunidad). carta_ccaa_comodin and modo_papel have no effect defined (the client documents only say "future version"), so they are NOT
+--     purchasable (D6-40 = 422 NOT_PURCHASABLE; review 2026-11-14, C4) even if Control creates and activates them: the catalog lists them with
+--     comprableConTickets = false. Adding them back here is the switch once they have an effect.
 --     premium / correccion / tutoria / contenido_extra are NEVER redeemed with OT (no in-app fulfilment; premium is the paid subscription):
 --     the catalog lists them with comprableConTickets = false.
 --   * public.app_market_catalog(user) -> jsonb {"secciones":[{"codigo","titulo","items":[...]}]}: sections in the fixed order OPOSITICKETS,
@@ -94,8 +96,7 @@ immutable
 set search_path = ''
 as $$
   select s.activo and s.visible and coalesce(s.precio_tickets, 0) > 0
-     and s.tipo_servicio in ('protector_racha', 'protector_tickets', 'protector_dual', 'potenciador', 'doble_oportunidad', 'triple_oportunidad',
-                             'carta_ccaa_comodin', 'modo_papel')
+     and s.tipo_servicio in ('protector_racha', 'protector_tickets', 'protector_dual', 'potenciador', 'doble_oportunidad', 'triple_oportunidad')
 $$;
 revoke all on function private.servicio_comprable(public.servicios) from public, anon, authenticated;
 
