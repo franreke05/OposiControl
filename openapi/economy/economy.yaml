@@ -318,6 +318,114 @@ components:
           '503':
             $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
             description: 'Upstream unavailable, OR a payment.refunded event while the refund path is switched off on this server (PAYMENTS_REFUNDS_ENABLED; off by default outside local/test). Nothing is written, so the provider retries.'
+    MarketServices:
+      get:
+        operationId: listMarketSections
+        summary: 'The Market in at most three sections, with the remaining uses of each consumable'
+        tags: [wallet]
+        x-contract-id: D6-39
+        x-implementation: TARGET
+        x-slice: 7
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'FA52 (F28, owner decision 2026-11-14). Read-only. Sections in this fixed order, a section without items is omitted: OPOSITICKETS ("OposiTickets": the packs on sale, the same rule as D6-11, comprableConTickets false because packs are bought with money), POTENCIADORES ("Potenciadores y protecciones") and SERVICIOS ("Servicios y accesos"): the services that Control marks activo AND visible, filed by their seccion and ordered by posicion then codigo. disponibles = the remaining uses of the caller own usable activations of that service (0 for packs). Null fields are omitted on the wire (absent = null).'
+        security:
+          - bearerAuth: []
+        responses:
+          '200':
+            description: 'The Market.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/MarketCatalogResponse'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '502':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamError'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    ServiceRedeem:
+      post:
+        operationId: redeemServiceWithTickets
+        summary: 'Buy a consumable with OposiTickets'
+        tags: [wallet]
+        x-contract-id: D6-40
+        x-implementation: TARGET
+        x-slice: 7
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: REQUIRED
+        x-error-codes: [VALIDATION, IDEMPOTENCY_KEY_REQUIRED, IDEMPOTENCY_KEY_INVALID, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, NOT_FOUND, INSUFFICIENT_BALANCE, PRICE_CHANGED, IDEMPOTENCY_KEY_IN_PROGRESS, NOT_PURCHASABLE, IDEMPOTENCY_KEY_REUSED, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'FA52 (F28). One database transaction under the wallet lock: replay check, service check (activo AND visible AND an OT price AND a consumable type), price guard, balance check, ledger debit (compra_servicio, FIFO traceability) and a NEW activation (usos uses; activaHasta = now + duracionHoras when the service has one). Buying again adds another activation: disponibles in D6-39 and usosRestantes in D6-01 consumibles add up. The consumables take effect by themselves in the daily challenge (D3-17): protectors when the reto is failed, potenciador on the reward of the next passed reto, doble/triple oportunidad as the retry offered after a wrong answer. modo_papel and carta_ccaa_comodin are sold only if Control creates them and are INERT in 1.3. The same key and body replay the stored result (Idempotent-Replayed: true) with the activation as it is NOW. The same key with a different body is 422 IDEMPOTENCY_KEY_REUSED. A refusal changes nothing.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '../common/idempotency.yaml#/components/parameters/IdempotencyKeyRequired'
+          - name: codigo
+            in: path
+            required: true
+            description: 'servicios.codigo (as listed by D6-39).'
+            schema:
+              type: string
+              pattern: '^[A-Za-z0-9._-]{1,64}$'
+        requestBody:
+          required: false
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServiceRedeemRequest'
+        responses:
+          '200':
+            description: 'Replay of an earlier purchase with the same key and body.'
+            headers:
+              Idempotent-Replayed:
+                $ref: '../common/idempotency.yaml#/components/headers/IdempotentReplayed'
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ServiceRedeemResponse'
+          '201':
+            description: 'Bought.'
+            headers:
+              Idempotent-Replayed:
+                $ref: '../common/idempotency.yaml#/components/headers/IdempotentReplayed'
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ServiceRedeemResponse'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+            description: 'VALIDATION (codigo or expectedPrice), IDEMPOTENCY_KEY_REQUIRED or IDEMPOTENCY_KEY_INVALID.'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'NOT_FOUND: no service with that code is activo and visible (unknown, inactive and hidden answer the same).'
+          '409':
+            $ref: '../common/errors.yaml#/components/responses/Conflict'
+            description: 'INSUFFICIENT_BALANCE (details.balance, details.price), PRICE_CHANGED (details.price) or IDEMPOTENCY_KEY_IN_PROGRESS.'
+          '422':
+            $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
+            description: 'NOT_PURCHASABLE (no OT price, or a type that is not redeemed with OT: premium, correccion, tutoria, contenido_extra) or IDEMPOTENCY_KEY_REUSED.'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
   parameters:
     OrderIdPath:
       name: orderId
@@ -414,6 +522,112 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/TicketPack'
+    MarketSectionCode:
+      type: string
+      enum: [OPOSITICKETS, POTENCIADORES, SERVICIOS]
+      description: 'FA52: the at most three Market sections, always in this order.'
+    MarketItem:
+      type: object
+      required: [codigo, nombre, tipo, disponibles, comprableConTickets]
+      properties:
+        codigo:
+          type: string
+        nombre:
+          type: string
+        descripcion:
+          type: [string, 'null']
+        tipo:
+          type: string
+          description: 'pack_tickets for a pack; otherwise servicios.tipo_servicio (protector_racha, protector_tickets, protector_dual, potenciador, doble_oportunidad, triple_oportunidad, carta_ccaa_comodin, premium, correccion, tutoria, contenido_extra, modo_papel). Open string: an unknown value is shown without effect.'
+        precioTickets:
+          type: [integer, 'null']
+          description: 'OT price (null for packs).'
+        precioCentimos:
+          type: [integer, 'null']
+          description: 'Money price in cents (packs; a service may also have one, informational: real-money payments are off).'
+        usos:
+          type: [integer, 'null']
+          description: 'Uses granted by one purchase (null = one).'
+        duracionHoras:
+          type: [integer, 'null']
+          description: 'Lifetime of one purchase in hours (null = no expiry).'
+        multiplicador:
+          type: [number, 'null']
+          description: 'potenciador: factor applied to the daily-challenge BASE reward (the streak bonus is not multiplied).'
+        disponibles:
+          type: integer
+          minimum: 0
+          description: 'Remaining uses of the caller own usable activations of this service (0 for packs).'
+        comprableConTickets:
+          type: boolean
+          description: 'true = D6-40 sells it for precioTickets. false for packs and for premium, correccion, tutoria and contenido_extra.'
+        cantidadTickets:
+          type: [integer, 'null']
+          description: 'Packs only: the OposiTickets the pack gives.'
+    MarketSection:
+      type: object
+      required: [codigo, titulo, items]
+      properties:
+        codigo:
+          $ref: '#/components/schemas/MarketSectionCode'
+        titulo:
+          type: string
+          description: 'OposiTickets | Potenciadores y protecciones | Servicios y accesos.'
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: '#/components/schemas/MarketItem'
+    MarketCatalogResponse:
+      type: object
+      required: [secciones]
+      properties:
+        secciones:
+          type: array
+          maxItems: 3
+          items:
+            $ref: '#/components/schemas/MarketSection'
+    ServiceRedeemRequest:
+      type: object
+      required: []
+      additionalProperties: false
+      properties:
+        expectedPrice:
+          type: integer
+          minimum: 1
+          description: 'GUARD only: the OT price the user was shown (409 PRICE_CHANGED with details.price if it changed). The body may be omitted.'
+    ServiceActivation:
+      type: object
+      required: [id, servicioCodigo, tipo, estado, usosRestantes]
+      properties:
+        id:
+          $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        servicioCodigo:
+          type: string
+        tipo:
+          type: string
+        estado:
+          type: string
+          enum: [activa, usada, caducada, cancelada]
+        usosRestantes:
+          type: integer
+          minimum: 0
+        activaHasta:
+          $ref: '../common/identifiers.yaml#/components/schemas/Instant'
+          description: 'Absent = no expiry.'
+        multiplicador:
+          type: [number, 'null']
+          description: 'potenciador: the factor frozen at purchase time.'
+    ServiceRedeemResponse:
+      type: object
+      required: [saldoTickets, activacion]
+      properties:
+        saldoTickets:
+          type: integer
+          minimum: 0
+          description: 'The wallet balance after the purchase.'
+        activacion:
+          $ref: '#/components/schemas/ServiceActivation'
     PaymentOrderRequest:
       type: object
       required: [productCode, provider]

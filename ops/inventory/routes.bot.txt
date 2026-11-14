@@ -23,6 +23,7 @@ GET /api/v1/app/intentos/{}/recursos/{}
 GET /api/v1/app/intentos/{}/resultado
 GET /api/v1/app/intentos/{}/revision
 GET /api/v1/app/legal/documents
+GET /api/v1/app/market/servicios
 GET /api/v1/app/me
 GET /api/v1/app/me/billing-history
 GET /api/v1/app/me/entitlement
@@ -83,6 +84,7 @@ POST /api/v1/app/retos/{}/reclamar
 POST /api/v1/app/store/purchases/restore
 POST /api/v1/app/store/purchases/verify
 POST /api/v1/app/wallet/canjes
+POST /api/v1/app/wallet/servicios/{}/canje
 POST /api/v1/webhooks/payments/{}
 POST /api/v1/webhooks/store/{}
 POST /v1/auth/admin-access-requests
