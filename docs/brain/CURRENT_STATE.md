@@ -1,5 +1,10 @@
 # Current State
 
+## Biblioteca: pregunta guardada (F30, FA50) y `desde` en D2-08 (FA51) — 2026-11-14 (rama local `f30/biblioteca-desde` desde develop `08ea7f0f`, sin push) — `CURRENT_IMPLEMENTATION`, NO aplicada a MAIN
+
+- D4-27 `GET /api/v1/app/opositeca/guardados/pregunta/{preguntaId}` (ReviewItem + examenId/examenTitulo/tipoExamen/anulada, sin cupo) y D4-28 `.../recursos/{recursoId}` (URL firmada); `pregunta.tipoExamen` en D4-24. D2-08 acepta `desde` (posicion 1-based, excluyente con cursor; mismo cupo).
+- Migracion PENDIENTE `20261114200000_v1_biblioteca_pregunta` (predecesora F20). Manifiesto `ops/deploy/v1/main-migrations-2026-11-f30.manifest`; ensayo `docs/ledger/2026/11/rehearse-f30-2026-11.sh`; acta `docs/ledger/2026/11/2026-11-14-f30-biblioteca-desde.md`. NECESITA imagen nueva, ORDEN migracion -> imagen.
+
 ## Reto diario por tipo de examen (F20) — 2026-11-09 (rama local `f20/reto-per-type` desde develop `920fa29b`, sin push) — `CURRENT_IMPLEMENTATION`, NO aplicada a MAIN
 
 - Decision del propietario 2026-11-09: el reto toma UNA pregunta de examenes inmersivos, UNA de razonados y UNA de rafaga, de los examenes PUBLICADOS de la especialidad del usuario; un tipo sin preguntas se salta (reto de 1 a 3). Antes exigia los tres huecos (y la inmersiva con marca demo): en produccion, solo rafaga, el reto salia `NO_DISPONIBLE` para todos.

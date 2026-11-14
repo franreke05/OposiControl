@@ -1,0 +1,168 @@
+-- V1 LIBRARY: SAVED QUESTION DETAIL (owner plan 2026-11-14 "Biblioteca: ver la pregunta guardada ahi mismo", workstream F30, contract amendment FA50). Forward-only; local stack and
+-- PG17 gate only, NOT applied to MAIN. Requires 20261022100800 (saved items), 20261022100000 / 20261022102100 (revision content and solution builders).
+--
+-- New: public.app_saved_question_detail(usuario, pregunta) -> jsonb. ONLY when the user saved the question AND can open one of its exams (same rule as the OposiTeca list: an
+-- active, published exam whose access verdict is FREE / GRANTED / SUBSCRIPTION; the specialty gate is rule 0 of that verdict). It returns the LIVE content and solution built by
+-- the same functions that freeze attempt revisions (private.app_revision_pregunta_contenido / _solucion), plus the chosen exam (id, title, type), the question position in it and
+-- whether it is annulled there. Exam choice: a link where the question is NOT annulled first, then the latest publication (an annulled link is used only when no other
+-- accessible link exists: the client shows it flagged as annulled, without the correct answer, like the review). Not saved / no access / inactive question = NOT_FOUND.
+-- It reveals nothing new: the user saved it from an attempt where it was already revealed, and it never touches the daily reveal limiter (no quota).
+-- Changed: public.app_list_saved returns tipo_examen of the chosen exam and uses the SAME exam choice (so an item is accesible exactly when its detail opens: a question annulled
+-- in every accessible exam is now accesible and its detail says anulada). The return type changes, so the function is dropped and recreated (an older Ktor image ignores the
+-- extra column).
+-- DEPLOY ORDER: this migration BEFORE the Ktor image that calls app_saved_question_detail (an older image never calls it).
+--
+-- ROLLBACK (manual, executed verbatim by the PG17 gate). Restores the list body of 20261022100800 verbatim and drops the detail function.
+-- ROLLBACK-BEGIN
+-- begin;
+-- drop function if exists public.app_saved_question_detail(uuid, uuid);
+-- drop function if exists public.app_list_saved(uuid, text, timestamptz, uuid, integer);
+-- create or replace function public.app_list_saved(p_usuario uuid, p_tipo text, p_after_ts timestamptz, p_after_id uuid, p_limit integer)
+-- returns table(id uuid, tipo text, target_id uuid, guardado_en timestamptz, accesible boolean, titulo text, examen_id uuid, examen_titulo text)
+-- language plpgsql
+-- stable
+-- security definer
+-- set search_path = ''
+-- as $$
+-- #variable_conflict use_column
+-- declare
+--   v_now timestamptz := clock_timestamp();
+-- begin
+--   if (p_tipo is not null and p_tipo is distinct from 'pregunta') or p_usuario is null or (p_after_ts is null) <> (p_after_id is null) then
+--     raise exception using errcode = 'P0001', message = 'SAVED_INVALID';
+--   end if;
+--   return query
+--     select s.id, s.tipo, s.pregunta_id, s.guardado_en, (x.examen_id is not null), case when x.examen_id is not null then q.titulo end, x.examen_id, x.titulo
+--       from public.recursos_guardados_usuario s
+--       join public.preguntas q on q.id = s.pregunta_id
+--       left join lateral (
+--         select e.id as examen_id, e.titulo
+--           from public.preguntas_examen pe
+--           join public.examenes e on e.id = pe.examen_id and e.activo and e.publicado_en <= v_now
+--          where pe.pregunta_id = s.pregunta_id and not pe.anulada and q.activa
+--            and exists (select 1 from private.exam_access_verdict(p_usuario, e.id, v_now) v where v.state in ('FREE', 'GRANTED', 'SUBSCRIPTION'))
+--          order by e.publicado_en desc, e.id
+--          limit 1
+--       ) x on true
+--      where s.usuario_id = p_usuario and s.tipo = 'pregunta'
+--        and (p_after_ts is null or (s.guardado_en, s.id) < (p_after_ts, p_after_id))
+--      order by s.guardado_en desc, s.id desc
+--      limit least(greatest(coalesce(p_limit, 21), 1), 51);
+-- end;
+-- $$;
+-- revoke all on function public.app_list_saved(uuid, text, timestamptz, uuid, integer) from public, anon, authenticated;
+-- grant execute on function public.app_list_saved(uuid, text, timestamptz, uuid, integer) to service_role;
+-- commit;
+-- ROLLBACK-END
+--
+-- VERIFY (read only; every row must have failures = 0)
+-- VERIFY-BEGIN
+-- select 'biblioteca_functions_not_service_role_only:' || f.n as check_name,
+--        (case when to_regprocedure(f.n) is null or has_function_privilege('anon', f.n, 'execute') or has_function_privilege('authenticated', f.n, 'execute')
+--                or not has_function_privilege('service_role', f.n, 'execute') then 1 else 0 end)::bigint as failures
+--   from (values ('public.app_saved_question_detail(uuid,uuid)'), ('public.app_list_saved(uuid,text,timestamptz,uuid,integer)')) f(n)
+-- union all
+-- select 'biblioteca_list_without_tipo_examen',
+--        (case when exists (select 1 from pg_proc p where p.oid = to_regprocedure('public.app_list_saved(uuid,text,timestamptz,uuid,integer)') and 'tipo_examen' = any (p.proargnames)) then 0 else 1 end)::bigint;
+-- VERIFY-END
+
+begin;
+
+set local lock_timeout = '5s';
+
+do $$
+begin
+  if to_regclass('public.recursos_guardados_usuario') is null or to_regprocedure('public.app_list_saved(uuid,text,timestamptz,uuid,integer)') is null
+     or to_regprocedure('private.exam_access_verdict(uuid,uuid,timestamptz)') is null
+     or to_regprocedure('private.app_revision_pregunta_contenido(uuid)') is null or to_regprocedure('private.app_revision_pregunta_solucion(uuid)') is null then
+    raise exception using errcode = 'P0001', message = 'V1_BIBLIOTECA_PREGUNTA_PREFLIGHT', hint = 'apply 20261022100000, 20261022100800 and 20261022102100 first';
+  end if;
+end
+$$;
+
+-- ---- 1. the list: + tipo_examen, and the exam choice shared with the detail (non-annulled link first, then the latest publication)
+drop function if exists public.app_list_saved(uuid, text, timestamptz, uuid, integer);
+create or replace function public.app_list_saved(p_usuario uuid, p_tipo text, p_after_ts timestamptz, p_after_id uuid, p_limit integer)
+returns table(id uuid, tipo text, target_id uuid, guardado_en timestamptz, accesible boolean, titulo text, examen_id uuid, examen_titulo text, tipo_examen text)
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+#variable_conflict use_column
+declare
+  v_now timestamptz := clock_timestamp();
+begin
+  if (p_tipo is not null and p_tipo is distinct from 'pregunta') or p_usuario is null or (p_after_ts is null) <> (p_after_id is null) then
+    raise exception using errcode = 'P0001', message = 'SAVED_INVALID';
+  end if;
+  return query
+    select s.id, s.tipo, s.pregunta_id, s.guardado_en, (x.examen_id is not null), case when x.examen_id is not null then q.titulo end, x.examen_id, x.titulo, x.tipo_examen
+      from public.recursos_guardados_usuario s
+      join public.preguntas q on q.id = s.pregunta_id
+      left join lateral (
+        select e.id as examen_id, e.titulo, e.tipo_examen
+          from public.preguntas_examen pe
+          join public.examenes e on e.id = pe.examen_id and e.activo and e.publicado_en <= v_now
+         where pe.pregunta_id = s.pregunta_id and q.activa
+           and exists (select 1 from private.exam_access_verdict(p_usuario, e.id, v_now) v where v.state in ('FREE', 'GRANTED', 'SUBSCRIPTION'))
+         order by (pe.anulada is true), e.publicado_en desc, e.id
+         limit 1
+      ) x on true
+     where s.usuario_id = p_usuario and s.tipo = 'pregunta'
+       and (p_after_ts is null or (s.guardado_en, s.id) < (p_after_ts, p_after_id))
+     order by s.guardado_en desc, s.id desc
+     limit least(greatest(coalesce(p_limit, 21), 1), 51);
+end;
+$$;
+revoke all on function public.app_list_saved(uuid, text, timestamptz, uuid, integer) from public, anon, authenticated;
+grant execute on function public.app_list_saved(uuid, text, timestamptz, uuid, integer) to service_role;
+
+-- ---- 2. the detail of ONE saved question (Library sheet). No write, no limiter.
+create or replace function public.app_saved_question_detail(p_usuario uuid, p_pregunta uuid)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_now timestamptz := clock_timestamp();
+  v_examen uuid;
+  v_titulo text;
+  v_tipo text;
+  v_posicion integer;
+  v_anulada boolean;
+begin
+  if p_usuario is null or p_pregunta is null
+     or not exists (select 1 from public.recursos_guardados_usuario s where s.usuario_id = p_usuario and s.tipo = 'pregunta' and s.pregunta_id = p_pregunta) then
+    return jsonb_build_object('outcome', 'NOT_FOUND');
+  end if;
+  select e.id, e.titulo, e.tipo_examen, pe.posicion, (pe.anulada is true)
+    into v_examen, v_titulo, v_tipo, v_posicion, v_anulada
+    from public.preguntas q
+    join public.preguntas_examen pe on pe.pregunta_id = q.id
+    join public.examenes e on e.id = pe.examen_id and e.activo and e.publicado_en <= v_now
+   where q.id = p_pregunta and q.activa
+     and exists (select 1 from private.exam_access_verdict(p_usuario, e.id, v_now) v where v.state in ('FREE', 'GRANTED', 'SUBSCRIPTION'))
+   order by (pe.anulada is true), e.publicado_en desc, e.id
+   limit 1;
+  if v_examen is null then
+    return jsonb_build_object('outcome', 'NOT_FOUND');
+  end if;
+  return jsonb_build_object(
+    'outcome', 'OK',
+    'pregunta_id', p_pregunta,
+    'examen_id', v_examen,
+    'examen_titulo', v_titulo,
+    'tipo_examen', v_tipo,
+    'posicion', v_posicion,
+    'anulada', v_anulada,
+    'contenido', private.app_revision_pregunta_contenido(p_pregunta),
+    'solucion', private.app_revision_pregunta_solucion(p_pregunta));
+end;
+$$;
+revoke all on function public.app_saved_question_detail(uuid, uuid) from public, anon, authenticated;
+grant execute on function public.app_saved_question_detail(uuid, uuid) to service_role;
+
+commit;

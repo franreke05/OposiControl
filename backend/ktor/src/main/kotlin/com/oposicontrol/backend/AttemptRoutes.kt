@@ -138,13 +138,15 @@ internal fun Route.attemptRoutes(runtime: AttemptRuntime?) {
             get("/preguntas") {
                 val rt = runtime.orMisconfigured()
                 val identity = call.attemptGate(runtime, AttemptOperation.READ, "attemptId")
+                // FA51: `desde` (posicion 1-based) es la alternativa al cursor para retomar en una pregunta con UNA peticion; los dos a la vez = 400.
+                val from = parseQuestionsFrom(call.request.queryParameters)
                 val page = parseAttemptPage(
                     call.request.queryParameters,
                     AttemptService.QUESTIONS_DEFAULT_LIMIT,
                     AttemptService.QUESTIONS_MAX_LIMIT,
                     "preguntas",
                 )
-                call.respond(rt.attempts.questions(identity.userId, call.pathUuid("attemptId"), page))
+                call.respond(rt.attempts.questions(identity.userId, call.pathUuid("attemptId"), page, from))
             }.measured(ExamOp.QUESTION_PAGE, runtime?.metrics)
             put("/respuestas/{preguntaId}") {
                 val rt = runtime.orMisconfigured()

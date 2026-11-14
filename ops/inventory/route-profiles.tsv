@@ -143,6 +143,8 @@ GET	/api/v1/app/me/examenes	BOT	user-jwt	Consumer app API: me/examenes (D2-13)	O
 GET	/api/v1/app/oposired/categorias	BOT	user-jwt	Consumer app API: oposired/categorias (D5-01)	OposiBot
 GET	/api/v1/app/opositeca	BOT	user-jwt	Consumer OposiTeca: saved questions list (D4-24)	OposiBot
 GET	/api/v1/app/opositeca/guardados/{}	BOT	user-jwt	Consumer OposiTeca: which questions are saved (D4-26)	OposiBot
+GET	/api/v1/app/opositeca/guardados/{}/{}	BOT	user-jwt	Consumer OposiTeca: one saved question for the Library sheet (D4-27, FA50)	OposiBot
+GET	/api/v1/app/opositeca/guardados/{}/{}/recursos/{}	BOT	user-jwt	Consumer OposiTeca: signed media of a saved question (D4-28, FA50)	OposiBot
 GET	/api/v1/app/opositester/me	BOT	user-jwt	Consumer app API: opositester/me (D5-16)	OposiBot
 GET	/api/v1/app/payments/orders/{}	BOT	user-jwt	Consumer economy: payment order status (D6-13)	OposiBot
 GET	/api/v1/app/plan/catalogo	BOT	user-jwt	Consumer plan: catalog with coverage, daily limit and tariffs as data (D7-33)	OposiBot

@@ -210,13 +210,21 @@ components:
         x-pagination: CURSOR
         x-idempotency: NONE
         x-error-codes: [VALIDATION, INVALID_CURSOR, UNAUTHENTICATED, ATTEMPT_NOT_FOUND, RATE_LIMITED, DAILY_LIMIT_REACHED]
-        description: 'FA28: on plans with a daily limit (benefit limite_preguntas_24h) a page that would reveal NEW questions beyond the rolling 24 h limit answers 429 DAILY_LIMIT_REACHED with Retry-After (questions already revealed in the window, demo attempts and exams held through purchase, gift or quota are exempt). Owner only, no entitlement re-check (the frozen set is the scope). Keyset posicion. Content comes from the immutable question revision bound at start (amendment 2026-10-14). No solutions or explanations; V1 resource METADATA only (recursos; bytes via D2-66): the only correction carried is the one of the user own answer (respuesta.esCorrecta, respuesta.opcionCorrectaId; DEC-015), for an open and for a finished attempt alike.'
+        description: 'FA28: on plans with a daily limit (benefit limite_preguntas_24h) a page that would reveal NEW questions beyond the rolling 24 h limit answers 429 DAILY_LIMIT_REACHED with Retry-After (questions already revealed in the window, demo attempts and exams held through purchase, gift or quota are exempt). Owner only, no entitlement re-check (the frozen set is the scope). Keyset posicion. Content comes from the immutable question revision bound at start (amendment 2026-10-14). No solutions or explanations; V1 resource METADATA only (recursos; bytes via D2-66): the only correction carried is the one of the user own answer (respuesta.esCorrecta, respuesta.opcionCorrectaId; DEC-015), for an open and for a finished attempt alike. FA51 (2026-11-14, additive): optional desde (1-based posicion) starts the page at that question instead of walking N/limit pages; the daily limit is unchanged: only the questions returned in THIS page are revealed and counted, exactly as when the same page is reached by cursor.'
         security:
           - bearerAuth: []
         parameters:
           - $ref: '../common/identifiers.yaml#/components/parameters/AttemptIdPath'
           - $ref: '../common/pagination.yaml#/components/parameters/Cursor'
           - $ref: '../common/pagination.yaml#/components/parameters/LimitAttemptQuestions'
+          - name: desde
+            in: query
+            required: false
+            description: 'FA51 (additive): 1-based posicion (as in the D2-07 grid) where the page starts; the alternative to cursor to resume at question N with ONE request. Sending it together with cursor = 400 VALIDATION (field desde, issue MUTUALLY_EXCLUSIVE). Not an integer = INVALID_FORMAT; below 1 or above 200 = OUT_OF_RANGE. Beyond the last posicion = an empty page without nextCursor. The returned nextCursor continues from that page as usual.'
+            schema:
+              type: integer
+              minimum: 1
+              maximum: 200
         responses:
           '200':
             description: 'Question page.'
@@ -234,7 +242,7 @@ components:
                             $ref: '#/components/schemas/AttemptQuestion'
           '400':
             $ref: '../common/errors.yaml#/components/responses/BadRequest'
-            description: 'VALIDATION or INVALID_CURSOR.'
+            description: 'VALIDATION (also desde malformed, out of range or sent with cursor, FA51) or INVALID_CURSOR.'
           '401':
             $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
           '404':

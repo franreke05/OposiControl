@@ -1,0 +1,7 @@
+# F30 Biblioteca: pregunta guardada (f30/biblioteca-desde, plan del propietario 2026-11-14, FA50): migracion que se aplica a MAIN DESPUES de F20 (20261109100000); independiente de F23.
+# Acta y anexo al runbook: docs/ledger/2026/11/2026-11-14-f30-biblioteca-desde.md. Uso con el script de siempre:
+#   MANIFEST=ops/deploy/v1/main-migrations-2026-11-f30.manifest bash ops/deploy/v1/apply-main-migration.sh supabase/migrations/20261114200000_v1_biblioteca_pregunta.sql
+# version  blob(git hash-object, 12)  predecesora(debe estar en supabase_migrations antes de aplicar)  clase
+# Cadena: ventana 2026-11 (ops/deploy/v1/main-migrations-2026-11.manifest) -> F20 20261109100000 (main-migrations-2026-11-f20.manifest) -> F30.
+# Si cambia el blob, se rehacen este manifiesto y el ensayo (docs/ledger/2026/11/rehearse-f30-2026-11.sh).
+20261114200000 d5ae900e616e 20261109100000 apply

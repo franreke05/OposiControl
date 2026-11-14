@@ -334,6 +334,29 @@ internal fun parseAttemptPage(params: Parameters, default: Int, max: Int, list: 
         scope = CursorScope(sort = listOf("posicion asc"), filters = mapOf("lista" to list)),
     )
 
+/**
+ * FA51 (D2-08): `desde` = posicion 1-based (la del grid de D2-07) desde la que empieza la pagina, alternativa al cursor para retomar en la pregunta N con UNA peticion.
+ * Ausente = `null`. Con `cursor` a la vez, no entero, < 1 o > [AttemptGateway.MAX_ATTEMPT_QUESTIONS] = 400 VALIDATION (campo `desde`).
+ */
+internal fun parseQuestionsFrom(params: Parameters): Int? {
+    val raw = params.getAll("desde") ?: return null
+    val issue = when {
+        !params["cursor"].isNullOrEmpty() -> ISSUE_DESDE_WITH_CURSOR
+        raw.size != 1 -> CanonicalIssue.INVALID_FORMAT
+        else -> raw.single().trim().toIntOrNull().let { value ->
+            when {
+                value == null || raw.single().trim() != value.toString() -> CanonicalIssue.INVALID_FORMAT
+                value < 1 || value > AttemptGateway.MAX_ATTEMPT_QUESTIONS -> CanonicalIssue.OUT_OF_RANGE
+                else -> return value
+            }
+        }
+    }
+    throw validationError(ErrorIssue("desde", issue))
+}
+
+/** FA51: `desde` y `cursor` son excluyentes. */
+internal const val ISSUE_DESDE_WITH_CURSOR = "MUTUALLY_EXCLUSIVE"
+
 /** La clave del cursor de posicion: UN entero >= 1. Cualquier otra forma es 400 INVALID_CURSOR. */
 internal fun positionAfter(keys: List<JsonElement>?): Int {
     if (keys == null) return 0
@@ -437,9 +460,11 @@ internal class AttemptService(
     }
 
     // ----- D2-08 -----
-    suspend fun questions(userId: CanonicalUserId, attemptId: String, page: CursorPageRequest): AttemptQuestionPage = withUpstreamIo {
+    suspend fun questions(userId: CanonicalUserId, attemptId: String, page: CursorPageRequest, from: Int? = null): AttemptQuestionPage = withUpstreamIo {
         val row = ownedAttempt(userId, attemptId)
-        val rows = gateway.questionPage(row.id, positionAfter(page.after), page.fetchLimit, open = row.estado != FINISHED)
+        // FA51: `desde` N = la pagina que empieza en la posicion N (posicion > N - 1); el cupo es el mismo: solo se revela lo que trae ESTA pagina.
+        val after = from?.let { it - 1 } ?: positionAfter(page.after)
+        val rows = gateway.questionPage(row.id, after, page.fetchLimit, open = row.estado != FINISHED)
         val cut = page.page(rows) { listOf(JsonPrimitive(it.posicion)) }
         // Limitador diario (C-L1): lo que la pagina va a REVELAR se registra antes de servirla; un intento finalizado ya se vio.
         if (row.estado != FINISHED && cut.items.isNotEmpty()) {
@@ -964,7 +989,7 @@ internal class AttemptService(
 
         /** Vida de la URL firmada: corta (un enlace filtrado caduca pronto); el cliente pide otra al caducar. */
         internal const val RESOURCE_URL_TTL_SECONDS = 300
-        private val OPTION_LETTERS = setOf("A", "B", "C", "D")
+        internal val OPTION_LETTERS = setOf("A", "B", "C", "D")
 
         /** DEC-013 (default tecnico): correctas / evaluables * 10, half-up a 2 decimales. Sin evaluables, 0. */
         internal fun gradeOf(correct: Int, evaluable: Int): BigDecimal =

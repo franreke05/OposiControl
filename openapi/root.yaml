@@ -302,6 +302,8 @@ paths:
     $ref: 'opositeca/opositeca.yaml#/components/pathItems/SavedState'
   /api/v1/app/opositeca/guardados/{tipo}/{targetId}:
     $ref: 'opositeca/opositeca.yaml#/components/pathItems/SavedItem'
+  /api/v1/app/opositeca/guardados/{tipo}/{targetId}/recursos/{recursoId}:
+    $ref: 'opositeca/opositeca.yaml#/components/pathItems/SavedQuestionResource'
   /api/v1/webhooks/payments/{provider}:
     $ref: 'economy/economy.yaml#/components/pathItems/PaymentWebhook'
   /api/v1/admin/moderacion/hilos:

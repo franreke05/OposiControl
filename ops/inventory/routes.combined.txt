@@ -170,6 +170,8 @@ GET /api/v1/app/oposired/publicaciones/{}/comentarios
 GET /api/v1/app/oposired/publicaciones/{}/imagen
 GET /api/v1/app/opositeca
 GET /api/v1/app/opositeca/guardados/{}
+GET /api/v1/app/opositeca/guardados/{}/{}
+GET /api/v1/app/opositeca/guardados/{}/{}/recursos/{}
 GET /api/v1/app/opositester/me
 GET /api/v1/app/payments/orders/{}
 GET /api/v1/app/plan/catalogo

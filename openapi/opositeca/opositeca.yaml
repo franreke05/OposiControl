@@ -82,6 +82,46 @@ components:
             $ref: '../common/errors.yaml#/components/responses/RateLimited'
           '503':
             $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+      get:
+        operationId: getSavedQuestionDetail
+        summary: 'One saved question with its options, correct answer, explanation and resources (Library sheet)'
+        tags: [opositeca]
+        x-contract-id: D4-27
+        x-implementation: TARGET
+        x-slice: 5
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, NOT_FOUND, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'FA50 (owner plan 2026-11-14, additive): the Library opens a saved question in place. Served ONLY when the caller saved it AND can open one of its exams (the D4-24 rule: an active, published exam whose access verdict is FREE, GRANTED or SUBSCRIPTION; the specialty gate first); otherwise 404 NOT_FOUND (not saved, no access and missing are the same). The item has the SAME schema as a D2-65 review item (ReviewItem) for a question outside any attempt: content and solution are the LIVE ones (built by the functions that freeze attempt revisions), posicion = the position in the chosen exam, status = ANNULLED when the question is annulled in that exam (then correctAnswer and explanation are null, as in the review) or UNANSWERED, and firstAnswer, finalAnswer, timings are empty. Plus examenId, examenTitulo, tipoExamen of the chosen exam (a non-annulled link first, then the latest publication) and anulada. explanation follows the same product policy as D2-65 (EXPLANATIONS_VISIBLE). Resource bytes via D4-28. It never touches the daily question limit (the question was already revealed when it was saved).'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '#/components/parameters/SavedTipo'
+          - $ref: '#/components/parameters/SavedTargetId'
+        responses:
+          '200':
+            description: 'The saved question.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/SavedQuestionDetail'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'NOT_FOUND: not saved by the caller, no accessible exam, or the question is inactive or missing.'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
     SavedState:
       get:
         operationId: savedItemsState
@@ -138,7 +178,7 @@ components:
         x-pagination: CURSOR
         x-idempotency: NONE
         x-error-codes: [VALIDATION, INVALID_CURSOR, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
-        description: 'Keyset page ordered by guardadoEn descending then id descending (the only order in V1). Filter: tipo (only pregunta exists). The access is recomputed at read time: while the caller can open an exam of the question, accesible is true and pregunta carries the title and the exam (the accessible exam with the latest publication); when it cannot, the item STAYS (so it can be removed) with accesible false and pregunta null: the content of an exam the user can no longer open is not served. No explanation and no resources are returned (DEC-025 is open).'
+        description: 'Keyset page ordered by guardadoEn descending then id descending (the only order in V1). Filter: tipo (only pregunta exists). The access is recomputed at read time: while the caller can open an exam of the question, accesible is true and pregunta carries the title and the exam (the accessible exam with the latest publication); when it cannot, the item STAYS (so it can be removed) with accesible false and pregunta null: the content of an exam the user can no longer open is not served. No explanation and no resources are returned (DEC-025 is open). FA50 (2026-11-14): pregunta also carries tipoExamen; the exam is chosen like D4-27 (a link where the question is not annulled first, then the latest publication), so a question annulled in every accessible exam is now accesible (its D4-27 detail says anulada) and an item is accesible exactly when its detail opens.'
         security:
           - bearerAuth: []
         parameters:
@@ -178,6 +218,53 @@ components:
             $ref: '../common/errors.yaml#/components/responses/RateLimited'
           '503':
             $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    SavedQuestionResource:
+      get:
+        operationId: getSavedQuestionResourceAccess
+        summary: 'Temporary access to the bytes of a resource of a saved question'
+        tags: [opositeca]
+        x-contract-id: D4-28
+        x-implementation: TARGET
+        x-slice: 5
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, NOT_FOUND, RESOURCE_NOT_FOUND, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'FA50 (additive): same authorization as D4-27 (saved by the caller and an accessible exam), then the resource must be one of the LIVE V1 resources of that question (image, audio, video); Ktor signs a short-lived Storage URL exactly like D2-66 (same bucket and path rules, never the internal path).'
+        security:
+          - bearerAuth: []
+        parameters:
+          - $ref: '#/components/parameters/SavedTipo'
+          - $ref: '#/components/parameters/SavedTargetId'
+          - name: recursoId
+            in: path
+            required: true
+            schema:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+        responses:
+          '200':
+            description: 'Signed URL and its expiry.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/NoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '../attempts/attempts.yaml#/components/schemas/AttemptResourceAccess'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '404':
+            $ref: '../common/errors.yaml#/components/responses/NotFound'
+            description: 'NOT_FOUND (as D4-27) or RESOURCE_NOT_FOUND (not a current V1 resource of the question).'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+            description: 'UPSTREAM_UNAVAILABLE: Storage could not sign. Retryable.'
   parameters:
     SavedTipo:
       name: tipo
@@ -224,6 +311,25 @@ components:
           $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
         examenTitulo:
           type: string
+        tipoExamen:
+          $ref: '../common/identifiers.yaml#/components/schemas/TipoExamen'
+          description: 'FA50 (additive): the type of the exam in examenId.'
+    SavedQuestionDetail:
+      description: 'FA50: a D2-65 ReviewItem for a question outside any attempt, plus the exam it is shown from.'
+      allOf:
+        - $ref: '../attempts/attempts.yaml#/components/schemas/ReviewItem'
+        - type: object
+          required: [examenId, examenTitulo, tipoExamen, anulada]
+          properties:
+            examenId:
+              $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
+            examenTitulo:
+              type: string
+            tipoExamen:
+              $ref: '../common/identifiers.yaml#/components/schemas/TipoExamen'
+            anulada:
+              type: boolean
+              description: 'True when the question is annulled in examenId (status ANNULLED, no correctAnswer, no explanation).'
     SavedEntry:
       type: object
       required: [tipo, targetId, guardadoEn, accesible]
