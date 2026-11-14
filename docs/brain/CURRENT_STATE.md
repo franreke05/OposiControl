@@ -97,6 +97,13 @@
 - Control: editor de examen, pestana Basica > Ambito y clasificacion, desplegable "Tipo de acceso" (Sin indicar / Libre / Promocion interna / Estabilizacion / Discapacidad). La importacion (PDF de preguntas) no escribe metadatos de examen: sin cambio. El editor movil no lo muestra (conserva el valor al guardar).
 - ORDEN DE DESPLIEGUE: migracion antes del Ktor (ver `docs/engineering/DEPLOYMENT.md`).
 
+## Servidor 1.3 desplegado — 2026-11-14 — `LIVE_VERIFIED` (humo externo)
+
+- Imagen `oposicontrol-backend:b9a5c1e3ac9d` en control, bot-1 y bot-2 (develop `b9a5c1e3`), revisada por Control en tres rondas (bloqueos B1 y B1-bis de la biblioteca, C1-C5 y decisiones D1/D2 del propietario). Vuelta atras: `920fa29b6d40` (la desplegada el 2026-11-08; compatible con las 11 migraciones).
+- MAIN: las 11 migraciones de `ops/deploy/v1/main-migrations-2026-11-v1-3.manifest` aplicadas con VERIFY = 0 y registradas (ultima `20261114500000`); `app_answer_daily_challenge` con una sola firma (6 argumentos). Backup 2026-11-14T21:51:04Z y prueba de restauracion OK (120 tablas).
+- Comprobado por Control desde fuera: health 200, `/metrics` 404, especialidades 200, wallet y admin 401.
+- Pendiente: panel de Control nuevo (`scripts/publicar-panel-produccion.sh --instalar`) e instaladores para Arturo; recorrido F6.3-F6.7 con la APK 1.3.
+
 ## Redirecciones de autenticacion — 2026-10-27
 
 - `OPOSIBOTS_EMAIL_CONFIRM_REDIRECT_URL=oposibots://auth` y `OPOSIBOTS_PASSWORD_RECOVERY_REDIRECT_URL=oposibots://auth/reset-password` en `backend.bot.env` (faltaban: los correos volvian al Site URL `localhost:3000`). bot-1 y bot-2 recreados y sanos. Pendiente del propietario en Supabase: Redirect URLs con esas dos URLs y Site URL distinto de localhost. El enlace solo verifica en el dispositivo que pidio el registro (PKCE).
