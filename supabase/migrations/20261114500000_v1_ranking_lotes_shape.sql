@@ -45,7 +45,8 @@
 -- begin
 --   -- the only privilege the earlier V1 revokes (20261022101200 / 101700) leave to the client roles; MAINTAIN exists from PostgreSQL 17 (MAIN, PG17 gate)
 --   if current_setting('server_version_num')::integer >= 170000 then
---     execute 'grant maintain on table public.lotes_actualizacion_ranking to anon, authenticated';
+--     execute 'grant maintain on table public.lotes_actualizacion_ranking to authenticated';  -- this order = the ACL order of the MAIN capture
+--     execute 'grant maintain on table public.lotes_actualizacion_ranking to anon';
 --   end if;
 -- end
 -- $$;

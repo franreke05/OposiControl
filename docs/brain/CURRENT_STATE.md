@@ -4,7 +4,9 @@
 
 - Fusionadas F20b, F14b, F23 (+F23b), F27, F25, F29, F30 y F28. Mas la correctiva `20261114500000_v1_ranking_lotes_shape` (hallazgo S3: en la captura de MAIN `lotes_actualizacion_ranking` tiene la forma PRE-V1 y los trabajos V1 de dificultad/ranking fallan; alineacion con guardas, no-op en la forma V1).
 - Orden de despliegue: 11 migraciones en orden de version con el manifiesto consolidado `ops/deploy/v1/main-migrations-2026-11-v1-3.manifest` (cadena lineal) y DESPUES una sola imagen Ktor; acta `docs/ledger/2026/11/2026-11-14-v1-3-deploy-order.md`; ensayo combinado `docs/ledger/2026/11/rehearse-v1-3-2026-11.sh`.
-- Dudas: FA48 duplicado (F20b y F14b); confirmar en MAIN la forma real de `lotes_actualizacion_ranking` (lectura de solo catalogo).
+- Correccion 2026-11-14 (revision Control): MAIN YA TIENE aplicadas y registradas `20261108100000/100100/100200/100300/100500` (ventana servidor 2026-11: F3 avatar, F2 liga/OT hoy, onboarding, F14 demo automatica, F15 turno) y `20261109100000` (F20 reto por tipo). Las secciones de abajo que las llaman "PENDIENTE / NO aplicada" describen su estado al escribirse.
+- Arreglos de la revision Control (2026-11-14, migraciones de la ventana enmendadas en su sitio, no aplicadas a MAIN): acta `docs/ledger/2026/11/2026-11-14-v1-3-review-fixes.md` (B1 solucion de la pregunta guardada solo si resuelta; C1-C5; FA48 duplicado resuelto: F20b pasa a FA55, F14b conserva FA48).
+- Duda abierta: confirmar en MAIN la forma real de `lotes_actualizacion_ranking` (lectura de solo catalogo).
 
 ## Reto diario siempre de 3 (F20b) — 2026-11-11 (rama local `f20b/reto-tres` desde develop `08ea7f0f`, sin push) — `CURRENT_IMPLEMENTATION`, NO aplicada a MAIN
 
@@ -52,13 +54,13 @@
 - Migraciones PENDIENTES `20261114400000_v1_servicios_catalogo` (columnas de escaparate y metadatos editables en Control; semilla PLACEHOLDER), `20261114400100_v1_servicios_canje` (D6-39 catalogo, D6-40 compra con OT) y `20261114400200_v1_consumibles_efectos` (protectores en reto fallado, potenciador sobre la base, doble/triple oportunidad; respuesta del reto con 5 argumentos). modo_papel y carta_ccaa_comodin: comprables pero INERTES (sin definicion).
 - Contrato FA52 (economy, engagement, commerce); registro CONTRACT_FREEZE.md (repo OposiBot) PENDING_OWNER. Imagen nueva necesaria. Acta `docs/ledger/2026/11/2026-11-14-f28-consumibles.md`.
 
-## Reto diario por tipo de examen (F20) — 2026-11-09 (rama local `f20/reto-per-type` desde develop `920fa29b`, sin push) — `CURRENT_IMPLEMENTATION`, NO aplicada a MAIN
+## Reto diario por tipo de examen (F20) — 2026-11-09 (rama local `f20/reto-per-type` desde develop `920fa29b`, sin push) — `CURRENT_IMPLEMENTATION`, APLICADA EN MAIN (`20261109100000` registrada)
 
 - Decision del propietario 2026-11-09: el reto toma UNA pregunta de examenes inmersivos, UNA de razonados y UNA de rafaga, de los examenes PUBLICADOS de la especialidad del usuario; un tipo sin preguntas se salta (reto de 1 a 3). Antes exigia los tres huecos (y la inmersiva con marca demo): en produccion, solo rafaga, el reto salia `NO_DISPONIBLE` para todos.
 - Migracion PENDIENTE `20261109100000_v1_reto_por_tipo` (`reto_pool` por `tipo_examen`, sin demo; `ensure_challenge_row` determinista por dia y segmento, huecos vacios saltados, `aciertos_necesarios = ceil(2n/3)`). Manifiesto `ops/deploy/v1/main-migrations-2026-11-f20.manifest`; ensayo `docs/ledger/2026/11/rehearse-f20-2026-11.sh`; acta `docs/ledger/2026/11/2026-11-09-f20-reto-por-tipo.md`. Sin imagen nueva.
 - Contrato: FA46 solo texto (`engagement.yaml`), forma intacta; registro CONTRACT_FREEZE.md (repo OposiBot) PENDING_OWNER. Cliente sin cambios necesarios.
 
-## Integracion servidor 2026-11 — 2026-11-08 (rama local `integ/server-2026-11`, sin push) — `PREPARADO`, NO desplegado, MAIN sin tocar
+## Integracion servidor 2026-11 — 2026-11-08 (rama local `integ/server-2026-11`, sin push) — DESPLEGADA: las cinco migraciones estan aplicadas y registradas en MAIN
 
 - F3 avatar (FA42), F2 racha liga/otHoy (FA43), F14 demo automatica (FA44) y F15 turnoAcceso (FA45) fusionadas desde develop `04e5eb5e`. Cinco migraciones pendientes `20261108100000/100100/100200/100300/100500`, manifiesto de ventana `ops/deploy/v1/main-migrations-2026-11.manifest`.
 - Runbook y resultados: `docs/ledger/2026/11/2026-11-08-server-deploy-runbook.md` (orden: migraciones ANTES de la imagen; canal General del foro como paso de datos; rollback completo de F14 en `rollback-20261108100300-complete.sql` porque el de su cabecera pierde el cuerpo de stats de `app_record_attempt_answer`).
@@ -71,11 +73,11 @@
 - Migraciones PENDIENTES `20261108100000_v1_avatar` y `20261108100200_v1_onboarding_display_name` (no aplicadas a MAIN; no anadidas a `ops/deploy/v1/main-migrations.manifest`).
 - Pendiente: la purga de cuentas borradas debe borrar `avatars/{uid}/`; el detalle admin (`AdminUserDetail`) sigue mostrando el valor crudo de `avatar_url`.
 
-## Barra superior de Home: liga y OT hoy (F2) — 2026-11-08 — local, sin push, NO aplicada a MAIN
+## Barra superior de Home: liga y OT hoy (F2) — 2026-11-08 — APLICADA EN MAIN (`20261108100100`, ventana servidor 2026-11)
 
 - Rama local `f2/level-ot-today` (desde develop `04e5eb5e`). Migración pendiente `20261108100100_v1_home_level_ot_today`: `app_get_streak` (D3-04 `GET /api/v1/app/racha`) añade `liga` {codigo, nombre, orden} o null y `otHoy` {ganados, tope}. ganados = la suma del día de Madrid que compara el tope de OT gratis (`reto_diario`, `bonus_racha`, `referido`, `reporte_validado`, cantidad > 0); tope = `tope_ot_gratis_dia` o null si es 0. Enmienda de contrato FA43 (schema `StreakView`), PENDING_OWNER en CONTRACT_FREEZE.md (repo OposiBot). El Ktor sirve el cuerpo tal cual (sin cambio funcional). `verify-migrations-manifest.sh` acepta ya V1 202611*. Fuera del manifiesto de la ventana V1: llegar a MAIN necesita su propio GO.
 
-## Demo automática (F14) — 2026-11-08 — local, sin push, NO aplicada a MAIN
+## Demo automática (F14) — 2026-11-08 — APLICADA EN MAIN (`20261108100300`, ventana servidor 2026-11)
 
 - Decisión del propietario (del cliente vía el propietario, 2026-11-08): quien no tiene acceso puede probar siempre ~5 preguntas de cualquier examen publicado sin que Control marque nada.
 - Rama local `f14/auto-demo` (desde develop `04e5eb5e`). Migración pendiente `20261108100300_v1_auto_demo`:

@@ -4,4 +4,4 @@
 # version  blob(git hash-object, 12)  predecesora(debe estar en supabase_migrations antes de aplicar)  clase
 # Cadena: ventana 2026-11 (ops/deploy/v1/main-migrations-2026-11.manifest) -> F20 20261109100000 (main-migrations-2026-11-f20.manifest) -> F30.
 # Si cambia el blob, se rehacen este manifiesto y el ensayo (docs/ledger/2026/11/rehearse-f30-2026-11.sh).
-20261114200000 d5ae900e616e 20261109100000 apply
+20261114200000 f05303781b2b 20261109100000 apply

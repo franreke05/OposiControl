@@ -1487,6 +1487,14 @@ insert into public.preguntas_examen (examen_id, pregunta_id, posicion, numero_en
   ('e5000000-0000-0000-0000-0000000000b1','f5000000-0000-0000-0000-000000000011', 2, 2),
   ('e5000000-0000-0000-0000-0000000000b3','f5000000-0000-0000-0000-000000000010', 1, 1),
   ('e5000000-0000-0000-0000-0000000000b4','f5000000-0000-0000-0000-000000000012', 1, 1);
+-- B1 (review 2026-11-14): saving needs the question REVEALED to the user; the daily limiter served these pages (q03 never: refused below)
+insert into public.preguntas_reveladas_usuario (usuario_id, pregunta_id, revelada_en)
+select 'a0000000-0000-0000-0000-0000000000b1'::uuid, q, now() from unnest(array['f5000000-0000-0000-0000-000000000001', 'f5000000-0000-0000-0000-000000000002',
+  'f5000000-0000-0000-0000-000000000004', 'f5000000-0000-0000-0000-000000000005', 'f5000000-0000-0000-0000-000000000006', 'f5000000-0000-0000-0000-000000000007',
+  'f5000000-0000-0000-0000-000000000008', 'f5000000-0000-0000-0000-000000000009', 'f5000000-0000-0000-0000-000000000010', 'f5000000-0000-0000-0000-000000000011',
+  'f5000000-0000-0000-0000-000000000012']::uuid[]) q
+union all
+select 'a0000000-0000-0000-0000-0000000000b2'::uuid, q, now() from unnest(array['f5000000-0000-0000-0000-000000000001', 'f5000000-0000-0000-0000-000000000010']::uuid[]) q;
 set local session_replication_role = origin;
 
 do $$
@@ -1508,6 +1516,7 @@ begin
   perform pg_temp.expect_e($q$select * from public.app_save_item('a0000000-0000-0000-0000-0000000000b1','pregunta','f5000000-0000-0000-0000-000000000004')$q$, 'NOT_FOUND');
   perform pg_temp.expect_e($q$select * from public.app_save_item('a0000000-0000-0000-0000-0000000000b1','pregunta','f5000000-0000-0000-0000-000000000005')$q$, 'NOT_FOUND');
   perform pg_temp.expect_e($q$select * from public.app_save_item('a0000000-0000-0000-0000-0000000000b1','pregunta','f5000000-0000-0000-0000-0000000000ff')$q$, 'NOT_FOUND');
+  perform pg_temp.expect_e($q$select * from public.app_save_item('a0000000-0000-0000-0000-0000000000b1','pregunta','f5000000-0000-0000-0000-000000000003')$q$, 'NOT_FOUND');  -- B1: accessible but never revealed
   perform pg_temp.expect_e($q$select * from public.app_save_item('a0000000-0000-0000-0000-0000000000b1','recurso','f5000000-0000-0000-0000-000000000001')$q$, 'SAVED_INVALID');
   perform pg_temp.expect_e($q$select * from public.app_save_item('a0000000-0000-0000-0000-0000000000b9','pregunta','f5000000-0000-0000-0000-000000000001')$q$, 'WALLET_INVALID_USER');
   assert (select count(*) from public.recursos_guardados_usuario where usuario_id = u1) = 1, 'refusals wrote nothing';

@@ -5,4 +5,4 @@
 # Cadena: F20 20261109100000 (ops/deploy/v1/main-migrations-2026-11-f20.manifest), ya en MAIN.
 # Si F23 (20261109100100) se aplica antes, la predecesora pasa a 20261109100100 y se rehace el ensayo (docs/ledger/2026/11/rehearse-f20b-2026-11.sh).
 # Si cambia el blob, se rehacen este manifiesto y el ensayo.
-20261109100200 ba0052d49730 20261109100000 apply
+20261109100200 2823abf889be 20261109100000 apply

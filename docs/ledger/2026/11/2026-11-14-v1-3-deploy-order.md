@@ -40,16 +40,16 @@ MANIFEST=ops/deploy/v1/main-migrations-2026-11-v1-3.manifest bash ops/deploy/v1/
 | # | Versión a teclear | Fichero | Funcionalidad | Manifiesto propio (predecesora técnica) | Blob |
 |---|---|---|---|---|---|
 | 1 | `20261109100100` | `20261109100100_v1_practica.sql` | F23 OposiQuizzes (FA47) | `main-migrations-2026-11-f23.manifest` (20261109100000) | `cce505461dbd` |
-| 2 | `20261109100200` | `20261109100200_v1_reto_tres.sql` | F20b reto siempre de 3 (FA48) | `main-migrations-2026-11-f20b.manifest` (20261109100000) | `ba0052d49730` |
-| 3 | `20261111100000` | `20261111100000_v1_demo_aleatoria.sql` | F14b demo aleatoria fija (FA48) | `main-migrations-2026-11-f14b.manifest` (20261109100000) | `21c0123c5b02` |
+| 2 | `20261109100200` | `20261109100200_v1_reto_tres.sql` | F20b reto siempre de 3 (FA55, antes FA48 duplicado) | `main-migrations-2026-11-f20b.manifest` (20261109100000) | `2823abf889be` |
+| 3 | `20261111100000` | `20261111100000_v1_demo_aleatoria.sql` | F14b demo aleatoria fija (FA48) | `main-migrations-2026-11-f14b.manifest` (20261109100000) | `09d756281e34` |
 | 4 | `20261114100000` | `20261114100000_v1_avatar_preset.sql` | F29 avatares predefinidos (FA53) | `main-migrations-2026-11-f29.manifest` (20261109100000) | `26061b231391` |
-| 5 | `20261114200000` | `20261114200000_v1_biblioteca_pregunta.sql` | F30 pregunta guardada (FA50) | `main-migrations-2026-11-f30.manifest` (20261109100000) | `d5ae900e616e` |
+| 5 | `20261114200000` | `20261114200000_v1_biblioteca_pregunta.sql` | F30 pregunta guardada (FA50) | `main-migrations-2026-11-f30.manifest` (20261109100000) | `f05303781b2b` |
 | 6 | `20261114200100` | `20261114200100_v1_practica_examenes.sql` | F23b práctica de exámenes elegidos (FA47b) | `main-migrations-2026-11-f23b.manifest` (20261109100100) | `0a8157b5328f` |
-| 7 | `20261114300000` | `20261114300000_v1_stats_fix.sql` | F27 estadísticas (FA54) | `main-migrations-2026-11-f27.manifest` (20261109100100) | `cdc1901baaa3` |
+| 7 | `20261114300000` | `20261114300000_v1_stats_fix.sql` | F27 estadísticas (FA54) | `main-migrations-2026-11-f27.manifest` (20261109100100) | `5d904c99a3f3` |
 | 8 | `20261114400000` | `20261114400000_v1_servicios_catalogo.sql` | F28 servicios/Market (FA52) | `main-migrations-2026-11-f28.manifest` (20261109100000) | `3628dd8594bb` |
-| 9 | `20261114400100` | `20261114400100_v1_servicios_canje.sql` | F28 canje con OT | `main-migrations-2026-11-f28.manifest` (20261114400000) | `0c3eb01e7251` |
-| 10 | `20261114400200` | `20261114400200_v1_consumibles_efectos.sql` | F28 consumibles en el reto | `main-migrations-2026-11-f28.manifest` (20261114400100) | `a624ab9a49d6` |
-| 11 | `20261114500000` | `20261114500000_v1_ranking_lotes_shape.sql` | forma de lotes del ranking (S3) | `main-migrations-2026-11-lotes.manifest` (20261022101700) | `95d5053b522f` |
+| 9 | `20261114400100` | `20261114400100_v1_servicios_canje.sql` | F28 canje con OT | `main-migrations-2026-11-f28.manifest` (20261114400000) | `ddb751bf0ccc` |
+| 10 | `20261114400200` | `20261114400200_v1_consumibles_efectos.sql` | F28 consumibles en el reto | `main-migrations-2026-11-f28.manifest` (20261114400100) | `3632b58c404f` |
+| 11 | `20261114500000` | `20261114500000_v1_ranking_lotes_shape.sql` | forma de lotes del ranking (S3) | `main-migrations-2026-11-lotes.manifest` (20261022101700) | `7608aa1990e8` |
 
 Por qué este orden: es el orden de versión, el MISMO en que el gate PG17, `backend/dbtest` y el ensayo combinado aplican las migraciones (lo probado). Cumple todas las predecesoras técnicas de los manifiestos por funcionalidad (F23 antes que F23b y F27; F28 en su cadena 400000→400100→400200). Difiere del orden de fusión de ramas (F20b, F14b, F23…) solo en que F23 (`…100100`) va antes que F20b (`…100200`): no comparten objetos (F23 redefine el arranque de intento y la práctica; F20b solo `private.ensure_challenge_row`). Los manifiestos por funcionalidad siguen siendo válidos para aplicar una suelta, pero en esta ventana se usa el consolidado.
 
@@ -82,7 +82,12 @@ Imagen anterior primero; después los bloques ROLLBACK en orden INVERSO (11 → 
 
 Antes, `incluirPreguntas` / `desde` no formaban parte de la huella de `Idempotency-Key`: la misma clave con otra consulta repetia en silencio la primera respuesta. Ahora la pagina pedida, en forma semantica (sin pagina o `incluirPreguntas=false` = arranque normal, huella de siempre; `incluirPreguntas=true` = `desde=1`; `desde=N`), se anade a la huella: misma clave + misma consulta = repeticion (`Idempotent-Replayed: true`, cuerpo guardado, el comando no se ejecuta); misma clave + otra pagina = 422 `IDEMPOTENCY_KEY_REUSED`. Documentado en `attempts.yaml` (solo texto, nota FA51b-idem en el manifiesto de congelado). Prueba: `AttemptRoutesTest.theInlineQueryIsPartOfTheIdempotencyFingerprint`.
 
+## Arreglos de la revision Control (2026-11-14)
+
+Migraciones de la ventana enmendadas EN SU SITIO (ninguna esta en MAIN): F20b, F14b, F30, F27, F28 canje y efectos y lotes; blobs nuevos en la tabla de arriba y en los manifiestos (consolidado y por funcionalidad). Detalle, pruebas y contrato para el cliente: `docs/ledger/2026/11/2026-11-14-v1-3-review-fixes.md`. El orden de despliegue NO cambia.
+
 ## Dudas abiertas
 
+- ~~FA48 duplicado~~ RESUELTO 2026-11-14 (revision Control): F20b pasa a FA55, F14b conserva FA48 (texto original abajo).
 - FA48 duplicado: F20b y F14b registran ambas su enmienda de contrato como FA48 (cada rama eligió el siguiente libre por separado). En `freeze-manifest.sha256` y en los YAML quedan las dos con el mismo número; renumerar una (p. ej. F14b → FA55) en CONTRACT_FREEZE.md (repo OposiBot) y aquí es decisión del propietario.
 - `20261114500000`: confirmar con una lectura de solo catálogo en MAIN la forma real de `lotes_actualizacion_ranking` antes de la ventana (la migración es correcta en las dos formas, pero el hallazgo sale de una captura de octubre).
