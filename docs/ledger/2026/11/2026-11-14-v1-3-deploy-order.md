@@ -43,19 +43,21 @@ MANIFEST=ops/deploy/v1/main-migrations-2026-11-v1-3.manifest bash ops/deploy/v1/
 | 2 | `20261109100200` | `20261109100200_v1_reto_tres.sql` | F20b reto siempre de 3 (FA55, antes FA48 duplicado) | `main-migrations-2026-11-f20b.manifest` (20261109100000) | `2823abf889be` |
 | 3 | `20261111100000` | `20261111100000_v1_demo_aleatoria.sql` | F14b demo aleatoria fija (FA48) | `main-migrations-2026-11-f14b.manifest` (20261109100000) | `09d756281e34` |
 | 4 | `20261114100000` | `20261114100000_v1_avatar_preset.sql` | F29 avatares predefinidos (FA53) | `main-migrations-2026-11-f29.manifest` (20261109100000) | `26061b231391` |
-| 5 | `20261114200000` | `20261114200000_v1_biblioteca_pregunta.sql` | F30 pregunta guardada (FA50) | `main-migrations-2026-11-f30.manifest` (20261109100000) | `f05303781b2b` |
+| 5 | `20261114200000` | `20261114200000_v1_biblioteca_pregunta.sql` | F30 pregunta guardada (FA50) | `main-migrations-2026-11-f30.manifest` (20261109100000) | `48aa8ad701b1` |
 | 6 | `20261114200100` | `20261114200100_v1_practica_examenes.sql` | F23b práctica de exámenes elegidos (FA47b) | `main-migrations-2026-11-f23b.manifest` (20261109100100) | `0a8157b5328f` |
-| 7 | `20261114300000` | `20261114300000_v1_stats_fix.sql` | F27 estadísticas (FA54) | `main-migrations-2026-11-f27.manifest` (20261109100100) | `5d904c99a3f3` |
+| 7 | `20261114300000` | `20261114300000_v1_stats_fix.sql` | F27 estadísticas (FA54) | `main-migrations-2026-11-f27.manifest` (20261109100100) | `7d5297d96bee` |
 | 8 | `20261114400000` | `20261114400000_v1_servicios_catalogo.sql` | F28 servicios/Market (FA52) | `main-migrations-2026-11-f28.manifest` (20261109100000) | `3628dd8594bb` |
 | 9 | `20261114400100` | `20261114400100_v1_servicios_canje.sql` | F28 canje con OT | `main-migrations-2026-11-f28.manifest` (20261114400000) | `ddb751bf0ccc` |
-| 10 | `20261114400200` | `20261114400200_v1_consumibles_efectos.sql` | F28 consumibles en el reto | `main-migrations-2026-11-f28.manifest` (20261114400100) | `d50853b0a4ac` |
+| 10 | `20261114400200` | `20261114400200_v1_consumibles_efectos.sql` | F28 consumibles en el reto | `main-migrations-2026-11-f28.manifest` (20261114400100) | `df8853840a6c` |
 | 11 | `20261114500000` | `20261114500000_v1_ranking_lotes_shape.sql` | forma de lotes del ranking (S3) | `main-migrations-2026-11-lotes.manifest` (20261022101700) | `7608aa1990e8` |
 
 Por qué este orden: es el orden de versión, el MISMO en que el gate PG17, `backend/dbtest` y el ensayo combinado aplican las migraciones (lo probado). Cumple todas las predecesoras técnicas de los manifiestos por funcionalidad (F23 antes que F23b y F27; F28 en su cadena 400000→400100→400200). Difiere del orden de fusión de ramas (F20b, F14b, F23…) solo en que F23 (`…100100`) va antes que F20b (`…100200`): no comparten objetos (F23 redefine el arranque de intento y la práctica; F20b solo `private.ensure_challenge_row`). Los manifiestos por funcionalidad siguen siendo válidos para aplicar una suelta, pero en esta ventana se usa el consolidado.
 
 Compatibilidad durante la ventana (imagen vieja + base nueva): según cada acta, la imagen de hoy sigue funcionando con cada migración aplicada (F28: la respuesta del reto con 4 argumentos con nombre encaja con la de 5, cuyo 5º tiene default; F29: la imagen actual ignora `avatar_id`; F27, F20b, F14b, lotes: solo base). Efectos visibles ya con la imagen vieja: F20b (reto de 3), F14b (demo aleatoria fija), F27 (relleno de estadísticas y nota media penalizada), lotes (los trabajos de dificultad y ranking empiezan a funcionar en la siguiente vuelta del job).
 
-Sobrecarga del reto (aviso S4): tras la ventana existe exactamente UNA `public.app_answer_daily_challenge`, la de 5 argumentos `(uuid, uuid, uuid, uuid, boolean)`; 400200 hace `drop function if exists ...(uuid, uuid, uuid, uuid)` antes de crearla y ninguna migración posterior la redefine. Comprobado en el ensayo combinado (sonda DESPUÉS). Cualquier `create or replace` futuro debe usar la firma de 5.
+Sobrecarga del reto (aviso S4, revisado 2026-11-14): tras la ventana existe exactamente UNA `public.app_answer_daily_challenge`, la de 6 argumentos `(uuid, uuid, uuid, uuid, boolean, boolean)` (`p_usar_oportunidad` default NULL, `p_admite_oportunidad` default false); 400200 hace `drop function if exists ...(uuid, uuid, uuid, uuid)` antes de crearla, termina con `notify pgrst, 'reload schema'` y ninguna migración posterior la redefine. Cualquier `create or replace` futuro debe usar la firma de 6.
+
+Imagen vieja (`0bb7efe02086`) conviviendo con las migraciones: llama con 4 argumentos con nombre, así que `p_usar_oportunidad` = NULL y `p_admite_oportunidad` = false; la base trata ese caso como `false` (decisión del revisor: NULL = false sin declaración de soporte): una respuesta fallida de un usuario con doble/triple oportunidad NUNCA queda retenida con la imagen vieja (sale corregida y definitiva, sin gastar el uso). Probado en dbtest (`aCallerThatDoesNotDeclareSupportIsNeverHeld`).
 
 ### 2. Imagen Ktor nueva — UNA, después de las 11
 
