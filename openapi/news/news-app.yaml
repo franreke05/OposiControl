@@ -14,8 +14,8 @@ components:
         x-roles: [USER]
         x-pagination: CURSOR
         x-idempotency: NONE
-        x-error-codes: [VALIDATION, INVALID_CURSOR, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, UPSTREAM_ERROR, UPSTREAM_CONTRACT_ERROR, UPSTREAM_UNAVAILABLE]
-        description: 'News of the main specialty of the user; a user without a specialty gets the visible news of every specialty. Newest first: keyset (fecha desc, id desc). Visible = the news type (tipo_noticia) is active and either estado published with publicar_desde null or past (fecha = published_at; same rule as the RLS policy noticia_select_publico), or estado scheduled whose publicar_desde has passed: there is no publishing job, so a due scheduled article is served exactly as a published one, with fecha = publicar_desde (the moment it became public). Future scheduled, draft and archived articles are never returned. No texto (body) in the list: only resumen. Image URLs are public object URLs of news-assets (they do not expire). Cache private, no-store.'
+        x-error-codes: [VALIDATION, INVALID_CURSOR, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_ERROR, UPSTREAM_CONTRACT_ERROR, UPSTREAM_UNAVAILABLE]
+        description: 'News of the main specialty of the user; a user without a specialty gets the visible news of every specialty. Newest first: keyset (fecha desc, id desc). Visible = the news type (tipo_noticia) is active and either estado published with publicar_desde null or past (fecha = published_at; same rule as the RLS policy noticia_select_publico), or estado scheduled whose publicar_desde has passed: there is no publishing job, so a due scheduled article is served exactly as a published one, with fecha = publicar_desde (the moment it became public). Future scheduled, draft and archived articles are never returned. No texto (body) in the list: only resumen. Image URLs are public object URLs of news-assets (they do not expire). Cache private, no-store. Per-user read limit (CATALOG_READ, FA49b): 429 RATE_LIMITED.'
         security:
           - bearerAuth: []
         parameters:
@@ -46,6 +46,8 @@ components:
             $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
           '403':
             $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
           '502':
             $ref: '../common/errors.yaml#/components/responses/UpstreamError'
           '503':
@@ -63,8 +65,8 @@ components:
         x-roles: [USER]
         x-pagination: NONE
         x-idempotency: NONE
-        x-error-codes: [VALIDATION, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, NEWS_NOT_FOUND, UPSTREAM_ERROR, UPSTREAM_CONTRACT_ERROR, UPSTREAM_UNAVAILABLE]
-        description: 'Same visibility rule as D4-18 (a user without a specialty can open any visible article); texto is always present (empty string when the article has none). An article of another specialty than the user one, not yet visible, archived, a draft or of an inactive news type is 404 NEWS_NOT_FOUND. Cache private, no-store.'
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, NEWS_NOT_FOUND, RATE_LIMITED, UPSTREAM_ERROR, UPSTREAM_CONTRACT_ERROR, UPSTREAM_UNAVAILABLE]
+        description: 'Same visibility rule as D4-18 (a user without a specialty can open any visible article); texto is always present (empty string when the article has none). An article of another specialty than the user one, not yet visible, archived, a draft or of an inactive news type is 404 NEWS_NOT_FOUND. Cache private, no-store. Per-user read limit (CATALOG_READ, FA49b): 429 RATE_LIMITED.'
         security:
           - bearerAuth: []
         responses:
@@ -87,6 +89,8 @@ components:
           '404':
             $ref: '../common/errors.yaml#/components/responses/NotFound'
             description: 'NEWS_NOT_FOUND.'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
           '502':
             $ref: '../common/errors.yaml#/components/responses/UpstreamError'
           '503':

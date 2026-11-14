@@ -128,7 +128,7 @@ class ChallengeRoutesTest {
         assertFalse(q.containsKey("_recursos") || q.containsKey("recursos"), q.toString())
     }
 
-    /** F20b / FA48: the reto is filled to 3 from the eligible questions, so a tipoSlot can repeat. Ktor keeps every question and its order. */
+    /** F20b / FA55: the reto is filled to 3 from the eligible questions, so a tipoSlot can repeat. Ktor keeps every question and its order. */
     @Test
     fun aFilledChallengeWithARepeatedSlotKeepsEveryQuestion() = testApplication {
         application { challengeModule() }

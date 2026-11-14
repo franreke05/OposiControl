@@ -44,14 +44,27 @@ import java.time.OffsetDateTime
 internal class AppNewsRuntime(
     val resolver: CanonicalIdentityResolver,
     val service: AppNewsService,
+    /** Limite por usuario CATALOG_READ (revision 2026-11-14), antes de leer nada. Por defecto no limita (pruebas). */
+    val limit: suspend (CanonicalUserId) -> Unit = { },
 ) {
     companion object {
-        fun fromEnvironment(resolver: CanonicalIdentityResolver, environment: (String) -> String? = System::getenv): AppNewsRuntime? {
+        fun fromEnvironment(
+            resolver: CanonicalIdentityResolver,
+            auth: OposiBotsAuthRuntime? = null,
+            environment: (String) -> String? = System::getenv,
+        ): AppNewsRuntime? {
             val transport = SupabaseRequestTransport.fromEnvironment(environment) ?: return null
             val bucket = environment("SUPABASE_BUCKET_NEWS_ASSETS").orEmpty().ifBlank { NEWS_ASSETS_BUCKET }
+            val limiter = auth?.rateLimiter
             return AppNewsRuntime(
                 resolver,
                 AppNewsService(AppNewsGateway(upstream = { path -> transport.get(path) }), publicUrl = { path -> transport.storagePublicUrl(bucket, path) }),
+                limit = { userId ->
+                    if (limiter != null) {
+                        val decision = limiter.checkSubject(OposiBotsAuthOperation.CATALOG_READ, userId.value)
+                        if (!decision.allowed) throw CanonicalErrorCode.RATE_LIMITED.exception(retryAfterSeconds = decision.retryAfterSeconds.coerceIn(1, 3_600).toInt())
+                    }
+                },
             )
         }
     }
@@ -61,7 +74,7 @@ internal fun Route.appNewsRoutes(runtime: AppNewsRuntime?) {
     route("/api/v1/app/noticias") {
         get {
             val rt = runtime ?: throw CanonicalErrorCode.INTERNAL.exception()
-            val identity = rt.resolver.activeIdentity(call)
+            val identity = rt.resolver.activeIdentity(call) { userId -> rt.limit(userId) }
             val page = parseAppNewsQuery(call.request.queryParameters)
             val result = rt.service.list(identity.userId, page)
             call.response.header(HttpHeaders.CacheControl, "private, no-store")
@@ -69,7 +82,7 @@ internal fun Route.appNewsRoutes(runtime: AppNewsRuntime?) {
         }
         get("/{noticiaId}") {
             val rt = runtime ?: throw CanonicalErrorCode.INTERNAL.exception()
-            val identity = rt.resolver.activeIdentity(call)
+            val identity = rt.resolver.activeIdentity(call) { userId -> rt.limit(userId) }
             val id = call.parameters["noticiaId"].orEmpty().trim()
             if (!id.isUuid()) throw validationError(ErrorIssue("noticiaId", CanonicalIssue.INVALID_FORMAT))
             val noticia = rt.service.detail(identity.userId, id.lowercase())

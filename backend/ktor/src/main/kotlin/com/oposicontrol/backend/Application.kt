@@ -642,7 +642,7 @@ fun Application.module() {
         catalogRuntime = catalogRuntime,
         walletRuntime = walletRuntime,
         appReadsRuntime = appReadsRuntime,
-        appNewsRuntime = canonicalIdentityResolver?.let { AppNewsRuntime.fromEnvironment(it) },
+        appNewsRuntime = canonicalIdentityResolver?.let { AppNewsRuntime.fromEnvironment(it, authRuntime) },
         newsRuntime = newsRuntime,
         // Solicitudes de acceso de administrador: la solicitud publica vive en `bot` y la revision en `control`.
         accessRequestGateway = SupabaseAdminAccessRequestGateway.fromEnvironment(json),

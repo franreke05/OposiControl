@@ -123,6 +123,9 @@ class AppNewsRoutesTest {
 
     private val upstream = Upstream()
 
+    private val limitedUsers = mutableListOf<String>()
+    private var rateLimited = false
+
     private fun Application.newsModule() {
         install(ContentNegotiation) { json(testJson) }
         installRequestCorrelation()
@@ -137,7 +140,14 @@ class AppNewsRoutesTest {
             publicUrl = { path -> transport.storagePublicUrl(NEWS_ASSETS_BUCKET, path) },
             clock = { now },
         )
-        routing { appNewsRoutes(AppNewsRuntime(resolver, service)) }
+        routing {
+            appNewsRoutes(
+                AppNewsRuntime(resolver, service, limit = { userId ->
+                    limitedUsers += userId.value
+                    if (rateLimited) throw CanonicalErrorCode.RATE_LIMITED.exception(retryAfterSeconds = 7)
+                }),
+            )
+        }
     }
 
     private suspend fun HttpClient.getAs(path: String, token: String? = TEST_TOKEN): HttpResponse =
@@ -225,6 +235,23 @@ class AppNewsRoutesTest {
         upstream.urls.filter { it.contains("/rest/v1/perfiles_usuario") }.forEach { assertTrue(it.contains("usuario_id=eq.$TEST_UID"), it) }
         upstream.urls.forEach { assertFalse(it.contains("evil.example"), "una URL ajena no se firma: $it") }
         assertReadOnly()
+    }
+
+    @Test
+    fun bothRoutesAreRateLimitedPerUserBeforeReadingAnything() = testApplication {
+        application { newsModule() }
+        seed()
+        val client = createClient { }
+        assertEquals(HttpStatusCode.OK, client.getAs("/api/v1/app/noticias").status)
+        assertEquals(HttpStatusCode.OK, client.getAs("/api/v1/app/noticias/${uuid(1)}").status)
+        assertEquals(2, limitedUsers.size, "CATALOG_READ checked once per call")
+        rateLimited = true
+        upstream.sent.clear()
+        val list = client.getAs("/api/v1/app/noticias")
+        assertEquals(HttpStatusCode.TooManyRequests, list.status)
+        assertEquals("RATE_LIMITED", code(list.bodyAsText()))
+        assertEquals(HttpStatusCode.TooManyRequests, client.getAs("/api/v1/app/noticias/${uuid(1)}").status)
+        assertTrue(upstream.sent.none { it.uri().toString().contains("/rest/v1/noticia?") }, "no news read when limited")
     }
 
     @Test
