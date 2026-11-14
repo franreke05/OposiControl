@@ -37,7 +37,8 @@
 -- BACKFILL (in this transaction; idempotent; design in docs/ledger/2026/11/2026-11-14-f27-stats-fix.md):
 --   0. intentos_examen.cuenta_para_ranking = true on V1 first real attempts of an exam (es_primer_intento_examen, not demo, frozen rule), actualizado_en untouched.
 --   1. counted ledger, ADDED rows only (existing rows and counters are never lowered, so pre-V1 counters survive): for each (user, question) not yet in the ledger, the earliest of
---      (i) a real exam first answer that C-W3-3 skipped (es_primer_intento_pregunta and the user had answered the question in a demo or practice), (ii) a practice answer,
+--      (i) a real V1 exam first answer that C-W3-3 skipped (es_primer_intento_pregunta, frozen rule regla_anuladas not null = stats era like step 2, and the user had answered the
+--      question in a demo or practice; a legacy answer was already in the pre-V1 counters, so it is never added twice), (ii) a practice answer,
 --      (iii) a daily challenge answer; the counters (estadisticas_usuario, estadisticas_usuario_etiqueta) get the same deltas the hook would have applied.
 --   2. ranking ledger, BUILT from respuestas_intento: per (user, question) the earliest answer of an attempt with cuenta_para_ranking, not demo, origen examen and a frozen rule
 --      (regla_anuladas not null = V1 attempt, i.e. the stats era; legacy attempts never entered the Nota media), not annulled; time = the counted ledger time when it exists.
@@ -550,6 +551,9 @@
 begin;
 
 set local lock_timeout = '5s';
+
+-- C1 (review 2026-11-14): no answer may land between the backfill reads and the trigger/hook swap (it would be counted twice or never).
+lock table public.respuestas_intento, public.respuestas_reto_diario, public.primeras_respuestas_usuario in share row exclusive mode;
 
 -- PREFLIGHT (fail closed)
 do $$
@@ -1235,7 +1239,7 @@ select distinct on (c.usuario_id, c.pregunta_id) c.usuario_id, c.pregunta_id, c.
          where ri.opcion_seleccionada_id is not null and ri.es_correcta is not null
            and not private.intento_pregunta_anulada(ri.intento_id, ie.examen_id, ri.pregunta_id)
            and (ie.es_practica
-                or (not ie.es_demo and ri.es_primer_intento_pregunta
+                or (not ie.es_demo and ri.es_primer_intento_pregunta and ie.regla_anuladas is not null
                     and exists (select 1 from public.respuestas_intento d join public.intentos_examen de on de.id = d.intento_id and de.es_demo
                                  where d.usuario_id = ri.usuario_id and d.pregunta_id = ri.pregunta_id and d.opcion_seleccionada_id is not null)))
         union all

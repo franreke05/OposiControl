@@ -178,6 +178,13 @@ class V1StatsFixMigrationTest {
         val reto = c.unico("select ('${t.replace("'", "''")}'::jsonb) ->> 'retoId'")!!
         val rq = c.unico("select ('${t.replace("'", "''")}'::jsonb) #>> '{preguntas,0,preguntaId}'")!!
         c.ejecutar("select public.app_answer_daily_challenge('$u2', '$reto', '$rq', '${opt(rq.takeLast(2).toInt(), 2)}')")
+        // C1: the same burned pattern in a LEGACY attempt (no frozen rule = pre-stats era) is never added by the backfill (its answer belongs to the pre-V1 counters)
+        val fd = c.start(fresh, locked, "DEMO")
+        c.answer(fresh, fd, 12, true)
+        c.ejecutar("insert into public.contenido_desbloqueado_usuario (usuario_id, examen_id, motivo, valido_desde, valido_hasta) values ('$fresh', '$locked', 'admin', now() - interval '1 hour', now() + interval '5 days')")
+        val legacy = c.start(fresh, locked)
+        c.answer(fresh, legacy, 12, true)
+        c.ejecutar("begin; set local session_replication_role = replica; update public.intentos_examen set regla_anuladas = null where id = '$legacy'; commit;")
         assertEquals("false", c.unico("select bool_or(cuenta_para_ranking)::text from public.intentos_examen"), "before: no attempt ever counted for ranking")
         assertEquals("3|1|0|7.50|4", c.summary(u), "before: q11 burned, nota 3 of 4 without penalty")
         val u2Before = c.summary(u2)
@@ -192,6 +199,7 @@ class V1StatsFixMigrationTest {
         assertEquals(if (rq.takeLast(2).toInt() == pn) listOf("1", "0") else listOf("1", "1"), u2After.take(2), u2After.toString())
         assertEquals(listOf("null", "0"), u2After.takeLast(2))
         assertEquals("1", c.unico("select count(*)::text from public.estadisticas_usuario where usuario_id = '$u2'"), "u2 now has a counters row")
+        assertEquals("0", c.unico("select count(*)::text from public.primeras_respuestas_usuario where usuario_id = '$fresh' and pregunta_id = '${q(12)}'"), "legacy era answer: not added (C1)")
         // VERIFY = 0 on the backfilled data; applying again changes nothing (idempotent)
         assertEquals(emptyList(), c.filas(Slice0Db.verifyDe(path)).filter { it[1] != "0" })
         c.ejecutar(Slice0Db.leer(path))
