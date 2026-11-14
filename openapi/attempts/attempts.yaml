@@ -17,12 +17,26 @@ components:
         x-pagination: NONE
         x-idempotency: REQUIRED
         x-error-codes: [VALIDATION, IDEMPOTENCY_KEY_REQUIRED, IDEMPOTENCY_KEY_INVALID, UNAUTHENTICATED, EXAM_LOCKED, SPECIALTY_TYPE_NOT_ALLOWED, EXAM_NOT_FOUND, EXAM_EMPTY, IDEMPOTENCY_KEY_IN_PROGRESS, IDEMPOTENCY_KEY_REUSED, RATE_LIMITED]
-        description: 'FA28 (V1 demo): modo DEMO is LIVE. With modo DEMO the server creates an attempt that contains ONLY the effective demo set of the exam (FA44, owner 2026-11-08: the questions Control flagged as demo when that set is complete, otherwise automatically the first N main questions (not reserves) by position that are not annulled and whose question is active, N = server setting demo_preguntas, 5 by default; fewer than N such questions = no demo; every published exam offers it by default unless Control opts the exam out; always the same set, frozen at start; esDemo true on the attempt): nothing beyond them is ever served, a demo never counts for Nota media, ranking, streak, quota, purchases or the first answer, and it needs the DEMO access state (exam with demo available, capability on, same specialty gate; otherwise the usual EXAM_LOCKED / EXAM_NOT_FOUND / SPECIALTY_TYPE_NOT_ALLOWED). A user who already has access and sends DEMO gets a normal attempt. Starts of demo attempts are limited per user and per IP (429 RATE_LIMITED). Original text follows. One transaction: lazy deadline check, CheckExamAccess, partial unique index (usuario_id, examen_id) WHERE estado=en_progreso plus INSERT ON CONFLICT, then preguntas_intento is frozen. Concurrent or new-key calls converge on the single open attempt (200, reanudado=true). A prior finalizado or abandonado attempt means a new attempt (retake). usuario_id is never accepted from the client. The attempt is tied to the exam and to that exam specialty (returned as intento.especialidadId), never to the user current specialty (DEC-002). DEMO semantics are an open exam_engine question.'
+        description: 'FA28 (V1 demo): modo DEMO is LIVE. With modo DEMO the server creates an attempt that contains ONLY the effective demo set of the exam (FA44, owner 2026-11-08: the questions Control flagged as demo when that set is complete, otherwise automatically the first N main questions (not reserves) by position that are not annulled and whose question is active, N = server setting demo_preguntas, 5 by default; fewer than N such questions = no demo; every published exam offers it by default unless Control opts the exam out; always the same set, frozen at start; esDemo true on the attempt): nothing beyond them is ever served, a demo never counts for Nota media, ranking, streak, quota, purchases or the first answer, and it needs the DEMO access state (exam with demo available, capability on, same specialty gate; otherwise the usual EXAM_LOCKED / EXAM_NOT_FOUND / SPECIALTY_TYPE_NOT_ALLOWED). A user who already has access and sends DEMO gets a normal attempt. Starts of demo attempts are limited per user and per IP (429 RATE_LIMITED). Original text follows. One transaction: lazy deadline check, CheckExamAccess, partial unique index (usuario_id, examen_id) WHERE estado=en_progreso plus INSERT ON CONFLICT, then preguntas_intento is frozen. Concurrent or new-key calls converge on the single open attempt (200, reanudado=true). A prior finalizado or abandonado attempt means a new attempt (retake). usuario_id is never accepted from the client. The attempt is tied to the exam and to that exam specialty (returned as intento.especialidadId), never to the user current specialty (DEC-002). DEMO semantics are an open exam_engine question. FA51b (2026-11-14, additive): with incluirPreguntas=true or desde=N the 200/201 body also carries preguntas, the D2-08 page for that position, with the D2-08 daily-limit semantics; without them the body is unchanged.'
         security:
           - bearerAuth: []
         parameters:
           - $ref: '../common/identifiers.yaml#/components/parameters/ExamIdPath'
           - $ref: '../common/idempotency.yaml#/components/parameters/IdempotencyKeyRequired'
+          - name: incluirPreguntas
+            in: query
+            required: false
+            description: 'FA51b (additive): true = the response also carries preguntas, the first D2-08 page (default size 10) of the started or resumed attempt, so a new attempt costs ONE request. Not true or false = 400 VALIDATION (field incluirPreguntas).'
+            schema:
+              type: boolean
+          - name: desde
+            in: query
+            required: false
+            description: 'FA51b (additive): like incluirPreguntas but the inline page starts at this 1-based posicion (D2-08 desde semantics: 1..200, beyond the last = empty page); implies incluirPreguntas. Invalid = 400 VALIDATION (field desde) before any attempt is created.'
+            schema:
+              type: integer
+              minimum: 1
+              maximum: 200
         requestBody:
           required: false
           content:
@@ -637,6 +651,17 @@ components:
           $ref: '#/components/schemas/Attempt'
         reanudado:
           type: boolean
+        preguntas:
+          description: 'FA51b (additive): present only when D2-03 was called with incluirPreguntas=true or desde=N: EXACTLY the page D2-08 returns for that position (items + nextCursor; continue with D2-08 and that cursor). Same daily-limit semantics as calling D2-08: only the questions of this page are revealed and counted. Absent when not asked for, or when that page cannot be served (for example DAILY_LIMIT_REACHED): the start itself never fails because of it; the client then calls D2-08, which answers the error.'
+          allOf:
+            - $ref: '../common/pagination.yaml#/components/schemas/CursorPageEnvelope'
+            - type: object
+              required: [items]
+              properties:
+                items:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/AttemptQuestion'
     DailyChallengeView:
       type: object
       required: []

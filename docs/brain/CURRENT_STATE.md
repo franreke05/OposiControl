@@ -2,7 +2,7 @@
 
 ## Biblioteca: pregunta guardada (F30, FA50) y `desde` en D2-08 (FA51) — 2026-11-14 (rama local `f30/biblioteca-desde` desde develop `08ea7f0f`, sin push) — `CURRENT_IMPLEMENTATION`, NO aplicada a MAIN
 
-- D4-27 `GET /api/v1/app/opositeca/guardados/pregunta/{preguntaId}` (ReviewItem + examenId/examenTitulo/tipoExamen/anulada, sin cupo) y D4-28 `.../recursos/{recursoId}` (URL firmada); `pregunta.tipoExamen` en D4-24. D2-08 acepta `desde` (posicion 1-based, excluyente con cursor; mismo cupo).
+- D4-27 `GET /api/v1/app/opositeca/guardados/pregunta/{preguntaId}` (ReviewItem + examenId/examenTitulo/tipoExamen/anulada, sin cupo) y D4-28 `.../recursos/{recursoId}` (URL firmada); `pregunta.tipoExamen` en D4-24. D2-08 acepta `desde` (posicion 1-based, excluyente con cursor; mismo cupo). FA51b: D2-03 con `incluirPreguntas=true` o `desde=N` devuelve `preguntas` (la pagina de D2-08) en linea.
 - Migracion PENDIENTE `20261114200000_v1_biblioteca_pregunta` (predecesora F20). Manifiesto `ops/deploy/v1/main-migrations-2026-11-f30.manifest`; ensayo `docs/ledger/2026/11/rehearse-f30-2026-11.sh`; acta `docs/ledger/2026/11/2026-11-14-f30-biblioteca-desde.md`. NECESITA imagen nueva, ORDEN migracion -> imagen.
 
 ## Reto diario por tipo de examen (F20) — 2026-11-09 (rama local `f20/reto-per-type` desde develop `920fa29b`, sin push) — `CURRENT_IMPLEMENTATION`, NO aplicada a MAIN

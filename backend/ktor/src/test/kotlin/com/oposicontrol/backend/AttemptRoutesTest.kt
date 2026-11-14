@@ -622,6 +622,75 @@ class AttemptRoutesTest {
         assertFalse(upstream.urls.any { "primera_opcion_id" in it || "tiempo_respuesta" in it }, upstream.urls.toString())
     }
 
+    // =================================================================== D2-03 primera pagina en linea (FA51b)
+
+    private fun pagedQuestions(total: Int): (String) -> String = { uri ->
+        val after = Regex("posicion=gt\\.(\\d+)").find(uri)!!.groupValues[1].toInt()
+        val limit = Regex("limit=(\\d+)").find(uri)!!.groupValues[1].toInt()
+        "[" + (1..total).filter { it > after }.take(limit).joinToString(",") { questionRow(it) } + "]"
+    }
+
+    @Test
+    fun startWithIncluirPreguntasCarriesTheFirstD208PageAndRevealsOnlyIt() = testApplication {
+        application { attemptModule() }
+        upstream.examById = examRow()
+        upstream.attemptRow = attemptRow(respondidas = 0)
+        upstream.questionPage = pagedQuestions(9)
+        val response = client.call(HttpMethod.Post, "$start?incluirPreguntas=true", key = key1)
+        val body = response.bodyAsText()
+        assertEquals(HttpStatusCode.Created, response.status, body)
+        assertConforms("D2-03", "201", body)
+        val page = obj(body)["preguntas"]!!.jsonObject
+        assertEquals((1..9).toList(), page["items"]!!.jsonArray.map { it.jsonObject["posicion"]!!.jsonPrimitive.int }, "the D2-08 default page (10) of a 9-question attempt")
+        assertNull(page["nextCursor"])
+        assertEquals((1..9).map { q(it) }, upstream.rpcBodies("app_reveal_attempt_questions").single()["p_preguntas"]!!.jsonArray.map { it.jsonPrimitive.content })
+        // the inline page IS the D2-08 page: same items, and its cursor continues on D2-08
+        val viaD208 = client.call(HttpMethod.Get, "$base/preguntas").bodyAsText()
+        assertEquals(obj(viaD208)["items"], page["items"])
+        // without the flag (or with false) the body is unchanged
+        val plain = client.call(HttpMethod.Post, "$start?incluirPreguntas=false", key = key2)
+        assertNull(obj(plain.bodyAsText())["preguntas"])
+    }
+
+    @Test
+    fun startWithDesdeResumesAtThatPositionAndALimitErrorNeverFailsTheStart() = testApplication {
+        application { attemptModule() }
+        upstream.examById = examRow()
+        upstream.startOutcome = """{"outcome":"RESUMED","intento_id":"$attempt"}"""
+        upstream.attemptRow = attemptRow(respondidas = 0)
+        upstream.questionPage = pagedQuestions(9)
+        val resumed = client.call(HttpMethod.Post, "$start?desde=8", key = key1)
+        val body = resumed.bodyAsText()
+        assertEquals(HttpStatusCode.OK, resumed.status, body)
+        assertConforms("D2-03", "200", body)
+        assertEquals("true", obj(body)["reanudado"]!!.jsonPrimitive.content)
+        val page = obj(body)["preguntas"]!!.jsonObject
+        assertEquals(listOf(8, 9), page["items"]!!.jsonArray.map { it.jsonObject["posicion"]!!.jsonPrimitive.int })
+        assertNull(page["nextCursor"])
+        // the page would exceed the daily limit: the start answers without preguntas (D2-08 then gives the 429 with Retry-After)
+        upstream.revealOutcome = """{"outcome":"DAILY_LIMIT_REACHED","retry_after_seconds":60}"""
+        val blocked = client.call(HttpMethod.Post, "$start?incluirPreguntas=true", key = key2)
+        assertEquals(HttpStatusCode.OK, blocked.status, blocked.bodyAsText())
+        assertNull(obj(blocked.bodyAsText())["preguntas"])
+        assertEquals(HttpStatusCode.TooManyRequests, client.call(HttpMethod.Get, "$base/preguntas").status)
+    }
+
+    @Test
+    fun startRejectsABadInlineRequestBeforeCreatingAnything() = testApplication {
+        application { attemptModule() }
+        upstream.examById = examRow()
+        upstream.attemptRow = attemptRow(respondidas = 0)
+        for ((i, pair) in listOf("incluirPreguntas=si" to "incluirPreguntas", "desde=0" to "desde", "desde=abc" to "desde").withIndex()) {
+            val (query, field) = pair
+            val r = client.call(HttpMethod.Post, "$start?$query", key = "0a0a0a0a-0000-4000-8000-00000000020$i")
+            val body = r.bodyAsText()
+            assertEquals(HttpStatusCode.BadRequest, r.status, "$query -> $body")
+            assertEquals("VALIDATION", code(body))
+            assertEquals(field, obj(body)["details"]!!.jsonObject["issues"]!!.jsonArray.single().jsonObject["field"]!!.jsonPrimitive.content)
+        }
+        assertEquals(0, upstream.rpcBodies("app_start_exam_attempt").size, "no attempt is created")
+    }
+
     // =================================================================== D2-08 desde (FA51)
 
     @Test

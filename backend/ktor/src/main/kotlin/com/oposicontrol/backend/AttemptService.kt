@@ -105,7 +105,12 @@ internal data class AttemptGridItem(
 internal data class AttemptView(val intento: AttemptDto, val grid: List<AttemptGridItem>)
 
 @Serializable
-internal data class AttemptStartResponse(val intento: AttemptDto, val reanudado: Boolean)
+internal data class AttemptStartResponse(
+    val intento: AttemptDto,
+    val reanudado: Boolean,
+    /** FA51b: la primera pagina de D2-08 en linea (`incluirPreguntas=true` o `desde=N`); ausente si no se pidio o si esa pagina no se pudo servir (p. ej. DAILY_LIMIT_REACHED). */
+    val preguntas: AttemptQuestionPage? = null,
+)
 
 @Serializable
 internal data class QuestionOptionDto(val id: String, val letra: String, val texto: String)
@@ -354,6 +359,31 @@ internal fun parseQuestionsFrom(params: Parameters): Int? {
     throw validationError(ErrorIssue("desde", issue))
 }
 
+/** FA51b: la pagina de D2-08 que D2-03 devuelve en linea: [from] `null` = desde la primera. */
+internal data class InlineQuestionsRequest(val page: CursorPageRequest, val from: Int?)
+
+/**
+ * FA51b (D2-03): `incluirPreguntas=true` (pagina 1) o `desde=N` (pagina desde N; implica incluir) piden la primera pagina de D2-08 en la respuesta del arranque,
+ * con el tamano por defecto de D2-08 (10). Sin ninguno de los dos = `null` (respuesta de siempre). `incluirPreguntas` distinto de true/false, `desde`
+ * invalido = 400 VALIDATION ANTES de crear el intento.
+ */
+internal fun parseInlineQuestions(params: Parameters): InlineQuestionsRequest? {
+    val include = params.getAll("incluirPreguntas")?.let { values ->
+        when (values.singleOrNull()?.trim()?.lowercase()) {
+            "true" -> true
+            "false" -> false
+            else -> throw validationError(ErrorIssue("incluirPreguntas", CanonicalIssue.INVALID_FORMAT))
+        }
+    }
+    val from = parseQuestionsFrom(params)
+    if (include != true && from == null) {
+        return null
+    }
+    if (!params["cursor"].isNullOrEmpty()) throw validationError(ErrorIssue("cursor", CanonicalIssue.UNKNOWN_FIELD))
+    // Pagina por defecto de D2-08 (10): el contrato de D2-03 no lleva parametros de paginacion; el nextCursor devuelto sigue en D2-08.
+    return InlineQuestionsRequest(parseAttemptPage(Parameters.Empty, AttemptService.QUESTIONS_DEFAULT_LIMIT, AttemptService.QUESTIONS_MAX_LIMIT, "preguntas"), from)
+}
+
 /** FA51: `desde` y `cursor` son excluyentes. */
 internal const val ISSUE_DESDE_WITH_CURSOR = "MUTUALLY_EXCLUSIVE"
 
@@ -512,6 +542,21 @@ internal class AttemptService(
             },
             nextCursor = cut.nextCursor,
         )
+    }
+
+    // ----- D2-03 + FA51b -----
+    /**
+     * La respuesta del arranque con la primera pagina de D2-08 en linea: es EXACTAMENTE [questions] (misma lectura, mismo registro en el limitador diario: solo
+     * se revelan las preguntas de esa pagina). Si esa pagina no se puede servir con un error de dominio (p. ej. 429 DAILY_LIMIT_REACHED), el arranque NO falla:
+     * `preguntas` queda ausente y el cliente pide D2-08 (que devuelve ese error con su Retry-After). El intento ya existe y la respuesta del arranque no cambia.
+     */
+    suspend fun withInlineQuestions(userId: CanonicalUserId, started: AttemptStartResponse, inline: InlineQuestionsRequest): AttemptStartResponse {
+        val page = try {
+            questions(userId, started.intento.id, inline.page, inline.from)
+        } catch (failure: BackendDomainException) {
+            return started
+        }
+        return started.copy(preguntas = page)
     }
 
     // ----- D2-09 -----

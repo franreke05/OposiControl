@@ -107,13 +107,16 @@ internal fun Route.attemptRoutes(runtime: AttemptRuntime?) {
             val rt = runtime.orMisconfigured()
             val identity = call.gatedIdentity()
             val request = call.receiveCanonicalCommand<AttemptStartRequest>()
+            // FA51b: la primera pagina de D2-08 en linea; se valida ANTES de crear el intento.
+            val inline = parseInlineQuestions(call.request.queryParameters)
             if (request.modo == "DEMO") rt.demoIpLimit(call)
             val started = rt.attempts.start(identity.userId, call.pathUuid("examId"), request)
+            val response = inline?.let { rt.attempts.withInlineQuestions(identity.userId, started.response, it) } ?: started.response
             if (started.created) {
                 call.response.header(HttpHeaders.Location, "/api/v1/app/intentos/${started.response.intento.id}")
-                call.respond(HttpStatusCode.Created, started.response)
+                call.respond(HttpStatusCode.Created, response)
             } else {
-                call.respond(started.response)
+                call.respond(response)
             }
         }.measured(ExamOp.START, runtime?.metrics).install(CanonicalIdempotency) {
             routeTemplate = "/api/v1/app/examenes/{examId}/intentos"

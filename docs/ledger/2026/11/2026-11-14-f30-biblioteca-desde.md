@@ -30,3 +30,12 @@ Rama local `f30/biblioteca-desde` desde develop `08ea7f0f`. Sin push. MAIN/VPS s
 ## Verificación
 
 Ktor (`SavedItemsRoutesTest` FA50 contra el OpenAPI congelado; `AttemptRoutesTest` `desde`: arranque, cupo de la página, cursor siguiente, límites, validación; `OpenApi*`, `RouteInventoryTest`, `RouteProfileGateTest`), dbtest `V1BibliotecaPreguntaMigrationTest`, gate PG17 y ensayo `docs/ledger/2026/11/rehearse-f30-2026-11.sh`. Resultados en el informe de S2.
+
+## FA51b — primera página en línea en D2-03 (aditivo, sin migración)
+
+El cliente midió que un intento NUEVO seguía costando 2 viajes (D2-03 y luego D2-08 página 1, ≈1200 ms a 600 ms por petición).
+
+- `POST /api/v1/app/examenes/{examId}/intentos?incluirPreguntas=true` (o `?desde=N`, que implica incluir): la respuesta 201/200 añade `preguntas` = EXACTAMENTE la página de D2-08 para esa posición (`items` + `nextCursor`, tamaño por defecto 10; se sigue con D2-08 y ese cursor). Mismo cupo: solo se revelan y cuentan las preguntas de esa página (es la misma llamada interna).
+- Sin el parámetro (o `incluirPreguntas=false`): respuesta idéntica a la de siempre.
+- Si esa página no se puede servir (p. ej. 429 `DAILY_LIMIT_REACHED`), el arranque NO falla: `preguntas` ausente y el cliente llama a D2-08, que devuelve el error con su Retry-After.
+- `incluirPreguntas` que no sea true/false o `desde` inválido: 400 `VALIDATION` ANTES de crear el intento. Una imagen anterior ignora los parámetros (respuesta sin `preguntas`): el cliente debe tolerar su ausencia.
