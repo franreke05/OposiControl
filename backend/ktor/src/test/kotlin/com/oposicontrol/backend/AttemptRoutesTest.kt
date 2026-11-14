@@ -13,6 +13,8 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.Parameters
+import io.ktor.http.parametersOf
 import io.ktor.http.contentType
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
@@ -677,6 +679,34 @@ class AttemptRoutesTest {
         assertEquals(HttpStatusCode.OK, blocked.status, blocked.bodyAsText())
         assertNull(obj(blocked.bodyAsText())["preguntas"])
         assertEquals(HttpStatusCode.TooManyRequests, client.call(HttpMethod.Get, "$base/preguntas").status)
+    }
+
+    @Test
+    fun theInlineQueryIsPartOfTheIdempotencyFingerprint() = testApplication {
+        application { attemptModule() }
+        upstream.examById = examRow()
+        upstream.attemptRow = attemptRow(respondidas = 0)
+        upstream.questionPage = pagedQuestions(9)
+        val first = client.call(HttpMethod.Post, "$start?desde=8", key = key1)
+        val body = first.bodyAsText()
+        assertEquals(HttpStatusCode.Created, first.status, body)
+        // the client's retry: same key, same deterministic query -> the stored response, the command is not run again
+        val replay = client.call(HttpMethod.Post, "$start?desde=8", key = key1)
+        assertEquals(HttpStatusCode.Created, replay.status)
+        assertEquals("true", replay.headers[IdempotencyHeaders.REPLAYED])
+        assertEquals(obj(body), obj(replay.bodyAsText()))
+        assertEquals(1, upstream.rpcBodies("app_start_exam_attempt").size)
+        // same key, another inline request (other position, plain start, first page) -> 422 IDEMPOTENCY_KEY_REUSED, nothing runs
+        for (query in listOf("?desde=3", "", "?incluirPreguntas=false", "?incluirPreguntas=true")) {
+            val reused = client.call(HttpMethod.Post, "$start$query", key = key1)
+            assertEquals(HttpStatusCode.UnprocessableEntity, reused.status, query)
+            assertEquals("IDEMPOTENCY_KEY_REUSED", code(reused.bodyAsText()), query)
+        }
+        assertEquals(1, upstream.rpcBodies("app_start_exam_attempt").size)
+        // the fingerprint is semantic: incluirPreguntas=true and desde=1 ask for the same page; incluirPreguntas=false is a plain start
+        assertEquals(HttpStatusCode.Created, client.call(HttpMethod.Post, "$start?incluirPreguntas=true", key = key2).status)
+        assertEquals("true", client.call(HttpMethod.Post, "$start?desde=1", key = key2).headers[IdempotencyHeaders.REPLAYED])
+        assertEquals(inlineQuestionsFingerprint(Parameters.Empty), inlineQuestionsFingerprint(parametersOf("incluirPreguntas", "false")))
     }
 
     @Test

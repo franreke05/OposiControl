@@ -368,6 +368,14 @@ internal fun parseQuestionsFrom(params: Parameters): Int? {
     throw validationError(ErrorIssue("desde", issue))
 }
 
+/**
+ * FA51b: parte de la huella de idempotencia de D2-03 que depende de la consulta. Forma SEMANTICA (no el texto): sin pagina en linea = "" (huella
+ * de siempre); `incluirPreguntas=true` y `desde=1` piden la misma pagina y comparten huella; `desde=N` otra. Una consulta invalida = 400 VALIDATION
+ * antes de reclamar la clave.
+ */
+internal fun inlineQuestionsFingerprint(params: Parameters): String =
+    parseInlineQuestions(params)?.let { "\nFA51b inline-from=${it.from ?: 1}" }.orEmpty()
+
 /** FA51b: la pagina de D2-08 que D2-03 devuelve en linea: [from] `null` = desde la primera. */
 internal data class InlineQuestionsRequest(val page: CursorPageRequest, val from: Int?)
 

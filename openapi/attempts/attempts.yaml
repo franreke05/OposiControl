@@ -26,7 +26,7 @@ components:
           - name: incluirPreguntas
             in: query
             required: false
-            description: 'FA51b (additive): true = the response also carries preguntas, the first D2-08 page (default size 10) of the started or resumed attempt, so a new attempt costs ONE request. Not true or false = 400 VALIDATION (field incluirPreguntas).'
+            description: 'FA51b (additive): true = the response also carries preguntas, the first D2-08 page (default size 10) of the started or resumed attempt, so a new attempt costs ONE request. Not true or false = 400 VALIDATION (field incluirPreguntas). Idempotency: the requested inline page is part of the Idempotency-Key fingerprint (semantic: none / incluirPreguntas=false = the plain start; incluirPreguntas=true = desde=1; desde=N): a retry with the same key and the same query replays the stored response; the same key with another inline request = 422 IDEMPOTENCY_KEY_REUSED.'
             schema:
               type: boolean
           - name: desde

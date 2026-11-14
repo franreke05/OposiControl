@@ -122,6 +122,11 @@ internal fun Route.attemptRoutes(runtime: AttemptRuntime?) {
             routeTemplate = "/api/v1/app/examenes/{examId}/intentos"
             required = true
             this.store = store
+            // FA51b: la pagina en linea pedida (incluirPreguntas / desde) es parte de la peticion: misma clave + misma consulta = repeticion;
+            // misma clave + otra consulta = 422 IDEMPOTENCY_KEY_REUSED. Sin pagina en linea (o incluirPreguntas=false) la huella es la de siempre.
+            canonicalBody = { call ->
+                RequestFingerprint.canonicalJsonBody(call.canonicalRawBody()) + inlineQuestionsFingerprint(call.request.queryParameters)
+            }
             before = { call -> call.attemptGate(runtime, AttemptOperation.START, "examId") }
             actor = { call -> call.gatedIdentity().userId.value }
         }
