@@ -1,5 +1,11 @@
 # Current State
 
+## Integracion servidor 1.3 — 2026-11-14 (rama local `integ/v1-3-server` desde develop `08ea7f0f`, sin push) — `PREPARADO`, NO desplegado, MAIN sin tocar
+
+- Fusionadas F20b, F14b, F23 (+F23b), F27, F25, F29, F30 y F28. Mas la correctiva `20261114500000_v1_ranking_lotes_shape` (hallazgo S3: en la captura de MAIN `lotes_actualizacion_ranking` tiene la forma PRE-V1 y los trabajos V1 de dificultad/ranking fallan; alineacion con guardas, no-op en la forma V1).
+- Orden de despliegue: 11 migraciones en orden de version con el manifiesto consolidado `ops/deploy/v1/main-migrations-2026-11-v1-3.manifest` (cadena lineal) y DESPUES una sola imagen Ktor; acta `docs/ledger/2026/11/2026-11-14-v1-3-deploy-order.md`; ensayo combinado `docs/ledger/2026/11/rehearse-v1-3-2026-11.sh`.
+- Dudas: FA48 duplicado (F20b y F14b); confirmar en MAIN la forma real de `lotes_actualizacion_ranking` (lectura de solo catalogo).
+
 ## Reto diario siempre de 3 (F20b) — 2026-11-11 (rama local `f20b/reto-tres` desde develop `08ea7f0f`, sin push) — `CURRENT_IMPLEMENTATION`, NO aplicada a MAIN
 
 - Decision del propietario 2026-11-11: el reto tiene SIEMPRE 3 preguntas. F20 (`20261109100000`, desplegada) ya esta en MAIN y con solo rafaga da 1 pregunta.
@@ -37,7 +43,7 @@
 
 ## Biblioteca: pregunta guardada (F30, FA50) y `desde` en D2-08 (FA51) — 2026-11-14 (rama local `f30/biblioteca-desde` desde develop `08ea7f0f`, sin push) — `CURRENT_IMPLEMENTATION`, NO aplicada a MAIN
 
-- D4-27 `GET /api/v1/app/opositeca/guardados/pregunta/{preguntaId}` (ReviewItem + examenId/examenTitulo/tipoExamen/anulada, sin cupo) y D4-28 `.../recursos/{recursoId}` (URL firmada); `pregunta.tipoExamen` en D4-24. D2-08 acepta `desde` (posicion 1-based, excluyente con cursor; mismo cupo). FA51b: D2-03 con `incluirPreguntas=true` o `desde=N` devuelve `preguntas` (la pagina de D2-08) en linea.
+- D4-29 (antes D4-27; renumerada en la integracion 1.3: D4-27 es el detalle de noticia de F25) `GET /api/v1/app/opositeca/guardados/pregunta/{preguntaId}` (ReviewItem + examenId/examenTitulo/tipoExamen/anulada, sin cupo) y D4-28 `.../recursos/{recursoId}` (URL firmada); `pregunta.tipoExamen` en D4-24. D2-08 acepta `desde` (posicion 1-based, excluyente con cursor; mismo cupo). FA51b: D2-03 con `incluirPreguntas=true` o `desde=N` devuelve `preguntas` (la pagina de D2-08) en linea.
 - Migracion PENDIENTE `20261114200000_v1_biblioteca_pregunta` (predecesora F20). Manifiesto `ops/deploy/v1/main-migrations-2026-11-f30.manifest`; ensayo `docs/ledger/2026/11/rehearse-f30-2026-11.sh`; acta `docs/ledger/2026/11/2026-11-14-f30-biblioteca-desde.md`. NECESITA imagen nueva, ORDEN migracion -> imagen.
 
 ## Market de consumibles (F28) — 2026-11-14 (rama local `f28/consumibles` desde develop `08ea7f0f`, sin push) — `CURRENT_IMPLEMENTATION`, NO aplicada a MAIN

@@ -1,0 +1,8 @@
+# Forma de la tabla de lotes del ranking (ventana 1.3, hallazgo S3 sobre la captura de MAIN 2026-10-14): migracion correctiva con guardas.
+# Acta: docs/ledger/2026/11/2026-11-14-v1-3-deploy-order.md (seccion 20261114500000). Uso con el script de siempre:
+#   MANIFEST=ops/deploy/v1/main-migrations-2026-11-lotes.manifest bash ops/deploy/v1/apply-main-migration.sh supabase/migrations/20261114500000_v1_ranking_lotes_shape.sql
+# version  blob(git hash-object, 12)  predecesora(debe estar en supabase_migrations antes de aplicar)  clase
+# Predecesora tecnica: 20261022101700 (app_job_ranking; ya en MAIN). Sin dependencia de cuerpo con el resto de la ventana: en la ventana 1.3 va la ULTIMA
+# (manifiesto consolidado main-migrations-2026-11-v1-3.manifest, predecesora 20261114400200).
+# Si cambia el blob, se rehacen este manifiesto, el consolidado y el ensayo (docs/ledger/2026/11/rehearse-v1-3-2026-11.sh).
+20261114500000 95d5053b522f 20261022101700 apply

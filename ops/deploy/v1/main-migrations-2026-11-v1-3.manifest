@@ -1,0 +1,19 @@
+# Ventana servidor 1.3 (integ/v1-3-server, 2026-11-14): las 11 migraciones que se aplican a MAIN en UNA ventana, despues de F20 (20261109100000, ya en MAIN)
+# y ANTES de la imagen Ktor nueva (una sola, al final). Runbook: docs/ledger/2026/11/2026-11-14-v1-3-deploy-order.md. Uso con el script de siempre:
+#   MANIFEST=ops/deploy/v1/main-migrations-2026-11-v1-3.manifest bash ops/deploy/v1/apply-main-migration.sh supabase/migrations/<version>_<nombre>.sql
+# version  blob(git hash-object, 12)  predecesora(debe estar en supabase_migrations antes de aplicar)  clase
+# CADENA LINEAL en orden de version (el mismo orden del gate PG17, de backend/dbtest y del ensayo combinado): cada linea exige la anterior, asi que el
+# script detiene cualquier salto de orden. Las predecesoras TECNICAS (minimas) son las de los manifiestos por funcionalidad (-f23, -f20b, -f14b, -f29, -f30,
+# -f23b, -f27, -f28, -lotes), que siguen siendo validos; este manifiesto solo las endurece a una cadena.
+# Si cambia un blob, se rehacen este manifiesto, el de su funcionalidad y el ensayo (docs/ledger/2026/11/rehearse-v1-3-2026-11.sh).
+20261109100100 cce505461dbd 20261109100000 apply
+20261109100200 ba0052d49730 20261109100100 apply
+20261111100000 21c0123c5b02 20261109100200 apply
+20261114100000 26061b231391 20261111100000 apply
+20261114200000 d5ae900e616e 20261114100000 apply
+20261114200100 0a8157b5328f 20261114200000 apply
+20261114300000 cdc1901baaa3 20261114200100 apply
+20261114400000 3628dd8594bb 20261114300000 apply
+20261114400100 0c3eb01e7251 20261114400000 apply
+20261114400200 a624ab9a49d6 20261114400100 apply
+20261114500000 95d5053b522f 20261114400200 apply
