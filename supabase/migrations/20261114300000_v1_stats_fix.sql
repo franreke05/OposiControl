@@ -552,8 +552,13 @@ begin;
 
 set local lock_timeout = '5s';
 
--- C1 (review 2026-11-14): no answer may land between the backfill reads and the trigger/hook swap (it would be counted twice or never).
-lock table public.respuestas_intento, public.respuestas_reto_diario, public.primeras_respuestas_usuario in share row exclusive mode;
+-- C1 (review 2026-11-14, re-review): ALL the locks of this migration, taken HERE, once, in a fixed order, at their final strength (no later escalation =
+-- no lock-upgrade deadlock). ACCESS EXCLUSIVE on the tables this migration ALTERs (primeras_respuestas_usuario, estadisticas_usuario_etiqueta,
+-- estado_competitivo_usuario); SHARE ROW EXCLUSIVE on the ones that get a trigger change (respuestas_reto_diario: new trigger; intentos_examen: disable /
+-- enable of trg_intentos_examen_actualizado_en) or that the backfill reads / writes (respuestas_intento, estadisticas_usuario): no answer can land
+-- between the backfill reads and the hook swap (it would be counted twice or never). lock_timeout above still bounds the wait.
+lock table public.primeras_respuestas_usuario, public.estadisticas_usuario_etiqueta, public.estado_competitivo_usuario in access exclusive mode;
+lock table public.respuestas_intento, public.respuestas_reto_diario, public.intentos_examen, public.estadisticas_usuario in share row exclusive mode;
 
 -- PREFLIGHT (fail closed)
 do $$
