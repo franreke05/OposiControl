@@ -148,8 +148,8 @@ class V1ConsumiblesEfectosMigrationTest {
 
     @Test
     fun aPotenciadorMultipliesOnlyTheBaseOfThePassedRetoAndTheClaimCreditsTheExtraOnce() = V1Db.escenario { c ->
-        c.world(3)
-        val (pot, failed, noBonus) = listOf(user(1), user(2), user(3))
+        c.world(4)
+        val (pot, failed, noBonus, capped) = listOf(user(1), user(2), user(3), user(4))
         listOf(pot, failed).forEach { c.streak(it, 4) }
         c.buy(pot, "potenciador_x3"); c.buy(pot, "potenciador_x2")
         c.buy(failed, "potenciador_x3")
@@ -166,10 +166,13 @@ class V1ConsumiblesEfectosMigrationTest {
         assertEquals("3", c.unico("select multiplicador_aplicado::int from public.registros_reto_diario where usuario_id = '$pot'"))
         val cl = c.claim(pot)
         assertEquals("potenciador:0/1:activa,potenciador:1/1:usada", c.activations(pot).split(",").sorted().joinToString(","), "one per reto (the x3 first: same expiry, higher multiplier)")
-        assertEquals("140|true|80", listOf("recompensa,total", "recompensa,reclamada", "recompensa,extraPotenciador").joinToString("|") { c.j(cl, it)!! })
-        assertEquals("bonus_racha:20,potenciador:80,reto_diario:40", c.ledger(pot))
+        // D1 (owner 2026-11-14): the extra respects the free-OT caps: 40 + 20 + 80 > the daily 100 -> deferred like any free earn, the reto stays pending
+        assertEquals("140|false|true|80", listOf("recompensa,total", "recompensa,reclamada", "recompensa,pendiente", "recompensa,extraPotenciador").joinToString("|") { c.j(cl, it)!! })
+        assertEquals("bonus_racha:20,reto_diario:40", c.ledger(pot))
+        assertEquals("80|pendiente", c.unico("select importe || '|' || estado from public.ot_ganancias_diferidas where usuario_id = '$pot' and clave like 'potenciador:%'"))
         c.claim(pot)
-        assertEquals("bonus_racha:20,potenciador:80,reto_diario:40", c.ledger(pot), "claiming again pays nothing more")
+        assertEquals("bonus_racha:20,reto_diario:40", c.ledger(pot), "claiming again pays nothing more")
+        assertEquals("1", c.unico("select count(*)::text from public.ot_ganancias_diferidas where usuario_id = '$pot' and clave like 'potenciador:%'"), "deferred once")
         assertEquals("potenciador:0/1:activa,potenciador:1/1:usada", c.activations(pot).split(",").sorted().joinToString(","), "claiming again spends nothing more")
         assertEquals("80", c.j(c.today(pot), "recompensa,extraPotenciador"))
 
@@ -178,6 +181,16 @@ class V1ConsumiblesEfectosMigrationTest {
 
         val n = c.answer(noBonus, ok)
         assertEquals("40|0|80", listOf("recompensa,base", "recompensa,bonusRacha", "recompensa,total").joinToString("|") { c.j(n, it)!! }, "x2 of 40, no streak bonus")
+
+        // D1: an extra above a cap on its own is NOT credited; base still paid, the reported extra is what was credited (0) and the potenciador comes back
+        c.ejecutar("insert into public.configuracion_v1 (clave, valor_integer) values ('tope_ot_gratis_dia', 45) on conflict (clave) do update set valor_integer = excluded.valor_integer")
+        c.buy(capped, "potenciador_x3")
+        assertEquals("120", c.j(c.answer(capped, ok), "recompensa,total"), "x3 of 40 at answer time")
+        val capCl = c.claim(capped)
+        assertEquals("40|true|0", listOf("recompensa,total", "recompensa,reclamada", "recompensa,extraPotenciador").joinToString("|") { c.j(capCl, it)!! }, capCl)
+        assertEquals("reto_diario:40", c.ledger(capped))
+        assertEquals("potenciador:0/1:activa", c.activations(capped), "not credited: the potenciador use is released")
+        assertEquals("40", c.j(c.today(capped), "recompensa,total"), "the frozen total is what was paid")
     }
 
     @Test
@@ -197,7 +210,7 @@ class V1ConsumiblesEfectosMigrationTest {
         c.ejecutar("update auth.users set email_confirmed_at = now() where id = '$unverified'")
         assertEquals("100", c.j(c.claim(unverified), "recompensa,total"))
         assertEquals("protector_tickets:1/1:usada,potenciador:1/1:usada", c.activations(unverified), "the successful claim spends both, once")
-        assertEquals("bonus_racha:20,potenciador:40,reto_diario:40", c.ledger(unverified))
+        assertEquals("bonus_racha:20,reto_diario:40,reto_diario:40", c.ledger(unverified), "40 + 20 + 40 = the daily cap 100: the extra is credited (D1, as a free earn)")
         assertEquals("0", c.unico("select count(*)::text from public.reto_consumibles_reservados where usuario_id = '$unverified'"))
 
         c.answer(idle, ok)

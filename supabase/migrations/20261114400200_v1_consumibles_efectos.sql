@@ -47,10 +47,12 @@
 --       - the answer adds consumiblesUsados (types spent by this answer) and recompensa.multiplicador / recompensa.extraPotenciador when a potenciador applied.
 --   * public.app_get_daily_challenge: reward also shown for a FAILED reto that pays (tickets protector), potenciador part, preguntas[].oportunidadPendiente
 --     (held answer waiting for the decision), protectorUsado (type) and consumibles {protectorRacha, protectorTickets, protectorDual, potenciador, oportunidades}.
---   * public.app_claim_daily_challenge: claimable when completed AND (passed OR total > 0); the potenciador extra is credited as ONE 'potenciador' ledger
---     movement (key potenciador:<user>:<dia>, outside the free-earn caps: it was bought with OT) in the same all-or-nothing transaction as base and bonus;
---     the reserved uses of that reto are spent in that same transaction (C2). OWNER DECISION D1 pending: c_potenciador_en_topes (one constant in the claim)
---     routes the extra through public.app_credit_free_ot ('reto_diario', same key) so it counts in the daily/weekly free-OT caps; today false = outside.
+--   * public.app_claim_daily_challenge: claimable when completed AND (passed OR total > 0). OWNER DECISION D1 (2026-11-14): the potenciador extra RESPECTS
+--     the daily/weekly free-OT caps: it goes through public.app_credit_free_ot ('reto_diario', key potenciador:<user>:<dia>, meta origen potenciador) after
+--     base and bonus. CREDITED = paid; DEFERRED = over the window cap, kept as a deferral like any free earn (paid by the retry job when the window frees,
+--     reto pendiente meanwhile); REJECTED_CAP (the extra alone is above a cap, or its deferral expired) = the extra is NOT credited (the claim of base and
+--     bonus still goes through): the frozen total drops to base + bonus, so recompensa.extraPotenciador reports what was actually credited (0), and the
+--     potenciador use is released (not spent). The reserved uses of that reto are spent in the same transaction (C2).
 --
 -- ROLLBACK (manual, executed verbatim by the PG17 gate): the previous bodies come back verbatim (answer 20261022103500 with 4 arguments; today and claim
 -- 20261022101200). Activations already spent stay spent; held answers are dropped (the user answers again); reservations are dropped (those uses were never
@@ -325,7 +327,6 @@
 -- revoke all on function public.app_claim_daily_challenge(uuid, uuid) from public, anon, authenticated;
 -- grant execute on function public.app_claim_daily_challenge(uuid, uuid) to service_role;
 --
--- drop function if exists private.reto_potenciador_abonar(uuid, uuid, text, integer, date, numeric, uuid);
 -- drop function if exists private.reto_recompensa_json(public.registros_reto_diario);
 -- drop function if exists private.consumibles_reto_json(uuid, timestamptz);
 -- drop function if exists private.consumible_gastar(uuid, uuid, timestamptz);
@@ -821,26 +822,9 @@ $$;
 revoke all on function public.app_get_daily_challenge(uuid) from public, anon, authenticated;
 grant execute on function public.app_get_daily_challenge(uuid) to service_role;
 
--- the potenciador part of a claimed reward: ONE 'potenciador' movement per user and Madrid day (idempotent by its key). Its own function so that
--- no function other than private.free_ot_apply writes the free-earn ledger types (gate W-10); the caller holds the wallet lock.
-create or replace function private.reto_potenciador_abonar(p_usuario uuid, p_reto uuid, p_clave text, p_cantidad integer, p_dia date, p_mult numeric, p_activacion uuid)
-returns void
-language plpgsql
-security definer
-set search_path = ''
-as $$
-begin
-  if p_cantidad > 0 and not exists (select 1 from public.transacciones_cartera t where t.usuario_id = p_usuario and t.idempotency_key = p_clave) then
-    insert into public.transacciones_cartera (usuario_id, tipo, cantidad, descripcion, referencia_tipo, referencia_id, idempotency_key, metadatos)
-    values (p_usuario, 'potenciador', p_cantidad, 'Potenciador', 'reto', p_reto, p_clave,
-            jsonb_build_object('op', 'potenciador_reto', 'dia', p_dia, 'multiplicador', p_mult, 'activacion_id', p_activacion));
-  end if;
-end;
-$$;
-revoke all on function private.reto_potenciador_abonar(uuid, uuid, text, integer, date, numeric, uuid) from public, anon, authenticated;
 
--- ---- 5. claim: the 20261022101200 body; a failed reto saved by a tickets protector is claimable, and the potenciador part is credited as a 'potenciador'
---         ledger movement (bought with OT, so outside the free-earn caps), idempotent by its key, in the same all-or-nothing transaction
+-- ---- 5. claim: the 20261022101200 body; a failed reto saved by a tickets protector is claimable, and the potenciador part goes through the free-OT caps
+--         (D1, see the header): credited, deferred or, when rejected by a cap, not credited (frozen total = base + bonus, potenciador use released)
 create or replace function public.app_claim_daily_challenge(p_usuario uuid, p_reto uuid)
 returns jsonb
 language plpgsql
@@ -856,8 +840,6 @@ declare
   v_key_racha text;
   v_key_pot text;
   v_extra integer;
-  -- OWNER DECISION D1 (pending): true = the potenciador extra goes through public.app_credit_free_ot and counts in the daily/weekly free-OT caps.
-  c_potenciador_en_topes constant boolean := false;
   a record;
   b record;
   c record;
@@ -919,15 +901,16 @@ begin
   v_extra := g.recompensa_total_tickets - g.recompensa_base_tickets - g.bonus_racha_tickets;
   v_pend := a.estado = 'DEFERRED' or b.estado = 'DEFERRED';
   if v_extra > 0 then
-    if c_potenciador_en_topes then
-      select * into c from public.app_credit_free_ot(p_usuario, 'reto_diario', v_extra, 'reto', p_reto, v_key_pot,
-                                                    jsonb_build_object('dia', g.dia, 'op', 'potenciador_reto', 'multiplicador', g.multiplicador_aplicado, 'activacion_id', g.potenciador_usado_id));
-      if c.estado = 'REJECTED_CAP' then
-        raise exception using errcode = 'P0001', message = 'OT_EARN_CAP_REACHED';
-      end if;
-      v_pend := v_pend or c.estado = 'DEFERRED';
+    -- D1 (owner 2026-11-14): the extra respects the daily/weekly free-OT caps
+    select * into c from public.app_credit_free_ot(p_usuario, 'reto_diario', v_extra, 'reto', p_reto, v_key_pot,
+                                                  jsonb_build_object('dia', g.dia, 'origen', 'potenciador', 'multiplicador', g.multiplicador_aplicado, 'activacion_id', g.potenciador_usado_id));
+    if c.estado = 'REJECTED_CAP' then
+      -- not credited: the frozen total is what is paid (recompensa.extraPotenciador = 0) and the potenciador use goes back to the user
+      update public.registros_reto_diario set recompensa_total_tickets = recompensa_base_tickets + bonus_racha_tickets
+       where usuario_id = p_usuario and reto_id = p_reto returning * into g;
+      delete from public.reto_consumibles_reservados r where r.usuario_id = p_usuario and r.reto_id = p_reto and r.activacion_id = g.potenciador_usado_id;
     else
-      perform private.reto_potenciador_abonar(p_usuario, p_reto, v_key_pot, v_extra, g.dia, g.multiplicador_aplicado, g.potenciador_usado_id);
+      v_pend := v_pend or c.estado = 'DEFERRED';
     end if;
   end if;
   -- C2: the claim went through (credited or deferred): spend the uses this reto reserved (potenciador, tickets protector), once

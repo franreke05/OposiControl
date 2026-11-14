@@ -4815,13 +4815,15 @@ begin
   assert a ->> 'estado' = 'FALLADO' and a #>> '{consumiblesUsados,0}' = 'protector_racha' and (a #>> '{racha,actual}')::int = 5, 'F28: protector_racha ' || a::text;
   assert (select protector_usado_id is not null from public.registros_reto_diario where usuario_id = u1 and reto_id = reto), 'F28: protector_usado_id filled';
   assert (select estado from public.activaciones_servicio_usuario where usuario_id = u1) = 'usada', 'F28: the protector is spent';
-  -- the potenciador multiplies only the base; the claim credits the extra once, outside the free caps
+  -- the potenciador multiplies only the base; the claim offers the extra to the free-OT caps (D1): 40 + 20 + 80 > the daily 100 -> the extra is deferred, once
   reto2 := (public.app_get_daily_challenge(u2) ->> 'retoId')::uuid;
   a := public.app_answer_daily_challenge(u2, reto2, 'f8000000-0000-0000-0000-000000002801', '0e800000-0000-0000-0000-000000002801');
   assert a ->> 'estado' = 'SUPERADO' and (a #>> '{recompensa,extraPotenciador}')::int = 80 and (a #>> '{recompensa,total}')::int = 140, 'F28: potenciador ' || a::text;
+  t := public.app_claim_daily_challenge(u2, reto2);
+  assert (t #>> '{recompensa,pendiente}')::boolean, 'F28/D1: the deferred extra leaves the reto pending ' || t::text;
   perform public.app_claim_daily_challenge(u2, reto2);
-  perform public.app_claim_daily_challenge(u2, reto2);
-  assert (select count(*) from public.transacciones_cartera where usuario_id = u2 and tipo = 'potenciador' and cantidad = 80) = 1, 'F28: the potenciador extra is credited once';
+  assert (select count(*) from public.ot_ganancias_diferidas where usuario_id = u2 and clave like 'potenciador:%' and importe = 80 and estado = 'pendiente') = 1
+     and not exists (select 1 from public.transacciones_cartera where usuario_id = u2 and idempotency_key like 'potenciador:%'), 'F28/D1: the potenciador extra respects the caps (deferred once, not credited)';
   -- grants: the client roles can neither run the RPCs nor read the held answers
   assert not has_function_privilege('authenticated', 'public.app_redeem_service(uuid,text,text,integer)', 'execute')
      and not has_function_privilege('anon', 'public.app_market_catalog(uuid)', 'execute')
