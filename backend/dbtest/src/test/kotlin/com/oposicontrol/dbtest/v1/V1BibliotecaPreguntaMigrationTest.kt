@@ -5,6 +5,7 @@ import com.oposicontrol.dbtest.slice0.Slice0Db
 import com.oposicontrol.dbtest.slice0.filas
 import com.oposicontrol.dbtest.unico
 import java.sql.Connection
+import java.sql.SQLException
 import kotlin.test.Test
 import kotlin.test.assertEquals
 import kotlin.test.assertNull
@@ -14,7 +15,8 @@ import kotlin.test.assertTrue
  * `20261114200000_v1_biblioteca_pregunta` (F30, FA50, plan del propietario 2026-11-14): la Biblioteca abre la pregunta guardada ahi mismo. `app_saved_question_detail`
  * solo responde si el usuario la guardo Y puede abrir alguno de sus examenes (la regla de la lista); contenido y solucion VIVOS (las funciones que congelan revisiones),
  * mas el examen elegido (enlace no anulado primero, luego la publicacion mas reciente), su posicion y si esta anulada. `app_list_saved` devuelve tipo_examen y usa la
- * MISMA eleccion. No escribe nada (no toca el limitador). Control negativo + VERIFY / ROLLBACK.
+ * MISMA eleccion. No escribe nada (no toca el limitador). B1 (revision Control 2026-11-14): la solucion solo si el usuario ya la resolvio (respuesta con opcion o intento
+ * finalizado que la contiene); guardar exige que la pregunta le haya sido revelada; las reservas sin usar no cuentan. Control negativo + VERIFY / ROLLBACK.
  */
 class V1BibliotecaPreguntaMigrationTest {
     private val migration = "20261114200000_v1_biblioteca_pregunta"
@@ -60,6 +62,31 @@ class V1BibliotecaPreguntaMigrationTest {
 
     private fun Connection.detail(u: String, n: Int) = unico("select public.app_saved_question_detail('$u', '${q(n)}')::text")!!
     private fun Connection.field(json: String, path: String) = unico("select ('$json'::jsonb) #>> '{${path}}'")
+    private fun Connection.errorOf(sql: String): String? = try {
+        ejecutar(sql); null
+    } catch (e: SQLException) {
+        (e as? org.postgresql.util.PSQLException)?.serverErrorMessage?.message ?: e.message
+    }
+    private fun Connection.save(u: String, n: Int) = errorOf("select public.app_save_item('$u', 'pregunta', '${q(n)}')")
+
+    /** Un intento del usuario (sin triggers) con esas preguntas, en ese estado y con ese acceso. */
+    private fun Connection.attempt(id: String, u: String, examen: String, estado: String, acceso: String, vararg ns: Int) = ejecutar(
+        "begin; set local session_replication_role = replica; " +
+            "insert into public.intentos_examen (id, usuario_id, examen_id, estado, acceso_estado) values ('$id', '$u', '$examen', '$estado', '$acceso'); " +
+            ns.mapIndexed { i, n -> "insert into public.preguntas_intento (intento_id, pregunta_id, posicion) values ('$id', '${q(n)}', ${i + 1});" }.joinToString(" ") +
+            " commit;",
+    )
+    private fun Connection.answer(intento: String, n: Int) = ejecutar(
+        "begin; set local session_replication_role = replica; " +
+            "insert into public.respuestas_intento (intento_id, pregunta_id, opcion_seleccionada_id) values ('$intento', '${q(n)}', '${ok(n)}'); commit;",
+    )
+    private val att1 = "a7700000-0000-0000-0000-0000000030b1"
+    private val att2 = "a7700000-0000-0000-0000-0000000030b2"
+    private val att3 = "a7700000-0000-0000-0000-0000000030b3"
+    private val limitedPlan = """
+        insert into public.planes_suscripcion (id, codigo, nombre, nivel) values ('b1000000-0000-0000-0000-0000000030b1', 'gratuito-f30', 'Gratuito', 0);
+        insert into public.beneficios_plan (plan_id, codigo_beneficio, valor_integer) values ('b1000000-0000-0000-0000-0000000030b1', 'limite_preguntas_24h', 2);
+    """.trimIndent()
 
     @Test
     fun theDetailIsTheLiveQuestionOfTheChosenExam() = V1Db.escenario { c ->
@@ -73,8 +100,21 @@ class V1BibliotecaPreguntaMigrationTest {
         assertEquals("false", c.field(d, "anulada"))
         assertEquals("Enunciado 1", c.field(d, "contenido,titulo"))
         assertEquals("2", c.unico("select jsonb_array_length(('$d'::jsonb) -> 'contenido' -> 'opciones')::text"))
-        assertEquals(ok(1), c.field(d, "solucion,opcion_correcta_id"))
-        assertEquals("Razon 1", c.field(d, "solucion,razonamiento"))
+        assertEquals("null", c.unico("select jsonb_typeof(('$d'::jsonb) -> 'solucion')"), "saved, never answered: no solution (JSON null), still OK")
+        // saved, not answered, open attempt -> no solution
+        c.attempt(att1, user, newer, "en_progreso", "FREE", 1, 3)
+        val open = c.detail(user, 1)
+        assertEquals("OK", c.field(open, "outcome"))
+        assertNull(c.field(open, "solucion,opcion_correcta_id"), "open attempt, question not answered: the answer stays hidden")
+        // answered -> solution
+        c.answer(att1, 1)
+        val answered = c.detail(user, 1)
+        assertEquals(ok(1), c.field(answered, "solucion,opcion_correcta_id"))
+        assertEquals("Razon 1", c.field(answered, "solucion,razonamiento"))
+        // a finished attempt that contains it also counts (q2: never answered, attempt finished)
+        assertNull(c.field(c.detail(user, 2), "solucion,opcion_correcta_id"))
+        c.attempt(att2, user, inmersivo, "finalizado", "FREE", 2)
+        assertEquals(ok(2), c.field(c.detail(user, 2), "solucion,opcion_correcta_id"))
         // annulled in the newer exam: the non-annulled link wins
         c.ejecutar("update public.preguntas_examen set anulada = true, motivo_anulacion = 'x' where examen_id = '$newer' and pregunta_id = '${q(1)}'")
         val d2 = c.detail(user, 1)
@@ -104,6 +144,45 @@ class V1BibliotecaPreguntaMigrationTest {
     }
 
     @Test
+    fun savingNeedsTheQuestionRevealedToTheUser() = V1Db.escenario { c ->
+        c.ejecutar(seed)
+        c.ejecutar(limitedPlan)
+        // q2 is in no attempt of `other`: accessible exam, but never revealed to them
+        assertEquals("NOT_FOUND", c.save(other, 2))
+        // open limited attempt: the D2-07 id list is not a reveal; the limiter row is
+        c.attempt(att1, other, inmersivo, "en_progreso", "FREE", 1, 2)
+        assertEquals("NOT_FOUND", c.save(other, 2), "in the open attempt but its page was never served (limited plan)")
+        c.ejecutar("insert into public.preguntas_reveladas_usuario (usuario_id, pregunta_id, revelada_en) values ('$other', '${q(2)}', now())")
+        assertNull(c.save(other, 2), "served by the limiter: can be saved")
+        // answered counts as revealed
+        c.answer(att1, 1)
+        assertNull(c.save(other, 1))
+        // GRANTED attempt: the limiter does not count it, every question in it is revealable
+        c.ejecutar("delete from public.recursos_guardados_usuario where usuario_id = '$other'")
+        c.attempt(att2, other, newer, "en_progreso", "GRANTED", 3)
+        assertNull(c.save(other, 3))
+        // without a daily limit (no Gratuito plan row) any question of an attempt of theirs is revealable
+        c.ejecutar("delete from public.beneficios_plan where plan_id = 'b1000000-0000-0000-0000-0000000030b1'; delete from public.planes_suscripcion where id = 'b1000000-0000-0000-0000-0000000030b1'")
+        c.attempt(att3, user, newer, "en_progreso", "FREE", 3)
+        assertNull(c.save(user, 3))
+        // an already saved question still answers its original guardado_en (idempotent)
+        assertNull(c.save(user, 4), "already saved: no new check")
+    }
+
+    @Test
+    fun anUnusedReserveIsNotShownNorSaved() = V1Db.escenario { c ->
+        c.ejecutar(seed)
+        c.ejecutar("begin; set local session_replication_role = replica; update public.preguntas_examen set es_reserva = true, orden_reserva = 1, posicion = 9 where examen_id = '$newer' and pregunta_id = '${q(3)}'; commit;")
+        assertEquals("NOT_FOUND", c.field(c.detail(other, 3), "outcome"), "its only link is an unused reserve")
+        assertEquals("false", c.unico("select accesible::text from public.app_list_saved('$other', null, null, null, 10)"))
+        c.attempt(att1, other, newer, "finalizado", "FREE", 3)
+        c.answer(att1, 3)
+        val d = c.detail(other, 3)
+        assertEquals("OK", c.field(d, "outcome"), "used (answered): shown")
+        assertEquals(ok(3), c.field(d, "solucion,opcion_correcta_id"))
+    }
+
+    @Test
     fun theListCarriesTheExamTypeAndTheSameChoice() = V1Db.escenario { c ->
         c.ejecutar(seed)
         c.ejecutar("update public.preguntas_examen set anulada = true, motivo_anulacion = 'x' where pregunta_id = '${q(1)}'")
@@ -122,10 +201,11 @@ class V1BibliotecaPreguntaMigrationTest {
         c.ejecutar(seed)
         val verify = Slice0Db.verifyDe("supabase/migrations/$migration.sql")
         val rows = c.filas(verify)
-        assertEquals(3, rows.size, "VERIFY rows: $rows")
+        assertEquals(7, rows.size, "VERIFY rows: $rows")
         assertEquals(emptyList(), rows.filter { it[1] != "0" }, "every VERIFY counter is 0")
         c.ejecutar(Slice0Db.rollbackDe("supabase/migrations/$migration.sql"))
-        assertEquals("0", c.unico("select count(*)::text from pg_proc where proname = 'app_saved_question_detail'"))
+        assertEquals("0", c.unico("select count(*)::text from pg_proc where proname in ('app_saved_question_detail', 'saved_question_resolved', 'saved_question_revealed')"))
+        assertEquals("0", c.unico("select count(*)::text from pg_proc where proname = 'app_save_item' and prosrc like '%saved_question_revealed%'"), "the original save is back")
         assertEquals("3", c.unico("select count(*)::text from public.app_list_saved('$user', null, null, null, 10)"), "the original list is back")
         assertTrue(c.filas(verify).any { it[1] != "0" }, "VERIFY fails without the migration")
     }

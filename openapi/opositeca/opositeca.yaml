@@ -17,7 +17,7 @@ components:
         x-pagination: NONE
         x-idempotency: NATURAL
         x-error-codes: [VALIDATION, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, NOT_FOUND, SAVED_LIMIT_REACHED, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
-        description: 'Naturally idempotent (no Idempotency-Key): saving an already saved question answers 200 with the ORIGINAL guardadoEn and writes nothing, even if the access was lost since. A NEW save needs the question to be active and to belong to at least one exam that is active, published and not LOCKED for the caller (the specialty gate is rule 0 of that verdict): a missing question and a question the user cannot open are the SAME 404 NOT_FOUND (no probing of other specialties). Cap: 500 saved questions per user (technical default, NEEDS_OWNER_DECISION) = 422 SAVED_LIMIT_REACHED. Limit: 60 per minute per user (429 RATE_LIMITED).'
+        description: 'Naturally idempotent (no Idempotency-Key): saving an already saved question answers 200 with the ORIGINAL guardadoEn and writes nothing, even if the access was lost since. A NEW save needs the question to have been REVEALED to the caller (FA50b, review 2026-11-14: answered by them, in a finished attempt of theirs, served to them in a page counted by the daily limit, or in an attempt of theirs the daily limit does not count) and to be active and to belong (not as an unused reserve) to at least one exam that is active, published and not LOCKED for the caller (the specialty gate is rule 0 of that verdict): a missing question and a question the user cannot open are the SAME 404 NOT_FOUND (no probing of other specialties). Cap: 500 saved questions per user (technical default, NEEDS_OWNER_DECISION) = 422 SAVED_LIMIT_REACHED. Limit: 60 per minute per user (429 RATE_LIMITED).'
         security:
           - bearerAuth: []
         parameters:
@@ -41,7 +41,7 @@ components:
             $ref: '../common/errors.yaml#/components/responses/Forbidden'
           '404':
             $ref: '../common/errors.yaml#/components/responses/NotFound'
-            description: 'NOT_FOUND: the question does not exist, is inactive, or the caller can open none of its exams.'
+            description: 'NOT_FOUND: the question does not exist, is inactive, was never revealed to the caller, or the caller can open none of its exams.'
           '422':
             $ref: '../common/errors.yaml#/components/responses/UnprocessableEntity'
             description: 'SAVED_LIMIT_REACHED.'
@@ -93,7 +93,7 @@ components:
         x-pagination: NONE
         x-idempotency: NONE
         x-error-codes: [VALIDATION, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, NOT_FOUND, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
-        description: 'FA50 (owner plan 2026-11-14, additive): the Library opens a saved question in place. Served ONLY when the caller saved it AND can open one of its exams (the D4-24 rule: an active, published exam whose access verdict is FREE, GRANTED or SUBSCRIPTION; the specialty gate first); otherwise 404 NOT_FOUND (not saved, no access and missing are the same). The item has the SAME schema as a D2-65 review item (ReviewItem) for a question outside any attempt: content and solution are the LIVE ones (built by the functions that freeze attempt revisions), posicion = the position in the chosen exam, status = ANNULLED when the question is annulled in that exam (then correctAnswer and explanation are null, as in the review) or UNANSWERED, and firstAnswer, finalAnswer, timings are empty. Plus examenId, examenTitulo, tipoExamen of the chosen exam (a non-annulled link first, then the latest publication) and anulada. explanation follows the same product policy as D2-65 (EXPLANATIONS_VISIBLE). Resource bytes via D4-28. It never touches the daily question limit (the question was already revealed when it was saved).'
+        description: 'FA50 (owner plan 2026-11-14, additive): the Library opens a saved question in place. Served ONLY when the caller saved it AND can open one of its exams (the D4-24 rule: an active, published exam whose access verdict is FREE, GRANTED or SUBSCRIPTION; the specialty gate first); otherwise 404 NOT_FOUND (not saved, no access and missing are the same). The item has the SAME schema as a D2-65 review item (ReviewItem) for a question outside any attempt: content and solution are the LIVE ones (built by the functions that freeze attempt revisions), but the solution ONLY once the caller resolved the question (FA50b, review 2026-11-14): an answer of theirs with a chosen option, or a finished attempt of theirs that contains it; until then correctAnswer and explanation are null and the response is still 200 (saving a question of an open attempt never reveals its answer), posicion = the position in the chosen exam, status = ANNULLED when the question is annulled in that exam (then correctAnswer and explanation are null, as in the review) or UNANSWERED, and firstAnswer, finalAnswer, timings are empty. Plus examenId, examenTitulo, tipoExamen of the chosen exam (a non-annulled link first, then the latest publication; an unused reserve link is never chosen) and anulada. explanation follows the same product policy as D2-65 (EXPLANATIONS_VISIBLE). Resource bytes via D4-28. It never touches the daily question limit (the question was already revealed when it was saved).'
         security:
           - bearerAuth: []
         parameters:
@@ -329,7 +329,7 @@ components:
               $ref: '../common/identifiers.yaml#/components/schemas/TipoExamen'
             anulada:
               type: boolean
-              description: 'True when the question is annulled in examenId (status ANNULLED, no correctAnswer, no explanation).'
+              description: 'True when the question is annulled in examenId (status ANNULLED, no correctAnswer, no explanation). Not annulled but not yet resolved by the caller (FA50b): status UNANSWERED and no correctAnswer or explanation either.'
     SavedEntry:
       type: object
       required: [tipo, targetId, guardadoEn, accesible]

@@ -297,6 +297,27 @@ class SavedItemsRoutesTest {
     }
 
     @Test
+    fun anUnresolvedSavedQuestionComesWithoutSolution() = testApplication {
+        application { savedModule() }
+        val previous = ExplanationPolicy.visible
+        try {
+            ExplanationPolicy.visible = true
+            // B1: the database sends solucion = null until the user answered the question (or finished an attempt with it); still 200
+            upstream.handler = { _, _ -> SupabaseRawResponse(200, detail().replace(Regex(""""solucion":\{[^}]*\}"""), """"solucion":null""")) }
+            val r = createClient { }.getAs("/api/v1/app/opositeca/guardados/pregunta/$question")
+            val body = r.bodyAsText()
+            assertEquals(HttpStatusCode.OK, r.status, body)
+            assertConforms("D4-29", "200", body)
+            val item = obj(body)
+            assertEquals("UNANSWERED", item["status"]!!.jsonPrimitive.content)
+            assertNull(item["correctAnswer"], "not resolved yet: no correct answer")
+            assertNull(item["explanation"], "not resolved yet: no explanation")
+        } finally {
+            ExplanationPolicy.visible = previous
+        }
+    }
+
+    @Test
     fun notSavedOrNoAccessIs404AndABadIdIs400BeforeTheDatabase() = testApplication {
         application { savedModule() }
         val client = createClient { }
