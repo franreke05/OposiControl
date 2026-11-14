@@ -63,7 +63,7 @@ class V1PracticaExamenesMigrationTest {
         insert into public.soluciones_pregunta (pregunta_id, opcion_correcta_id, razonamiento)
           select ('f23b0000-0000-0000-0000-0000000000' || lpad(n::text, 2, '0'))::uuid, ('0c23e000-0000-0000-0000-0000000000' || lpad(n::text, 2, '0'))::uuid, 'x' from generate_series(1, 11) n;
         insert into public.preguntas_examen (examen_id, pregunta_id, posicion, numero_en_examen, anulada, motivo_anulacion, es_reserva, orden_reserva)
-          select '$free'::uuid, ('f23b0000-0000-0000-0000-0000000000' || lpad(n::text, 2, '0'))::uuid, n, n, false, null, false, null from generate_series(1, 3) n
+          select '$free'::uuid, ('f23b0000-0000-0000-0000-0000000000' || lpad(n::text, 2, '0'))::uuid, n, n, false, null::text, false, null::integer from generate_series(1, 3) n
           union all select '$granted'::uuid, '${q(4)}'::uuid, 1, 1, false, null, false, null
           union all select '$locked'::uuid, '${q(5)}'::uuid, 1, 1, false, null, false, null
           union all select '$foreign'::uuid, '${q(6)}'::uuid, 1, 1, false, null, false, null
@@ -145,7 +145,7 @@ class V1PracticaExamenesMigrationTest {
         val a = c.unico("select public.app_practice_availability('$user')::text")!!
         assertEquals("2", c.unico("select ('$a'::jsonb ->> 'examenes_adquiridos')"), "granted + granted2 (two grants, once); not free (no grant), foreign, draft, expired or future: $a")
         assertEquals("5", c.unico("select ('$a'::jsonb ->> 'preguntas')"))
-        c.ejecutar("update public.perfiles_usuario set especialidad_principal_id = null where usuario_id = '$user'")
+        c.ejecutar("begin; set local session_replication_role = replica; update public.perfiles_usuario set especialidad_principal_id = null where usuario_id = '$user'; commit;")
         assertEquals("0", c.unico("select public.app_practice_availability('$user') ->> 'examenes_adquiridos'"), "no specialty: nothing acquired in scope")
         assertEquals("0", c.unico("select public.app_practice_availability(null) ->> 'examenes_adquiridos'"))
     }
