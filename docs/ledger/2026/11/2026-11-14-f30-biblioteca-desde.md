@@ -4,10 +4,10 @@ Rama local `f30/biblioteca-desde` desde develop `08ea7f0f`. Sin push. MAIN/VPS s
 
 ## FA50 — la pregunta guardada en la hoja de la Biblioteca (aditivo)
 
-- D4-27 `GET /api/v1/app/opositeca/guardados/pregunta/{preguntaId}`: solo si el usuario la guardó Y puede abrir alguno de sus exámenes (la regla de D4-24: activo, publicado, veredicto FREE / GRANTED / SUBSCRIPTION, la especialidad primero). Si no: 404 `NOT_FOUND` (no guardada, sin acceso, inactiva o inexistente son lo mismo). No toca el limitador diario: no gasta cupo.
+- D4-29 (renumerada desde D4-27 en la integracion servidor 1.3, 2026-11-14: D4-27 quedo para el detalle de noticia de F25) `GET /api/v1/app/opositeca/guardados/pregunta/{preguntaId}`: solo si el usuario la guardó Y puede abrir alguno de sus exámenes (la regla de D4-24: activo, publicado, veredicto FREE / GRANTED / SUBSCRIPTION, la especialidad primero). Si no: 404 `NOT_FOUND` (no guardada, sin acceso, inactiva o inexistente son lo mismo). No toca el limitador diario: no gasta cupo.
 - Cuerpo = el MISMO esquema que un elemento de la revisión D2-65 (`ReviewItem`) para una pregunta fuera de un intento: contenido y solución VIVOS (las funciones que congelan las revisiones), `posicion` en el examen elegido, `status` `ANNULLED` (anulada en ese examen: sin `correctAnswer` ni `explanation`, como la revisión) o `UNANSWERED`, respuestas y tiempos vacíos; más `examenId`, `examenTitulo`, `tipoExamen` (`rafaga` | `razonado` | `inmersivo`, el enum canónico `TipoExamen` del contrato) y `anulada`. `explanation` sigue la MISMA política que D2-65 (`EXPLANATIONS_VISIBLE`).
 - Examen elegido: un enlace donde la pregunta NO está anulada primero, luego la publicación más reciente.
-- D4-28 `GET /api/v1/app/opositeca/guardados/pregunta/{preguntaId}/recursos/{recursoId}`: misma autorización que D4-27 y luego el recurso debe ser uno de los recursos V1 vivos de la pregunta; URL firmada de vida corta como D2-66 (`AttemptResourceAccess`). Necesario para que el inmersivo abra su recurso sin intento.
+- D4-28 `GET /api/v1/app/opositeca/guardados/pregunta/{preguntaId}/recursos/{recursoId}`: misma autorización que D4-29 y luego el recurso debe ser uno de los recursos V1 vivos de la pregunta; URL firmada de vida corta como D2-66 (`AttemptResourceAccess`). Necesario para que el inmersivo abra su recurso sin intento.
 - D4-24 (lista): `pregunta.tipoExamen` (opcional) y la MISMA elección de examen; consecuencia: una pregunta anulada en todos sus exámenes accesibles ahora sale `accesible` (su detalle dice `anulada`). Antes salía no accesible.
 
 ## FA51 — `desde` en D2-08 (aditivo, sin migración)
@@ -24,7 +24,7 @@ Rama local `f30/biblioteca-desde` desde develop `08ea7f0f`. Sin push. MAIN/VPS s
 
 1. Requisito: F20 (`20261109100000`) aplicada y registrada en MAIN (independiente de F23).
 2. `MANIFEST=ops/deploy/v1/main-migrations-2026-11-f30.manifest bash ops/deploy/v1/apply-main-migration.sh supabase/migrations/20261114200000_v1_biblioteca_pregunta.sql` → `aplicada, VERIFY = 0, registrada`.
-3. DESPUÉS, imagen nueva de Ktor (D4-27 / D4-28 llaman a la función nueva; `desde` es solo Ktor).
+3. DESPUÉS, imagen nueva de Ktor (D4-29 / D4-28 llaman a la función nueva; `desde` es solo Ktor).
 4. Rollback: imagen anterior primero; luego el bloque ROLLBACK y `delete from supabase_migrations.schema_migrations where version = '20261114200000'`.
 
 ## Verificación

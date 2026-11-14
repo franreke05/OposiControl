@@ -210,7 +210,7 @@ class SavedItemsRoutesTest {
         assertEquals(HttpStatusCode.BadRequest, client.getAs("/api/v1/app/opositeca?limit=0").status)
     }
 
-    // ---------- FA50: D4-24 tipoExamen, D4-27 detalle, D4-28 recurso ----------
+    // ---------- FA50: D4-24 tipoExamen, D4-29 detalle, D4-28 recurso ----------
 
     private val docs = com.oposicontrol.backend.openapi.OpenApiDocs.locate()
     private val checker = com.oposicontrol.backend.openapi.SchemaChecker(docs)
@@ -244,7 +244,7 @@ class SavedItemsRoutesTest {
         val body = r.bodyAsText()
         assertEquals(HttpStatusCode.OK, r.status, body)
         assertEquals("no-store", r.headers[HttpHeaders.CacheControl])
-        assertConforms("D4-27", "200", body)
+        assertConforms("D4-29", "200", body)
         val item = obj(body)
         assertEquals(question, item["preguntaId"]!!.jsonPrimitive.content)
         assertEquals(7, item["posicion"]!!.jsonPrimitive.content.toInt())
@@ -282,7 +282,7 @@ class SavedItemsRoutesTest {
             assertEquals("razonado", shown["tipoExamen"]!!.jsonPrimitive.content)
             upstream.handler = { _, _ -> SupabaseRawResponse(200, detail(anulada = true)) }
             val annulled = client.getAs("/api/v1/app/opositeca/guardados/pregunta/$question").bodyAsText()
-            assertConforms("D4-27", "200", annulled)
+            assertConforms("D4-29", "200", annulled)
             val a = obj(annulled)
             assertEquals("ANNULLED", a["status"]!!.jsonPrimitive.content)
             assertEquals("true", a["anulada"]!!.jsonPrimitive.content)

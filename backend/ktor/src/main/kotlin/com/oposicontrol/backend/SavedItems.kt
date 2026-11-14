@@ -27,7 +27,7 @@ import kotlinx.serialization.json.put
 //   D4-21 DELETE /api/v1/app/opositeca/guardados/{tipo}/{targetId}   quitar (idempotente: 204 este o no)
 //   D4-24 GET    /api/v1/app/opositeca                               la OposiTeca (keyset `guardadoEn desc, id desc`)
 //   D4-26 GET    /api/v1/app/opositeca/guardados/{tipo}?ids=...      cuales de hasta 50 ids estan guardados (estado inicial del corazon)
-//   D4-27 GET    /api/v1/app/opositeca/guardados/{tipo}/{targetId}                    FA50: la pregunta guardada entera (hoja de la Biblioteca), sin cupo
+//   D4-29 GET    /api/v1/app/opositeca/guardados/{tipo}/{targetId}                    FA50: la pregunta guardada entera (hoja de la Biblioteca), sin cupo
 //   D4-28 GET    /api/v1/app/opositeca/guardados/{tipo}/{targetId}/recursos/{recursoId} FA50: URL firmada de un recurso de esa pregunta
 //
 // Identidad = SOLO el `sub` del JWT. El acceso (puerta de especialidad + veredicto unico) y el tope los decide la base, en UNA
@@ -86,7 +86,7 @@ internal data class SavedQuestionDto(
 )
 
 /**
- * D4-27 (FA50): la MISMA forma que un elemento de la revision (D2-65 `ReviewItem`) para una pregunta suelta, mas el examen elegido. No hay intento: `status` es ANNULLED
+ * D4-29 (FA50): la MISMA forma que un elemento de la revision (D2-65 `ReviewItem`) para una pregunta suelta, mas el examen elegido. No hay intento: `status` es ANNULLED
  * (anulada en ese examen) o UNANSWERED, y respuesta / tiempos van vacios. Contenido y solucion VIVOS (las mismas funciones que congelan las revisiones).
  */
 @Serializable
@@ -209,7 +209,7 @@ internal class SavedItemsService(
     private val sign: ((String, String, Int) -> String)? = null,
     private val clock: () -> java.time.Instant = java.time.Instant::now,
 ) {
-    // ----- D4-27 (FA50) -----
+    // ----- D4-29 (FA50) -----
     /**
      * La pregunta guardada entera para la hoja de la Biblioteca. Solo si el usuario la guardo Y puede abrir alguno de sus examenes (lo decide la base, una funcion);
      * si no, 404 NOT_FOUND (no guardada, sin acceso o inexistente: indistinguibles). No toca el limitador diario: no gasta cupo. Correccion y explicacion siguen las
@@ -253,7 +253,7 @@ internal class SavedItemsService(
     }
 
     // ----- D4-28 (FA50) -----
-    /** URL firmada y temporal de un recurso de la pregunta guardada (misma autorizacion que D4-27; misma validacion de bucket y ruta que D2-66). */
+    /** URL firmada y temporal de un recurso de la pregunta guardada (misma autorizacion que D4-29; misma validacion de bucket y ruta que D2-66). */
     suspend fun resourceAccess(userId: CanonicalUserId, questionId: String, resourceId: String): AttemptResourceAccess {
         val row = detailRow(userId, questionId)
         val resource = row.contenido?.recursos?.firstOrNull { it.id == resourceId }
@@ -390,7 +390,7 @@ internal fun Route.savedItemsRoutes(runtime: SavedItemsRuntime?) {
                 runtime!!.service.unsave(identity.userId, tipo, target)
                 call.respond(HttpStatusCode.NoContent)
             }
-            // FA50: la pregunta guardada en la hoja de la Biblioteca (D4-27) y la URL firmada de uno de sus recursos (D4-28). Lectura: limitador CATALOG_READ.
+            // FA50: la pregunta guardada en la hoja de la Biblioteca (D4-29) y la URL firmada de uno de sus recursos (D4-28). Lectura: limitador CATALOG_READ.
             // Mismo recurso que D4-20 / D4-21 (`/{tipo}/{targetId}`, tipo = pregunta): GET = leerlo entero.
             get("/{tipo}/{targetId}") {
                 val identity = call.savedGate(runtime, SavedOperation.READ)

@@ -86,7 +86,7 @@ components:
         operationId: getSavedQuestionDetail
         summary: 'One saved question with its options, correct answer, explanation and resources (Library sheet)'
         tags: [opositeca]
-        x-contract-id: D4-27
+        x-contract-id: D4-29
         x-implementation: TARGET
         x-slice: 5
         x-roles: [USER]
@@ -178,7 +178,7 @@ components:
         x-pagination: CURSOR
         x-idempotency: NONE
         x-error-codes: [VALIDATION, INVALID_CURSOR, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
-        description: 'Keyset page ordered by guardadoEn descending then id descending (the only order in V1). Filter: tipo (only pregunta exists). The access is recomputed at read time: while the caller can open an exam of the question, accesible is true and pregunta carries the title and the exam (the accessible exam with the latest publication); when it cannot, the item STAYS (so it can be removed) with accesible false and pregunta null: the content of an exam the user can no longer open is not served. No explanation and no resources are returned (DEC-025 is open). FA50 (2026-11-14): pregunta also carries tipoExamen; the exam is chosen like D4-27 (a link where the question is not annulled first, then the latest publication), so a question annulled in every accessible exam is now accesible (its D4-27 detail says anulada) and an item is accesible exactly when its detail opens.'
+        description: 'Keyset page ordered by guardadoEn descending then id descending (the only order in V1). Filter: tipo (only pregunta exists). The access is recomputed at read time: while the caller can open an exam of the question, accesible is true and pregunta carries the title and the exam (the accessible exam with the latest publication); when it cannot, the item STAYS (so it can be removed) with accesible false and pregunta null: the content of an exam the user can no longer open is not served. No explanation and no resources are returned (DEC-025 is open). FA50 (2026-11-14): pregunta also carries tipoExamen; the exam is chosen like D4-29 (a link where the question is not annulled first, then the latest publication), so a question annulled in every accessible exam is now accesible (its D4-29 detail says anulada) and an item is accesible exactly when its detail opens.'
         security:
           - bearerAuth: []
         parameters:
@@ -230,7 +230,7 @@ components:
         x-pagination: NONE
         x-idempotency: NONE
         x-error-codes: [VALIDATION, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, NOT_FOUND, RESOURCE_NOT_FOUND, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
-        description: 'FA50 (additive): same authorization as D4-27 (saved by the caller and an accessible exam), then the resource must be one of the LIVE V1 resources of that question (image, audio, video); Ktor signs a short-lived Storage URL exactly like D2-66 (same bucket and path rules, never the internal path).'
+        description: 'FA50 (additive): same authorization as D4-29 (saved by the caller and an accessible exam), then the resource must be one of the LIVE V1 resources of that question (image, audio, video); Ktor signs a short-lived Storage URL exactly like D2-66 (same bucket and path rules, never the internal path).'
         security:
           - bearerAuth: []
         parameters:
@@ -259,7 +259,7 @@ components:
             $ref: '../common/errors.yaml#/components/responses/Forbidden'
           '404':
             $ref: '../common/errors.yaml#/components/responses/NotFound'
-            description: 'NOT_FOUND (as D4-27) or RESOURCE_NOT_FOUND (not a current V1 resource of the question).'
+            description: 'NOT_FOUND (as D4-29) or RESOURCE_NOT_FOUND (not a current V1 resource of the question).'
           '429':
             $ref: '../common/errors.yaml#/components/responses/RateLimited'
           '503':
