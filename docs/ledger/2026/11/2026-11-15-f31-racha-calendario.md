@@ -47,3 +47,11 @@ Peticion del propietario: el panel "Manten tu racha" dibuja el calendario del me
 - Ktor `ChallengeRoutesTest` (2 nuevas: cuerpo servido tal cual y conforme al OpenAPI, `p_mes`, identidad = `sub`, limite READ, `private, no-store` unica; validaciones antes de la base, rango -> `OUT_OF_RANGE`, perfil ausente, 401). Suite Ktor completa: 2582 tests, solo falla `openApiIsFrozenNothingUnderOpenapiDiffersFromHead` antes del commit (compara con HEAD; esperado).
 - Inventarios regenerados (`routes.bot.txt`, `routes.combined.txt`) y fila en `route-profiles.tsv`.
 - Gate PG17 y ensayo `docs/ledger/2026/11/rehearse-f31-2026-11.sh`: resultados en la seccion final (tras fusionar el hotfix).
+
+## Resultados finales (2026-11-15, rama con F31 + F31b + F31c + HF1 fusionado `3e3f1cb0`)
+
+- Gate PG17 (`scripts/db-pg17-gate.sh`): 59 pendientes aplicadas en orden con VERIFY = 0, `assertions.sql`, rollback inverso == bootstrap, re-aplicacion == primera, carreras de tienda e intento: `db-pg17-gate OK`.
+- Test del gate (`scripts/db-pg17-gate.test.sh`): 21 escenarios OK.
+- Ensayo `docs/ledger/2026/11/rehearse-f31-2026-11.sh` (forma de MAIN de hoy + HF1, las 3 migraciones F31 con `apply-main-migration.sh` y el manifiesto f31): negativas STOP, VERIFY = 0 (4 / 7 / 2 filas), re-aplicar = STOP, sonda del calendario antes/despues, ROLLBACK con huella == punto de partida, re-aplicacion == primera: `F31-2026-11-REHEARSAL OK`.
+- Suites: Ktor completa 2584 tests verde; dbtest `com.oposicontrol.dbtest.v1.*` 125 tests verde.
+- Imagen: UNA imagen Ktor nueva para F31/F31b/F31c, DESPUES de aplicar HF1 y las 3 migraciones (la imagen nueva envia `p_admite_reintento_pago` y llama a `app_racha_calendario` / `app_contenido_version`).

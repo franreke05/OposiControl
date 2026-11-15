@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Ensayo LOCAL de F31 (calendario de racha, 20261115100000, FA56 / D3-26) sobre un punto de partida con la forma de MAIN de HOY (2026-11-15):
+# Ensayo LOCAL de F31 (las 3 migraciones del manifiesto f31: calendario de racha 20261115100000 FA56, reto todo o nada 20261115100100 FA57, version de contenido 20261115100200 FA58) sobre un punto de partida con la forma de MAIN de HOY (2026-11-15):
 # MAIN tras el lanzamiento V1 (2026-10-22) + la ventana servidor 2026-11 (desplegada el 2026-11-09) + F20 (20261109100000) + la ventana 1.3
-# (20261109100100 .. 20261114500000, desplegada con b9a5c1e3), es decir TODAS las pendientes de supabase/baseline/PENDING_MIGRATIONS.txt menos las del
+# (20261109100100 .. 20261114500000, desplegada con b9a5c1e3) + el hotfix HF1 (20261115000000, su predecesora), es decir TODAS las pendientes de supabase/baseline/PENDING_MIGRATIONS.txt menos las del
 # manifiesto F31, reconstruido igual que docs/ledger/2026/11/rehearse-server-2026-11.sh. NO toca MAIN ni la red: contenedor propio y desechable
 # `f31-2026-11-rehearsal` (PG17 Supabase 17.6.1.171 por el mismo digest que el gate), sin puerto publicado; se borra al terminar.
 # Ventana ensayada con el MISMO script y manifiesto que usara el propietario:
