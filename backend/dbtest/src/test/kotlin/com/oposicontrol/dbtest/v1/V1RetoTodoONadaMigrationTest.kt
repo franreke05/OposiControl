@@ -189,6 +189,40 @@ class V1RetoTodoONadaMigrationTest {
         assertEquals("1", c.unico("select count(*)::text from pg_proc where proname = 'app_answer_daily_challenge' and pronamespace = 'public'::regnamespace"), "one overload")
     }
 
+    /** Review Control 2026-11-15 (FA52c): the price is half of what the free-OT caps let the claim credit NOW; nothing collectible = no offer. */
+    @Test
+    fun thePriceFollowsTheFreeOtCapsAndNothingCollectibleMeansNoOffer() = V1Db.escenario { c ->
+        c.world(2)
+        val (full, partial) = listOf(user(1), user(2))
+        listOf(full, partial).forEach { c.streak(it, 4) }  // today would pay 40 base + 20 bonus = 60 (price 30 without caps)
+        // free OT already earned today through the one writer (daily cap 100): 100 = full, 70 = 30 left
+        c.unico("select estado from public.app_credit_free_ot('$full', 'referido', 100, 'referido', null, 'f31b-cap-full', '{}'::jsonb)")
+        c.unico("select estado from public.app_credit_free_ot('$partial', 'referido', 70, 'referido', null, 'f31b-cap-partial', '{}'::jsonb)")
+        assertNull(c.j(c.today(full), "reintentoPago"), "cap reached: no price shown")
+        val r = c.answer(full, 1, ko(1))
+        assertEquals("false|${ok(1)}|1", "${c.j(r, "esCorrecta")}|${c.j(r, "opcionCorrectaId")}|${c.j(r, "respondidas")}", "nothing collectible: final at once, as for an old client")
+        assertNull(c.j(r, "reintentoPago"))
+        assertEquals("0", c.unico("select count(*)::text from public.reto_reintentos_pago where usuario_id = '$full'"))
+        // 30 left: the base (40) would be deferred, the bonus (20) fits -> collectible 20 -> price 10
+        assertEquals("10", c.j(c.today(partial), "reintentoPago,precioTickets"))
+        assertEquals("10", c.j(c.answer(partial, 1, ko(1)), "reintentoPago,precioTickets"))
+    }
+
+    /** Review Control 2026-11-15 (point 5): a doble oportunidad bought WHILE a paid retry is held is not used for that question. */
+    @Test
+    fun aDobleOportunidadBoughtWhileAPaidRetryIsHeldWaitsForTheNextQuestion() = V1Db.escenario { c ->
+        c.world(1)
+        val u = user(1)
+        assertEquals("true", c.j(c.answer(u, 1, ko(1)), "reintentoPago,disponible"))
+        c.buy(u, "doble_oportunidad")
+        c.fails("ANSWER_LOCKED") { c.answer(u, 1, ok(1), usar = true) }  // the held question only takes the paid decision
+        val declined = c.answer(u, 1, ok(1), pagar = false)
+        assertEquals("false|${ok(1)}", "${c.j(declined, "esCorrecta")}|${c.j(declined, "opcionCorrectaId")}", "declined = final: the new consumable is not offered")
+        assertNull(c.j(declined, "oportunidad"))
+        assertEquals("1", c.j(c.today(u), "consumibles,oportunidades"), "not spent")
+        assertEquals("true", c.j(c.answer(u, 2, ko(2)), "oportunidad,disponible"), "the next wrong answer gets the consumable first")
+    }
+
     @Test
     fun theVerifyBlockAndTheRollbackRestoreTheOldFunctions() = V1Db.escenario { c ->
         val verify = Slice0Db.verifyDe("supabase/migrations/$migration.sql")

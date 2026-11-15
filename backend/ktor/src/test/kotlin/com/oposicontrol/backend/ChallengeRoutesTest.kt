@@ -55,6 +55,7 @@ class ChallengeRoutesTest {
     private val upstream = Upstream()
     private val limited = CopyOnWriteArrayList<ChallengeOperation>()
     private val signed = CopyOnWriteArrayList<Triple<String, String, Int>>()
+    private val ipChecks = java.util.concurrent.atomic.AtomicInteger()
 
     private fun Application.challengeModule() {
         install(ContentNegotiation) { json(Json { ignoreUnknownKeys = true; explicitNulls = false }) }
@@ -67,6 +68,7 @@ class ChallengeRoutesTest {
                     ChallengeService(upstream),
                     signer = { b, p, t -> signed += Triple(b, p, t); "https://signed.example/$p" },
                     limit = { op, _ -> limited += op },
+                    ipLimit = { ipChecks.incrementAndGet() },
                 ),
             )
         }
@@ -400,7 +402,8 @@ class ChallengeRoutesTest {
         val (fn, body) = upstream.rpcs.single()
         assertEquals("app_contenido_version", fn)
         assertEquals(TEST_UID, obj(body)["p_usuario"]!!.jsonPrimitive.content)
-        assertEquals(listOf(ChallengeOperation.READ), limited.toList())
+        assertEquals(listOf(ChallengeOperation.CONTENT_VERSION), limited.toList(), "its own cheap bucket, not CATALOG_READ")
+        assertEquals(1, ipChecks.get(), "the IP limit runs first")
         // unchanged: 304 without body, same ETag
         val same = client.get("/api/v1/app/contenido/version") { header(HttpHeaders.Authorization, "Bearer $TEST_TOKEN"); header(HttpHeaders.IfNoneMatch, etag) }
         assertEquals(HttpStatusCode.NotModified, same.status)

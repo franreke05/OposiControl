@@ -38,6 +38,8 @@ import kotlinx.serialization.json.put
 internal enum class ChallengeOperation(val limit: OposiBotsAuthOperation) {
     READ(OposiBotsAuthOperation.CATALOG_READ),
     WRITE(OposiBotsAuthOperation.CHALLENGE_WRITE),
+    /** FA58 (D2-69): cubo propio, 4 por minuto y usuario (no gasta CATALOG_READ). */
+    CONTENT_VERSION(OposiBotsAuthOperation.CONTENT_VERSION),
 }
 
 @Serializable
@@ -63,6 +65,8 @@ internal class ChallengeRuntime(
     val service: ChallengeService,
     val signer: ((String, String, Int) -> String)? = null,
     val limit: suspend (ChallengeOperation, CanonicalUserId) -> Unit = { _, _ -> },
+    /** FA58 (D2-69): limite por IP (2000 por minuto, alto por CGNAT y academias) ANTES de verificar el token. Por defecto no limita (pruebas). */
+    val ipLimit: suspend (ApplicationCall) -> Unit = { },
 ) {
     companion object {
         fun fromEnvironment(
@@ -80,6 +84,12 @@ internal class ChallengeRuntime(
                 limit = { operation, userId ->
                     if (limiter != null) {
                         val decision = limiter.checkSubject(operation.limit, userId.value)
+                        if (!decision.allowed) throw CanonicalErrorCode.RATE_LIMITED.exception(retryAfterSeconds = decision.retryAfterSeconds.coerceIn(1, 3_600).toInt())
+                    }
+                },
+                ipLimit = { call ->
+                    if (auth != null) {
+                        val decision = auth.rateLimiter.checkIp(OposiBotsAuthOperation.CONTENT_VERSION, call.trustedClientIp(auth.configuration))
                         if (!decision.allowed) throw CanonicalErrorCode.RATE_LIMITED.exception(retryAfterSeconds = decision.retryAfterSeconds.coerceIn(1, 3_600).toInt())
                     }
                 },
@@ -251,7 +261,8 @@ internal fun Route.challengeRoutes(runtime: ChallengeRuntime?) {
         }
         get("/contenido/version") {
             // FA58: la app lo consulta para saber si recargar; revalidacion siempre (no-cache) y 304 mientras el ETag no cambie
-            val identity = call.challengeGate(runtime, ChallengeOperation.READ, cacheControl = "private, no-cache")
+            runtime?.ipLimit?.invoke(call)
+            val identity = call.challengeGate(runtime, ChallengeOperation.CONTENT_VERSION, cacheControl = "private, no-cache")
             requireOnlyKnownQueryParams(call.request.queryParameters, emptySet())
             val (body, etag) = runtime!!.service.contentVersion(identity.userId)
             call.response.header(HttpHeaders.ETag, etag)

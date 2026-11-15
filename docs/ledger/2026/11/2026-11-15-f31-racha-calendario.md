@@ -55,3 +55,8 @@ Peticion del propietario: el panel "Manten tu racha" dibuja el calendario del me
 - Ensayo `docs/ledger/2026/11/rehearse-f31-2026-11.sh` (forma de MAIN de hoy + HF1, las 3 migraciones F31 con `apply-main-migration.sh` y el manifiesto f31): negativas STOP, VERIFY = 0 (4 / 7 / 2 filas), re-aplicar = STOP, sonda del calendario antes/despues, ROLLBACK con huella == punto de partida, re-aplicacion == primera: `F31-2026-11-REHEARSAL OK`.
 - Suites: Ktor completa 2584 tests verde; dbtest `com.oposicontrol.dbtest.v1.*` 125 tests verde.
 - Imagen: UNA imagen Ktor nueva para F31/F31b/F31c, DESPUES de aplicar HF1 y las 3 migraciones (la imagen nueva envia `p_admite_reintento_pago` y llama a `app_racha_calendario` / `app_contenido_version`).
+
+## Revision Control 2026-11-15 (APTO CON CAMBIOS) — punto 2, migracion enmendada en su sitio
+
+- Nuevo estado `PERDIDO`: dia PASADO no jugado (sin fila o sin respuesta definitiva) con reto activo de la especialidad del usuario mientras la racha seguia viva (su ultimo dia de racha es gap-free hasta ese dia, `private.reto_streak_gap_free`): el dia en que se perdio la racha por no jugar. Solo ese dia; los siguientes sin jugar (sin racha que perder) siguen `SIN_ACTIVIDAD`, igual que los dias sin reto. OpenAPI: enum de `StreakCalendarDay.estado`. Prueba en `aMonthShowsPassedFailedProtectedPendingAndIdleDays` (dia 15 PERDIDO; 9 y 11 SIN_ACTIVIDAD).
+- Mapeo Figma sugerido: PERDIDO = "perdido"; FALLADO = reto jugado y fallado.

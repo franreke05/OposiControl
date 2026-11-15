@@ -6,6 +6,6 @@
 # F31b (FA57, reto todo o nada + reintento de pago, acta docs/ledger/2026/11/2026-11-15-f31b-reto-todo-o-nada.md) encadena tras el calendario.
 # F31c (FA58, version de contenido, acta docs/ledger/2026/11/2026-11-15-f31c-contenido-version.md) encadena tras F31b.
 # Si cambia el blob, se rehacen este manifiesto y el ensayo (docs/ledger/2026/11/rehearse-f31-2026-11.sh).
-20261115100000 56ee248941c6 20261115000000 apply
-20261115100100 6931624001d8 20261115100000 apply
+20261115100000 cb09c6046fdd 20261115000000 apply
+20261115100100 f99cf3b15ac8 20261115100000 apply
 20261115100200 f306dd6982d6 20261115100100 apply

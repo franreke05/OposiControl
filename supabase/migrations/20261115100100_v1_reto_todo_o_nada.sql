@@ -418,6 +418,7 @@
 --  where q.reto_id = d.id and d.fecha >= private.reto_today(clock_timestamp()) and d.aciertos_necesarios <> (2 * q.n + 2) / 3;
 -- drop function if exists private.reto_reintento_cargar(uuid, uuid, uuid, integer, date);
 -- drop function if exists private.reto_reintento_precio(uuid, uuid, timestamptz);
+-- drop function if exists private.reto_cobrable_tipo(integer, text, integer, integer);
 -- drop table if exists public.reto_reintentos_pago;
 -- notify pgrst, 'reload schema';
 -- commit;
@@ -456,7 +457,9 @@
 --                or has_function_privilege('authenticated', 'private.reto_reintento_precio(uuid,uuid,timestamptz)', 'execute')
 --                or to_regprocedure('private.reto_reintento_cargar(uuid,uuid,uuid,integer,date)') is null
 --                or has_function_privilege('anon', 'private.reto_reintento_cargar(uuid,uuid,uuid,integer,date)', 'execute')
---                or has_function_privilege('authenticated', 'private.reto_reintento_cargar(uuid,uuid,uuid,integer,date)', 'execute') then 1 else 0 end)::bigint;
+--                or has_function_privilege('authenticated', 'private.reto_reintento_cargar(uuid,uuid,uuid,integer,date)', 'execute')
+--                or to_regprocedure('private.reto_cobrable_tipo(integer,text,integer,integer)') is null
+--                or has_function_privilege('authenticated', 'private.reto_cobrable_tipo(integer,text,integer,integer)', 'execute') then 1 else 0 end)::bigint;
 -- VERIFY-END
 
 begin;
@@ -491,8 +494,33 @@ create table if not exists public.reto_reintentos_pago (
 alter table public.reto_reintentos_pago enable row level security;
 revoke all on table public.reto_reintentos_pago from public, anon, authenticated, service_role;
 
--- ---- 2. the price: half of what passing TODAY would pay (base of the user plan + the streak bonus of the day it would be), at least 1 OT.
+-- ---- 2. the price: half of what passing TODAY would let the user COLLECT NOW (base of the user plan + the streak bonus of the day it would be, each one
+--         and their sum capped by the free-OT caps as the claim would credit them), at least 1 OT; 0 = nothing collectible = no paid retry offer.
 --         Same plan and streak rules as the completion in app_answer_daily_challenge (paid plan = its benefits, trial/free = the Gratuito plan).
+-- per-type part of a reward the claim can credit now: the type switch and the per-type daily / weekly caps of private.free_ot_apply (an amount alone
+-- above a cap is rejected there, so it is 0 here).
+create or replace function private.reto_cobrable_tipo(p_importe integer, p_tipo text, p_dia integer, p_semana integer)
+returns integer
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_cap_d integer := private.config_int('tope_ot_' || p_tipo || '_dia', 0);
+  v_cap_w integer := private.config_int('tope_ot_' || p_tipo || '_semana', 0);
+begin
+  if p_importe <= 0 or private.config_int('ot_gratis_' || p_tipo || '_activa', 1) = 0 or (v_cap_d > 0 and p_importe > v_cap_d) or (v_cap_w > 0 and p_importe > v_cap_w) then
+    return 0;
+  end if;
+  if (v_cap_d > 0 and p_dia + p_importe > v_cap_d) or (v_cap_w > 0 and p_semana + p_importe > v_cap_w) then
+    return 0;  -- the claim would defer it: not collectible now
+  end if;
+  return p_importe;
+end;
+$$;
+revoke all on function private.reto_cobrable_tipo(integer, text, integer, integer) from public, anon, authenticated;
+
 create or replace function private.reto_reintento_precio(p_usuario uuid, p_esp uuid, p_now timestamptz)
 returns integer
 language plpgsql
@@ -510,6 +538,12 @@ declare
   v_bonus integer := 0;
   v_desde integer;
   v_max integer;
+  v_tz text := private.reto_tz();
+  v_hoy date;
+  v_d integer; v_w integer; v_bd integer; v_bw integer; v_rd integer; v_rw integer;
+  v_cobrable integer;
+  v_cap_d integer;
+  v_cap_w integer;
 begin
   select * into st from public.rachas_usuario x where x.usuario_id = p_usuario;
   v_hay := found;
@@ -529,7 +563,33 @@ begin
   if v_hyp >= v_desde and v_hyp < v_desde + v_max then
     v_bonus := coalesce(private.plan_benefit_int(v_plan, 'ot_bonus_racha', 0, private.config_int('max_ot_bonus_racha', 100)), 0);
   end if;
-  return greatest((v_base + v_bonus) / 2, 1);
+  -- review Control 2026-11-15 (FA52c): only what the free-OT caps let the claim credit NOW counts (the claim credits base as reto_diario and bonus as
+  -- bonus_racha through private.free_ot_apply: type switch, per-type and total daily / weekly windows over the same ledger rows). 0 collectible = no offer.
+  v_hoy := (p_now at time zone v_tz)::date;
+  select coalesce(sum(x.cantidad) filter (where x.d = v_hoy), 0), coalesce(sum(x.cantidad), 0),
+         coalesce(sum(x.cantidad) filter (where x.d = v_hoy and x.tipo = 'reto_diario'), 0), coalesce(sum(x.cantidad) filter (where x.tipo = 'reto_diario'), 0),
+         coalesce(sum(x.cantidad) filter (where x.d = v_hoy and x.tipo = 'bonus_racha'), 0), coalesce(sum(x.cantidad) filter (where x.tipo = 'bonus_racha'), 0)
+    into v_d, v_w, v_bd, v_bw, v_rd, v_rw
+    from (select t.cantidad, t.tipo, (t.creado_en at time zone v_tz)::date as d
+            from public.transacciones_cartera t
+           where t.usuario_id = p_usuario and t.tipo in ('reto_diario', 'bonus_racha', 'referido', 'reporte_validado') and t.cantidad > 0
+             and t.creado_en >= ((v_hoy - 6)::timestamp at time zone v_tz)) x;
+  v_base := private.reto_cobrable_tipo(v_base, 'reto_diario', v_bd, v_bw);
+  v_bonus := private.reto_cobrable_tipo(v_bonus, 'bonus_racha', v_rd, v_rw);
+  -- the total free-OT windows, credit by credit as the claim does (base first, then bonus): a part that does not fit is deferred, so not collectible now
+  v_cap_d := private.config_int('tope_ot_gratis_dia', 100);
+  v_cap_w := private.config_int('tope_ot_gratis_semana', 0);
+  if v_base > 0 and ((v_cap_d > 0 and v_d + v_base > v_cap_d) or (v_cap_w > 0 and v_w + v_base > v_cap_w)) then
+    v_base := 0;
+  end if;
+  if v_bonus > 0 and ((v_cap_d > 0 and v_d + v_base + v_bonus > v_cap_d) or (v_cap_w > 0 and v_w + v_base + v_bonus > v_cap_w)) then
+    v_bonus := 0;
+  end if;
+  v_cobrable := v_base + v_bonus;
+  if v_cobrable <= 0 then
+    return 0;
+  end if;
+  return greatest(v_cobrable / 2, 1);
 end;
 $$;
 revoke all on function private.reto_reintento_precio(uuid, uuid, timestamptz) from public, anon, authenticated;
@@ -783,6 +843,7 @@ begin
         'racha', private.reto_streak_json(p_usuario, v_today)));
     elsif not v_pagar then
       v_opcion := v_rp.opcion_id;  -- declined: the held wrong answer becomes final
+      v_pagado := true;  -- decided: final, no other retry for this question (not even a doble/triple bought while the offer was held)
       update public.reto_reintentos_pago x set estado = 'rechazado', actualizado_en = v_now
        where x.usuario_id = p_usuario and x.reto_id = p_reto and x.pregunta_id = p_pregunta;
     else
@@ -809,10 +870,13 @@ begin
       'consumiblesUsados', case when cardinality(v_usados) > 0 then to_jsonb(v_usados) end, 'racha', private.reto_streak_json(p_usuario, v_today)));
   end if;
   -- FA57: no retry use left (consumables go first; declining one, v_usar = false with uses left, is final): a wrong answer is HELD with a PAID retry offer,
-  -- once per question, only for a caller that declares support and did not refuse it up front (v_pagar = false)
+  -- once per question, only for a caller that declares support and did not refuse it up front (v_pagar = false), and only when passing would still pay
+  -- something collectible now (review Control 2026-11-15: price 0 = caps already reached = no offer, the answer is final as for an old client)
   if not v_ok and not v_pagado and not v_hay_rp and p_admite_reintento_pago and v_pagar is distinct from false
      and private.consumible_restantes(p_usuario, array['doble_oportunidad', 'triple_oportunidad'], v_now) = 0 then
     v_precio := private.reto_reintento_precio(p_usuario, r.especialidad_id, v_now);
+  end if;
+  if coalesce(v_precio, 0) > 0 then
     insert into public.reto_reintentos_pago (usuario_id, reto_id, pregunta_id, opcion_id, precio_tickets, estado, creado_en, actualizado_en)
     values (p_usuario, p_reto, p_pregunta, v_opcion, v_precio, 'pendiente', v_now, v_now);
     return jsonb_strip_nulls(jsonb_build_object('esCorrecta', false, 'estado', 'EN_CURSO', 'aciertos', g.aciertos, 'respondidas', g.progreso,
@@ -947,6 +1011,7 @@ declare
   v_recomp jsonb;
   v_tipo text;
   v_barra jsonb;
+  v_rp_precio integer;
 begin
   if p_usuario is null or not exists (select 1 from public.perfiles_usuario pf where pf.usuario_id = p_usuario) then
     raise exception using errcode = 'P0001', message = 'WALLET_INVALID_USER';
@@ -993,14 +1058,18 @@ begin
                                  and private.premium_active(e.es_premium, e.estado_suscripcion, e.fin_en, v_now)) then 'suscritos' else 'gratis' end;
   select jsonb_build_object('jugadores', coalesce(sum(k.jugadores), 0), 'superados', coalesce(sum(k.superados), 0)) into v_barra
     from public.reto_contadores k where k.reto_id = v_reto and k.tipo_usuario = v_tipo;
+  -- FA57: price of the paid retry while the reto is open (the frozen price of a held answer, otherwise what a wrong answer would cost now); 0 = nothing
+  -- collectible now under the free-OT caps = no offer, so no price is shown
+  if v_estado in ('DISPONIBLE', 'EN_CURSO') then
+    v_rp_precio := coalesce((select x.precio_tickets from public.reto_reintentos_pago x where x.usuario_id = p_usuario and x.reto_id = v_reto and x.estado = 'pendiente' order by x.creado_en limit 1),
+                            private.reto_reintento_precio(p_usuario, r.especialidad_id, v_now));
+  end if;
   return jsonb_strip_nulls(jsonb_build_object('estado', v_estado, 'retoId', r.id, 'empiezaEn', r.empieza_en, 'terminaEn', r.termina_en, 'necesarios', r.aciertos_necesarios,
     'aciertos', g.aciertos, 'preguntas', v_preguntas, 'recompensa', v_recomp, 'racha', private.reto_streak_json(p_usuario, v_today), 'barraGlobal', v_barra,
     'protectorUsado', (select s.tipo_servicio from public.activaciones_servicio_usuario a join public.servicios s on s.id = a.servicio_id where a.id = g.protector_usado_id),
     'consumibles', private.consumibles_reto_json(p_usuario, v_now),
     -- FA57: price of the paid retry (the frozen price of a held answer, otherwise what a wrong answer would cost now) and the balance, while the reto is open
-    'reintentoPago', case when v_estado in ('DISPONIBLE', 'EN_CURSO') then jsonb_build_object(
-      'precioTickets', coalesce((select x.precio_tickets from public.reto_reintentos_pago x where x.usuario_id = p_usuario and x.reto_id = v_reto and x.estado = 'pendiente' order by x.creado_en limit 1),
-                                private.reto_reintento_precio(p_usuario, r.especialidad_id, v_now)),
+    'reintentoPago', case when coalesce(v_rp_precio, 0) > 0 then jsonb_build_object('precioTickets', v_rp_precio,
       'saldoTickets', coalesce((select w.saldo_tickets from public.carteras_usuario w where w.usuario_id = p_usuario), 0)) end));
 end;
 $$;

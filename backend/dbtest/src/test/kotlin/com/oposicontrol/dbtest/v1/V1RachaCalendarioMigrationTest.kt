@@ -121,11 +121,14 @@ class V1RachaCalendarioMigrationTest {
             mapOf(
                 "01" to "SUPERADO", "02" to "PROTEGIDO", "03" to "SUPERADO", "04" to "FALLADO", "05" to "FALLADO", "06" to "PROTEGIDO", "07" to "SUPERADO",
                 "08" to "FALLADO", "09" to "SIN_ACTIVIDAD", "10" to "FALLADO", "11" to "SIN_ACTIVIDAD", "12" to "SUPERADO", "13" to "SUPERADO", "14" to "SUPERADO",
-                "15" to "SIN_ACTIVIDAD", "16" to "SIN_ACTIVIDAD", "17" to "SIN_ACTIVIDAD", "18" to "SIN_ACTIVIDAD", "19" to "SUPERADO", "20" to "PENDIENTE",
+                "15" to "PERDIDO", "16" to "SIN_ACTIVIDAD", "17" to "SIN_ACTIVIDAD", "18" to "SIN_ACTIVIDAD", "19" to "SUPERADO", "20" to "PENDIENTE",
             ).mapKeys { "2026-11-${it.key}" },
             e,
         )
         assertEquals("3", c.j(r, "rachaMes"), "01-03 and 12-14 are runs of 3 inside the month (10-30/31 never count)")
+        // review Control 2026-11-15: the 15th had a reto and was not played while the 12-14 streak was alive = the day the streak was LOST;
+        // the 9th and the 11th (opened, no answer) had a reto but no live streak to lose (the 8th already broke it) = SIN_ACTIVIDAD
+        assertEquals(listOf("PERDIDO", "SIN_ACTIVIDAD", "SIN_ACTIVIDAD"), listOf("15", "09", "11").map { e["2026-11-$it"] })
         assertEquals("1|7", "${c.j(r, "rachaActual")}|${c.j(r, "rachaMaxima")}", "the D3-04 numbers (19th passed, today pending)")
         assertEquals("2026-11-01", col0(c, "select (('${r}'::jsonb) -> 'dias' -> 0) ->> 'fecha'").single(), "days in order")
 
@@ -137,7 +140,7 @@ class V1RachaCalendarioMigrationTest {
 
         // the other user sees only their own rows
         val eb = c.estados(c.cal(b, null))
-        assertEquals("SUPERADO|SIN_ACTIVIDAD|SUPERADO", listOf("04", "05", "09").joinToString("|") { eb["2026-11-$it"]!! })
+        assertEquals("SUPERADO|PERDIDO|SUPERADO", listOf("04", "05", "09").joinToString("|") { eb["2026-11-$it"]!! })
         assertEquals("PENDIENTE", eb["2026-11-20"], "today without a row: the reto is still to be played")
 
         // range: from the month of the first reto up to the current month

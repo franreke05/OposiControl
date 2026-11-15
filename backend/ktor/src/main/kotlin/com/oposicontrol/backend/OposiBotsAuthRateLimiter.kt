@@ -84,6 +84,13 @@ internal enum class OposiBotsAuthOperation(
      */
     CATALOG_READ(240, 120, 60),
 
+    /**
+     * FA58 (D2-69, revision Control 2026-11-15): version de contenido para el refresco automatico, cubo PROPIO y barato (no gasta CATALOG_READ).
+     * 4 por minuto y usuario (la app consulta al volver a primer plano y al tirar para refrescar); por IP 2000 por minuto, alto a proposito para
+     * CGNAT de operadores moviles y redes de academias, donde cientos de usuarios comparten una IP publica (RISKS: NAT).
+     */
+    CONTENT_VERSION(2_000, 4, 60),
+
     /** E2-P02 / FA20: lecturas de cartera (D6-01, D6-02). 60 por minuto: la Home y la pantalla de cartera piden 1-2 por carga. */
     WALLET_READ(120, 60, 60),
 

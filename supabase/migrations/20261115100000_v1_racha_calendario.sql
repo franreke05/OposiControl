@@ -21,7 +21,10 @@
 --       FALLADO       completed and failed without a streak protector (a tickets-only protector keeps the reward, not the streak), or a PAST day whose reto was
 --                     started (progreso > 0) and never finished (its window closed: D3-16 also said FALLADO).
 --       PENDIENTE     today, not completed yet (the user has a specialty; without one there is no reto: SIN_ACTIVIDAD).
---       SIN_ACTIVIDAD no row, or a past row without any final answer (opened, never answered).
+--       PERDIDO       (review Control 2026-11-15) a PAST day not played (no row, or a row without any final answer) that had an active reto of the user
+--                     specialty while the streak was still alive: its last streak day is gap-free to that day (private.reto_streak_gap_free), so not playing it
+--                     broke the streak. Only that day is PERDIDO; later unplayed days (streak already gone) are SIN_ACTIVIDAD.
+--       SIN_ACTIVIDAD a past day not played with no reto for the user, or with no live streak to lose (also today without a specialty).
 --   * rachaMes = the longest run of streak days (SUPERADO or PROTEGIDO) INSIDE the month, continued with the same gap-free rule; days of the previous month never count.
 --   Only rows with dia (the V1 daily challenge) are read; legacy rows (dia NULL) and pre-V1 streak counters are not drawn.
 -- Index: ux_registros_reto_usuario_dia (usuario_id, dia) where dia is not null (20261022101200). The user only ever sees their OWN rows (p_usuario = JWT sub).
@@ -94,6 +97,7 @@ declare
   v_mejor integer := 0;
   v_cuenta boolean;
   v_estados jsonb := '{}'::jsonb;
+  v_dias_racha date[] := '{}';  -- every streak day (passed or saved) up to the month end, for PERDIDO
   v_racha jsonb;
   v_dias jsonb;
   g record;
@@ -132,6 +136,7 @@ begin
     end if;
     if v_cuenta then
       v_ultimo := g.dia;
+      v_dias_racha := v_dias_racha || g.dia;
     end if;
   end loop;
 
@@ -139,6 +144,11 @@ begin
            coalesce(v_estados ->> x.d::text,
                     case when x.d = v_hoy and v_esp is not null then 'PENDIENTE'
                          when x.d < v_hoy and r.progreso > 0 then 'FALLADO'
+                         -- review Control 2026-11-15: a past day not played (no final answer) that had an active reto of the user specialty while the streak was
+                         -- still alive (its last streak day is gap-free to that day, the answer's own rule) is the day the streak was LOST by not playing
+                         when x.d < v_hoy and v_esp is not null and coalesce(r.progreso, 0) = 0
+                              and exists (select 1 from public.retos_diarios rd where rd.fecha = x.d and rd.especialidad_id = v_esp and rd.activo)
+                              and private.reto_streak_gap_free((select max(s) from unnest(v_dias_racha) s where s < x.d), x.d, v_esp) then 'PERDIDO'
                          else 'SIN_ACTIVIDAD' end)) order by x.d), '[]'::jsonb)
     into v_dias
     from generate_series(v_mes::timestamp, v_fin::timestamp, interval '1 day') as x0(t)  -- timestamp WITHOUT zone: calendar days, never a DST-shifted hour

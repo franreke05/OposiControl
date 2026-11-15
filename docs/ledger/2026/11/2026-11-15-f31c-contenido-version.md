@@ -36,3 +36,9 @@ Rama local `f31/racha-calendario` (tercer commit). Sin push. MAIN/VPS sin tocar.
 
 - dbtest `V1ContenidoVersionMigrationTest`: cada token solo se mueve con lo suyo (examen de su especialidad publicado, otra especialidad y programado no; programado al vencer si; precio; despublicar; servicio visible/oculto; noticia borrador/otra especialidad/futura no, publicada y programada vencida si, tipo inactivo; paquete), usuario desconocido, sin tablas de noticias, VERIFY/ROLLBACK.
 - Ktor `ChallengeRoutesTest`: cuerpo, `private, no-cache`, ETag, 304 con `If-None-Match`, 200 con ETag nuevo al cambiar un area, consulta estricta, 401, 502 por cuerpo incompleto.
+
+## Revision Control 2026-11-15 (APTO CON CAMBIOS) — punto 3
+
+- Limite propio `CONTENT_VERSION` (`OposiBotsAuthRateLimiter.kt`): 4 por minuto y usuario y 2000 por minuto por IP de cliente (comprobado ANTES de verificar el token). Ya NO gasta CATALOG_READ. OpenAPI D2-69 lo documenta.
+- TECH_DEBT `DEBT-163`: pasar los tokens a `max(actualizado_en)` + recuento o a una tabla de versiones mantenida por triggers en vez de md5 sobre todo el conjunto.
+- RISKS `RISK-F31-NAT`: CGNAT/academias comparten IP; vigilar 429 por IP de esta ruta y subir el tope si hace falta.
