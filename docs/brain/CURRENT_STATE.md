@@ -8,6 +8,12 @@
 - F31b (FA57, decision del propietario 2026-11-15, mismo branch): reto SUPERADO solo con todas bien; reintento de PAGO tras un fallo sin oportunidades (precio = mitad de lo que pagaria superar hoy, min 1 OT; cargo `gasto` con `metadatos.op = reintento_reto`; uno por pregunta; 409 INSUFFICIENT_BALANCE). Migracion PENDIENTE `20261115100100_v1_reto_todo_o_nada`; acta `docs/ledger/2026/11/2026-11-15-f31b-reto-todo-o-nada.md`.
 - F31c (FA58, mismo branch): D2-69 `GET /api/v1/app/contenido/version` -> `{examenes, servicios, noticias, paquetes}` tokens opacos con ETag/304 para el refresco automatico. Migracion PENDIENTE `20261115100200_v1_contenido_version` (solo lectura); acta `docs/ledger/2026/11/2026-11-15-f31c-contenido-version.md`. Las tres migraciones F31 van con UNA imagen Ktor nueva al final.
 
+## HOTFIX HF1 servicios — 2026-11-15 (rama local `hf/servicios-seccion` desde develop `39b5dd85`, sin push) — `PREPARADO`, NO aplicado a MAIN
+
+- Bug en producción: Control no puede guardar servicios del Market (`42501 permission denied for function servicio_seccion_por_tipo`). El disparador `trg_servicios_seccion` (`20261114400000`) corría como invoker (`service_role` vía PostgREST) y llama a un helper privado revocado de PUBLIC.
+- Arreglo solo de base de datos: `20261115000000_v1_servicios_seccion_permiso`. La función del disparador pasa a SECURITY DEFINER y el helper sigue cerrado. El barrido encontró el mismo defecto, en producción desde el 2026-10-22, en `trg_configuracion_v1_bounds` (Control > Configuración da 42501 en cada guardado) y en `trg_soluciones_markup` / `trg_staging_markup` (razonados enriquecidos); se arreglan igual en la misma migración. Manifiesto `ops/deploy/v1/main-migrations-2026-11-hf1.manifest` (predecesora `20261114500000`). Sin imagen nueva. Acta `docs/ledger/2026/11/2026-11-15-hf1-servicios-seccion.md`, con el barrido de la ventana y la consulta de solo lectura para MAIN.
+- Las migraciones posteriores encadenan a `20261115000000`.
+
 ## Integracion servidor 1.3 — 2026-11-14 (rama local `integ/v1-3-server` desde develop `08ea7f0f`, sin push) — `PREPARADO`, NO desplegado, MAIN sin tocar
 
 - Fusionadas F20b, F14b, F23 (+F23b), F27, F25, F29, F30 y F28. Mas la correctiva `20261114500000_v1_ranking_lotes_shape` (hallazgo S3: en la captura de MAIN `lotes_actualizacion_ranking` tiene la forma PRE-V1 y los trabajos V1 de dificultad/ranking fallan; alineacion con guardas, no-op en la forma V1).

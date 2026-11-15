@@ -14,7 +14,8 @@ import kotlin.test.assertTrue
  */
 class V1ServiciosCatalogoMigrationTest {
     private val migration = "20261114400000_v1_servicios_catalogo"
-    private val dependientes = V1Db.pendientes.filter { it > migration && it.startsWith("2026111440") }.toSet() + V1Db.dependientesRetoF28
+    // HF1 (20261115000000) re-creates its trigger function: it goes with them; FA57/FA58 preflights need the Market columns
+    private val dependientes = V1Db.pendientes.filter { it > migration && (it.startsWith("2026111440") || it.startsWith("20261115000000")) }.toSet() + V1Db.dependientesRetoF28
 
     @Test
     fun existingRowsGetDerivedDefaultsAndTheSeedNeverOverwritesAControlRow() = V1Db.escenario(sin = setOf(migration) + dependientes) { c ->
