@@ -181,6 +181,7 @@ GET /api/v1/app/plan/catalogo
 GET /api/v1/app/plan/cupo
 GET /api/v1/app/practicas/disponibilidad
 GET /api/v1/app/racha
+GET /api/v1/app/racha/calendario
 GET /api/v1/app/ranking
 GET /api/v1/app/reto-diario
 GET /api/v1/app/retos/hoy

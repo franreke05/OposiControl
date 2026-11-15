@@ -27,6 +27,7 @@ import kotlinx.serialization.json.put
 //   D3-18 POST /api/v1/app/retos/{retoId}/reclamar                 cobrar la recompensa congelada (idempotente por usuario y dia de Madrid)
 //   D3-19 GET  /api/v1/app/retos/{retoId}/preguntas/{preguntaId}/recursos/{recursoId}  URL firmada de un recurso de una pregunta del reto (la base confirma la cadena)
 //   D3-04 GET  /api/v1/app/racha                                   racha actual y maxima; FA43: liga del usuario y OT gratis ganadas hoy / tope diario (barra de Home)
+//   D3-26 GET  /api/v1/app/racha/calendario?mes=YYYY-MM            FA56 (F31): calendario del mes del panel "Manten tu racha" (estado de cada dia hasta hoy)
 //
 // Identidad = SOLO el `sub` del JWT. Reloj, segmento, correccion, recompensa, racha y tope de OT los decide la base en UNA funcion por comando; aqui solo forma,
 // limite por usuario y traduccion de errores. El cuerpo de las respuestas lo construye la base con la forma del contrato y se sirve tal cual.
@@ -129,6 +130,24 @@ internal class ChallengeService(
 
     suspend fun streak(userId: CanonicalUserId): JsonElement = rpc("app_get_streak", buildJsonObject { put("p_usuario", userId.value) }.toString())
 
+    /**
+     * D3-26 (FA56): `mes` = YYYY-MM o ausente (mes actual de Madrid, lo decide la base). El rango (desde el mes del primer reto del usuario hasta el mes
+     * actual) lo decide la base con su reloj: RACHA_MES_INVALID -> 400 VALIDATION, issue `mes` OUT_OF_RANGE.
+     */
+    suspend fun calendar(userId: CanonicalUserId, mes: String?): JsonElement {
+        if (mes != null && !RACHA_MES.matches(mes)) throw validationError(ErrorIssue("mes", CanonicalIssue.INVALID_FORMAT))
+        val body = buildJsonObject {
+            put("p_usuario", userId.value)
+            if (mes != null) put("p_mes", "$mes-01")
+        }.toString()
+        val response = canonicalUpstreamIo { upstream.rpc("app_racha_calendario", body) }
+        if (!response.ok) {
+            if (response.body.contains("RACHA_MES_INVALID")) throw validationError(ErrorIssue("mes", CanonicalIssue.OUT_OF_RANGE))
+            throw EconomyRpcErrors.failure("app_racha_calendario", response)
+        }
+        return runCatching { json.parseToJsonElement(response.body) }.getOrElse { throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception(cause = it) }
+    }
+
     suspend fun answer(userId: CanonicalUserId, retoId: String, questionId: String, request: DailyChallengeAnswerRequest): JsonElement {
         val issues = buildList {
             if (!retoId.isUuid()) add(ErrorIssue("retoId", CanonicalIssue.INVALID_FORMAT))
@@ -164,12 +183,15 @@ internal class ChallengeService(
     }
 }
 
+/** YYYY-MM con mes 01..12 (el rango real lo acota la base). */
+private val RACHA_MES = Regex("^[0-9]{4}-(0[1-9]|1[0-2])$")
+
 private val ChallengeIdentityKey = AttributeKey<CanonicalUserIdentity>("oc-challenge-identity")
 
-private suspend fun ApplicationCall.challengeGate(runtime: ChallengeRuntime?, operation: ChallengeOperation): CanonicalUserIdentity {
+private suspend fun ApplicationCall.challengeGate(runtime: ChallengeRuntime?, operation: ChallengeOperation, cacheControl: String = "no-store"): CanonicalUserIdentity {
     attributes.getOrNull(ChallengeIdentityKey)?.let { return it }
     val rt = runtime ?: throw CanonicalErrorCode.INTERNAL.exception()
-    response.header(HttpHeaders.CacheControl, "no-store")
+    response.header(HttpHeaders.CacheControl, cacheControl)
     val identity = rt.resolver.activeIdentity(this) { userId -> rt.limit(operation, userId) }
     attributes.put(ChallengeIdentityKey, identity)
     return identity
@@ -186,6 +208,16 @@ internal fun Route.challengeRoutes(runtime: ChallengeRuntime?) {
             val identity = call.challengeGate(runtime, ChallengeOperation.READ)
             requireOnlyKnownQueryParams(call.request.queryParameters, emptySet())
             call.respond(runtime!!.service.streak(identity.userId))
+        }
+        get("/racha/calendario") {
+            val identity = call.challengeGate(runtime, ChallengeOperation.READ, cacheControl = "private, no-store")  // datos del usuario: nunca en una cache compartida
+            requireOnlyKnownQueryParams(call.request.queryParameters, setOf("mes"))
+            val mes = call.request.queryParameters.getAll("mes")?.let { values ->
+                if (values.size != 1) throw validationError(ErrorIssue("mes", CanonicalIssue.INVALID_FORMAT))
+                values.single().trim()
+            }
+            val body = runtime!!.service.calendar(identity.userId, mes)
+            call.respond(body)
         }
         get("/retos/{retoId}/preguntas/{preguntaId}/recursos/{recursoId}") {
             val identity = call.challengeGate(runtime, ChallengeOperation.READ)

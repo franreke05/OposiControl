@@ -1,0 +1,7 @@
+# F31 Calendario de racha (f31/racha-calendario, peticion del propietario 2026-11-15 "Manten tu racha", FA56): migracion que se aplica a MAIN DESPUES del hotfix 20261115000000 (servicios seccion) y de la ventana 1.3
+# (ultima: 20261114500000, ya en MAIN desde el despliegue de b9a5c1e3) y ANTES de la imagen Ktor que sirve D3-26.
+# Acta y anexo al runbook: docs/ledger/2026/11/2026-11-15-f31-racha-calendario.md. Uso con el script de siempre:
+#   MANIFEST=ops/deploy/v1/main-migrations-2026-11-f31.manifest bash ops/deploy/v1/apply-main-migration.sh supabase/migrations/20261115100000_v1_racha_calendario.sql
+# version  blob(git hash-object, 12)  predecesora(debe estar en supabase_migrations antes de aplicar)  clase
+# Si cambia el blob, se rehacen este manifiesto y el ensayo (docs/ledger/2026/11/rehearse-f31-2026-11.sh).
+20261115100000 56ee248941c6 20261115000000 apply

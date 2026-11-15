@@ -297,4 +297,56 @@ class ChallengeRoutesTest {
         assertEquals(HttpStatusCode.OK, old.status, old.bodyAsText())
         assertFalse(obj(old.bodyAsText()).containsKey("otHoy"))
     }
+
+    /** D3-26 (FA56, F31): month calendar of the streak panel. The database builds the body; Ktor validates mes, limits per user and never caches. */
+    @Test
+    fun streakCalendarPassesTheMonthAndServesTheDatabaseBody() = testApplication {
+        application { challengeModule() }
+        val client = createClient { }
+        val payload = """{"mes":"2026-11","hoy":"2026-11-15","rachaActual":2,"rachaMaxima":7,"rachaMes":3,"dias":[{"fecha":"2026-11-01","estado":"SUPERADO"},{"fecha":"2026-11-02","estado":"PROTEGIDO"}]}"""
+        upstream.handler = { _, _ -> SupabaseRawResponse(200, payload) }
+        val r = client.getAs("/api/v1/app/racha/calendario?mes=2026-11")
+        assertEquals(HttpStatusCode.OK, r.status, r.bodyAsText())
+        assertEquals(listOf("private, no-store"), r.headers.getAll(HttpHeaders.CacheControl))
+        assertEquals(json.parseToJsonElement(payload), json.parseToJsonElement(r.bodyAsText()))
+        val docs = com.oposicontrol.backend.openapi.OpenApiDocs.locate()
+        val op = docs.operations().first { it.contractId == "D3-26" }
+        val ok = docs.responses(op).getValue("200")
+        val schema = ((ok.value as Map<*, *>)["content"] as Map<*, *>).let { (it["application/json"] as Map<*, *>)["schema"] }
+        val problems = mutableListOf<String>()
+        com.oposicontrol.backend.openapi.SchemaChecker(docs).validate(com.oposicontrol.backend.openapi.OpenApiDocs.Node(schema, ok.file), json.parseToJsonElement(r.bodyAsText()), "$", problems)
+        assertTrue(problems.isEmpty(), "D3-26 does not conform: $problems")
+        val (fn, body) = upstream.rpcs.single()
+        assertEquals("app_racha_calendario", fn)
+        assertEquals(TEST_UID, obj(body)["p_usuario"]!!.jsonPrimitive.content, "identity = the JWT sub only")
+        assertEquals("2026-11-01", obj(body)["p_mes"]!!.jsonPrimitive.content)
+        assertEquals(listOf(ChallengeOperation.READ), limited.toList(), "per-user CATALOG_READ limit")
+        // without mes: the database picks the current Madrid month (no p_mes sent)
+        upstream.rpcs.clear()
+        assertEquals(HttpStatusCode.OK, client.getAs("/api/v1/app/racha/calendario").status)
+        assertFalse(obj(upstream.rpcs.single().second).containsKey("p_mes"))
+    }
+
+    @Test
+    fun streakCalendarRejectsABadMonthBeforeTheDatabaseAndMapsTheRange() = testApplication {
+        application { challengeModule() }
+        val client = createClient { }
+        upstream.handler = { _, _ -> SupabaseRawResponse(200, "{}") }
+        for (bad in listOf("2026-13", "2026-1", "26-11", "2026-11-01", "noviembre", "")) {
+            val r = client.getAs("/api/v1/app/racha/calendario?mes=$bad")
+            assertEquals(HttpStatusCode.BadRequest, r.status, "mes=$bad -> ${r.bodyAsText()}")
+            assertTrue(r.bodyAsText().contains("VALIDATION") && r.bodyAsText().contains("mes"), r.bodyAsText())
+        }
+        assertEquals(HttpStatusCode.BadRequest, client.getAs("/api/v1/app/racha/calendario?mes=2026-11&mes=2026-10").status)
+        assertEquals(HttpStatusCode.BadRequest, client.getAs("/api/v1/app/racha/calendario?desde=2026-11").status, "unknown query parameter")
+        assertTrue(upstream.rpcs.isEmpty(), "nothing reaches the database")
+        // out of the allowed range (before the first reto month or in the future): the database says so -> 400 VALIDATION mes OUT_OF_RANGE
+        upstream.handler = { _, _ -> rpcError("RACHA_MES_INVALID") }
+        val range = client.getAs("/api/v1/app/racha/calendario?mes=2020-01")
+        assertEquals(HttpStatusCode.BadRequest, range.status, range.bodyAsText())
+        assertTrue(range.bodyAsText().contains("OUT_OF_RANGE"), range.bodyAsText())
+        upstream.handler = { _, _ -> rpcError("WALLET_INVALID_USER") }
+        assertEquals(HttpStatusCode.Forbidden, client.getAs("/api/v1/app/racha/calendario").status, "WALLET_INVALID_USER -> PROFILE_MISSING")
+        assertEquals(HttpStatusCode.Unauthorized, client.getAs("/api/v1/app/racha/calendario", token = null).status)
+    }
 }

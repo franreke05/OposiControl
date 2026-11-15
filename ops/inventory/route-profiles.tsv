@@ -151,6 +151,7 @@ GET	/api/v1/app/plan/catalogo	BOT	user-jwt	Consumer plan: catalog with coverage,
 GET	/api/v1/app/plan/cupo	BOT	user-jwt	Consumer plan: immersive quota summary (D7-31)	OposiBot
 GET	/api/v1/app/practicas/disponibilidad	BOT	user-jwt	Consumer practice: questions and acquired exams for a quick practice test (D2-67, FA47/FA47b)	OposiBot
 GET	/api/v1/app/racha	BOT	user-jwt	Consumer challenge: current and best streak (D3-04)	OposiBot
+GET	/api/v1/app/racha/calendario	BOT	user-jwt	Consumer challenge: month calendar of the streak panel (D3-26, FA56)	OposiBot
 GET	/api/v1/app/estadisticas/resumen	BOT	user-jwt	Consumer stats: nota media, evolution, streak, league, totals (D3-20)	OposiBot
 GET	/api/v1/app/estadisticas/debilidades	BOT	user-jwt	Consumer stats: weak tags, aggregated or per exam (D3-21)	OposiBot
 GET	/api/v1/app/estadisticas/dificultad/{}	BOT	user-jwt	Consumer stats: difficulty 1-5 of an answered question (D3-22)	OposiBot

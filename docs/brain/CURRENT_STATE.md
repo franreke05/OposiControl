@@ -1,5 +1,11 @@
 # Current State
 
+## Calendario de racha (F31, FA56) — 2026-11-15 (rama local `f31/racha-calendario` desde develop `39b5dd85`, sin push) — `CURRENT_IMPLEMENTATION`, NO aplicada a MAIN
+
+- D3-26 `GET /api/v1/app/racha/calendario?mes=YYYY-MM` -> `{mes, hoy, rachaActual, rachaMaxima, rachaMes, dias[{fecha, estado SUPERADO|FALLADO|PROTEGIDO|PENDIENTE|SIN_ACTIVIDAD}]}` (dias hasta hoy; meses desde el del primer reto; 400 VALIDATION fuera de rango).
+- Migracion PENDIENTE `20261115100000_v1_racha_calendario` (solo lectura, service_role). Manifiesto `ops/deploy/v1/main-migrations-2026-11-f31.manifest` (predecesora hotfix `20261115000000`); ensayo `docs/ledger/2026/11/rehearse-f31-2026-11.sh`; acta `docs/ledger/2026/11/2026-11-15-f31-racha-calendario.md`. ORDEN migracion -> imagen nueva.
+- Contrato FA56 aditivo; registro CONTRACT_FREEZE.md (repo OposiBot) PENDING_OWNER.
+
 ## Integracion servidor 1.3 — 2026-11-14 (rama local `integ/v1-3-server` desde develop `08ea7f0f`, sin push) — `PREPARADO`, NO desplegado, MAIN sin tocar
 
 - Fusionadas F20b, F14b, F23 (+F23b), F27, F25, F29, F30 y F28. Mas la correctiva `20261114500000_v1_ranking_lotes_shape` (hallazgo S3: en la captura de MAIN `lotes_actualizacion_ranking` tiene la forma PRE-V1 y los trabajos V1 de dificultad/ranking fallan; alineacion con guardas, no-op en la forma V1).

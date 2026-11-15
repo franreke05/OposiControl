@@ -264,6 +264,8 @@ paths:
     $ref: 'engagement/engagement.yaml#/components/pathItems/DailyChallengeResource'
   /api/v1/app/racha:
     $ref: 'engagement/engagement.yaml#/components/pathItems/Streak'
+  /api/v1/app/racha/calendario:
+    $ref: 'engagement/engagement.yaml#/components/pathItems/StreakCalendar'
   /api/v1/app/estadisticas/resumen:
     $ref: 'stats/stats.yaml#/components/pathItems/StatsSummary'
   /api/v1/app/estadisticas/debilidades:

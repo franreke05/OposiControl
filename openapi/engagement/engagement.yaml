@@ -4,7 +4,7 @@
 # fewer than 3 eligible questions = what exists. Picked by a daily job, the same for every user of the segment; won with necesarios
 # correct = ceil(2n/3) of n (3 -> 2, 2 -> 2, 1 -> 1). Everything is decided by the database on its own clock (no date, hour or "correct" flag ever travels from the client). Answers to
 # challenge questions never feed the exam statistics. The reward amount comes from the user's plan benefits (Control), is frozen when the challenge is passed and is paid ONLY through the claim endpoint,
-# once per user per Madrid day (idempotent through the ledger). The streak is the number of consecutive Madrid days with the challenge passed.
+# once per user per Madrid day (idempotent through the ledger). The streak is the number of consecutive Madrid days with the challenge passed. FA56 (2026-11-15): D3-26 serves the month calendar of the streak (state of each day up to today).
 components:
   pathItems:
     DailyChallenge:
@@ -234,6 +234,49 @@ components:
             $ref: '../common/errors.yaml#/components/responses/RateLimited'
           '503':
             $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+    StreakCalendar:
+      get:
+        operationId: getStreakCalendar
+        summary: 'Streak calendar of one month (Manten tu racha panel)'
+        tags: [challenge]
+        x-contract-id: D3-26
+        x-implementation: TARGET
+        x-slice: 4
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'FA56 (owner 2026-11-15, F31): the month calendar of the streak panel, built by the database from the caller own daily challenge rows (the JWT sub only; another user rows are never read). One entry per day of the month from the 1st up to today (Madrid day, the same clock and day boundaries as the daily challenge); future days are omitted, a past month lists every day. mes = YYYY-MM, absent = the current Madrid month; allowed from the month of the caller first daily challenge (no challenge yet = only the current month) up to the current month, otherwise 400 VALIDATION (issue mes OUT_OF_RANGE; a malformed mes is issue INVALID_FORMAT). rachaActual and rachaMaxima are the D3-04 numbers. Rate limited per user (CATALOG_READ, the shared read limit). Cache private, no-store.'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: mes
+            in: query
+            required: false
+            description: 'Month as YYYY-MM (Madrid calendar). Absent = current month.'
+            schema:
+              type: string
+              pattern: '^[0-9]{4}-(0[1-9]|1[0-2])$'
+        responses:
+          '200':
+            description: 'The month calendar.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/PrivateNoStore'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/StreakCalendar'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
   headers:
     NoStore:
       description: 'no-store'
@@ -241,6 +284,12 @@ components:
       schema:
         type: string
         enum: ['no-store']
+    PrivateNoStore:
+      description: 'private, no-store'
+      required: true
+      schema:
+        type: string
+        enum: ['private, no-store']
   schemas:
     ChallengeOption:
       type: object
@@ -505,3 +554,44 @@ components:
               type: [integer, 'null']
               minimum: 1
               description: 'Daily free-earn cap (Control parameter tope_ot_gratis_dia). null when no daily cap is configured.'
+    StreakCalendar:
+      type: object
+      required: [mes, hoy, rachaActual, rachaMaxima, rachaMes, dias]
+      description: 'D3-26 body (FA56).'
+      properties:
+        mes:
+          type: string
+          pattern: '^[0-9]{4}-(0[1-9]|1[0-2])$'
+          description: 'The month served (YYYY-MM).'
+        hoy:
+          type: string
+          format: date
+          description: 'Today in Madrid (the database clock).'
+        rachaActual:
+          type: integer
+          minimum: 0
+          description: 'Same value as D3-04 actual.'
+        rachaMaxima:
+          type: integer
+          minimum: 0
+          description: 'Same value as D3-04 maxima.'
+        rachaMes:
+          type: integer
+          minimum: 0
+          description: 'Longest run of streak days (SUPERADO or PROTEGIDO) inside this month, with the D3-04 rule (a day without an available challenge does not break it); days of the previous month never count.'
+        dias:
+          type: array
+          description: 'Every day of the month from the 1st up to today (inclusive), in date order; future days are omitted.'
+          items:
+            $ref: '#/components/schemas/StreakCalendarDay'
+    StreakCalendarDay:
+      type: object
+      required: [fecha, estado]
+      properties:
+        fecha:
+          type: string
+          format: date
+        estado:
+          type: string
+          enum: [SUPERADO, FALLADO, PROTEGIDO, PENDIENTE, SIN_ACTIVIDAD]
+          description: 'SUPERADO = challenge passed. PROTEGIDO = challenge failed but the streak was saved by a protector (protector_racha, or protector_dual while the streak was alive). FALLADO = challenge failed without a streak protector (a tickets-only protector keeps the reward, not the streak), or a past challenge started and never finished. PENDIENTE = today, not finished yet (the caller has a specialty). SIN_ACTIVIDAD = no challenge played that day (not opened, or opened without any answer; also today without a specialty). Unknown values must be treated as SIN_ACTIVIDAD by clients.'
