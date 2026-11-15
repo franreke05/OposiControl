@@ -4,6 +4,7 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.call
+import io.ktor.server.request.header
 import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.server.routing.Route
@@ -17,6 +18,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
@@ -28,6 +30,7 @@ import kotlinx.serialization.json.put
 //   D3-19 GET  /api/v1/app/retos/{retoId}/preguntas/{preguntaId}/recursos/{recursoId}  URL firmada de un recurso de una pregunta del reto (la base confirma la cadena)
 //   D3-04 GET  /api/v1/app/racha                                   racha actual y maxima; FA43: liga del usuario y OT gratis ganadas hoy / tope diario (barra de Home)
 //   D3-26 GET  /api/v1/app/racha/calendario?mes=YYYY-MM            FA56 (F31): calendario del mes del panel "Manten tu racha" (estado de cada dia hasta hoy)
+//   D2-69 GET  /api/v1/app/contenido/version                       FA58 (F31c): tokens opacos de version de examenes, servicios, noticias y paquetes (ETag / 304)
 //
 // Identidad = SOLO el `sub` del JWT. Reloj, segmento, correccion, recompensa, racha y tope de OT los decide la base en UNA funcion por comando; aqui solo forma,
 // limite por usuario y traduccion de errores. El cuerpo de las respuestas lo construye la base con la forma del contrato y se sirve tal cual.
@@ -152,6 +155,22 @@ internal class ChallengeService(
         return runCatching { json.parseToJsonElement(response.body) }.getOrElse { throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception(cause = it) }
     }
 
+    /**
+     * D2-69 (FA58): los cuatro tokens opacos que construye la base (`app_contenido_version`) y el ETag de contenido (sha-256 de los cuatro, entre comillas).
+     * Un cuerpo sin los cuatro tokens de texto es un contrato roto de la base (502), nunca se rellena.
+     */
+    suspend fun contentVersion(userId: CanonicalUserId): Pair<JsonObject, String> {
+        val body = rpc("app_contenido_version", buildJsonObject { put("p_usuario", userId.value) }.toString())
+        val root = body as? JsonObject ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+        val tokens = CONTENT_VERSION_AREAS.map { area ->
+            (root[area] as? JsonPrimitive)?.takeIf { it.isString && it.content.isNotEmpty() }?.content
+                ?: throw CanonicalErrorCode.UPSTREAM_CONTRACT_ERROR.exception()
+        }
+        val digest = java.security.MessageDigest.getInstance("SHA-256").digest(tokens.joinToString("|").toByteArray(Charsets.UTF_8))
+        val etag = "\"" + digest.joinToString("") { "%02x".format(it) }.take(32) + "\""
+        return JsonObject(CONTENT_VERSION_AREAS.zip(tokens).associate { (area, token) -> area to JsonPrimitive(token) }) to etag
+    }
+
     suspend fun answer(userId: CanonicalUserId, retoId: String, questionId: String, request: DailyChallengeAnswerRequest): JsonElement {
         val issues = buildList {
             if (!retoId.isUuid()) add(ErrorIssue("retoId", CanonicalIssue.INVALID_FORMAT))
@@ -194,6 +213,9 @@ internal class ChallengeService(
 /** YYYY-MM con mes 01..12 (el rango real lo acota la base). */
 private val RACHA_MES = Regex("^[0-9]{4}-(0[1-9]|1[0-2])$")
 
+/** D2-69 (FA58): las areas con version, en el orden del contrato y del ETag. */
+private val CONTENT_VERSION_AREAS = listOf("examenes", "servicios", "noticias", "paquetes")
+
 private val ChallengeIdentityKey = AttributeKey<CanonicalUserIdentity>("oc-challenge-identity")
 
 private suspend fun ApplicationCall.challengeGate(runtime: ChallengeRuntime?, operation: ChallengeOperation, cacheControl: String = "no-store"): CanonicalUserIdentity {
@@ -226,6 +248,14 @@ internal fun Route.challengeRoutes(runtime: ChallengeRuntime?) {
             }
             val body = runtime!!.service.calendar(identity.userId, mes)
             call.respond(body)
+        }
+        get("/contenido/version") {
+            // FA58: la app lo consulta para saber si recargar; revalidacion siempre (no-cache) y 304 mientras el ETag no cambie
+            val identity = call.challengeGate(runtime, ChallengeOperation.READ, cacheControl = "private, no-cache")
+            requireOnlyKnownQueryParams(call.request.queryParameters, emptySet())
+            val (body, etag) = runtime!!.service.contentVersion(identity.userId)
+            call.response.header(HttpHeaders.ETag, etag)
+            if (ifNoneMatchMatches(call.request.header(HttpHeaders.IfNoneMatch), etag)) call.respond(HttpStatusCode.NotModified) else call.respond(body)
         }
         get("/retos/{retoId}/preguntas/{preguntaId}/recursos/{recursoId}") {
             val identity = call.challengeGate(runtime, ChallengeOperation.READ)

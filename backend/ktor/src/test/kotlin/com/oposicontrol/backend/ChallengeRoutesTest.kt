@@ -383,4 +383,39 @@ class ChallengeRoutesTest {
         assertEquals(HttpStatusCode.BadRequest, client.putJson("/api/v1/app/retos/$reto/respuestas/$pregunta", """{"opcionSeleccionadaId":"$opcion","pagarReintento":"si"}""").status)
         assertTrue(upstream.rpcs.isEmpty())
     }
+
+    /** D2-69 (FA58, F31c): content version tokens with ETag / If-None-Match -> 304. */
+    @Test
+    fun contentVersionServesTheTokensWithAnETagAnd304WhenUnchanged() = testApplication {
+        application { challengeModule() }
+        val client = createClient { }
+        var payload = """{"examenes":"0123456789abcdef","servicios":"1111111111111111","noticias":"2222222222222222","paquetes":"3333333333333333"}"""
+        upstream.handler = { _, _ -> SupabaseRawResponse(200, payload) }
+        val r = client.getAs("/api/v1/app/contenido/version")
+        assertEquals(HttpStatusCode.OK, r.status, r.bodyAsText())
+        assertEquals(json.parseToJsonElement(payload), json.parseToJsonElement(r.bodyAsText()))
+        assertEquals(listOf("private, no-cache"), r.headers.getAll(HttpHeaders.CacheControl))
+        val etag = r.headers[HttpHeaders.ETag]!!
+        assertTrue(etag.startsWith("\"") && etag.endsWith("\""), etag)
+        val (fn, body) = upstream.rpcs.single()
+        assertEquals("app_contenido_version", fn)
+        assertEquals(TEST_UID, obj(body)["p_usuario"]!!.jsonPrimitive.content)
+        assertEquals(listOf(ChallengeOperation.READ), limited.toList())
+        // unchanged: 304 without body, same ETag
+        val same = client.get("/api/v1/app/contenido/version") { header(HttpHeaders.Authorization, "Bearer $TEST_TOKEN"); header(HttpHeaders.IfNoneMatch, etag) }
+        assertEquals(HttpStatusCode.NotModified, same.status)
+        assertEquals("", same.bodyAsText())
+        assertEquals(etag, same.headers[HttpHeaders.ETag])
+        // one area changed: 200 with a new ETag
+        payload = payload.replace("2222222222222222", "4444444444444444")
+        val changed = client.get("/api/v1/app/contenido/version") { header(HttpHeaders.Authorization, "Bearer $TEST_TOKEN"); header(HttpHeaders.IfNoneMatch, etag) }
+        assertEquals(HttpStatusCode.OK, changed.status)
+        assertFalse(etag == changed.headers[HttpHeaders.ETag])
+        assertEquals("4444444444444444", obj(changed.bodyAsText())["noticias"]!!.jsonPrimitive.content)
+        // strict query, auth, contract drift
+        assertEquals(HttpStatusCode.BadRequest, client.getAs("/api/v1/app/contenido/version?x=1").status)
+        assertEquals(HttpStatusCode.Unauthorized, client.getAs("/api/v1/app/contenido/version", token = null).status)
+        upstream.handler = { _, _ -> SupabaseRawResponse(200, """{"examenes":"a"}""") }
+        assertEquals(HttpStatusCode.BadGateway.value / 100, client.getAs("/api/v1/app/contenido/version").status.value / 100, "a body without the 4 tokens is an upstream contract error (5xx)")
+    }
 }

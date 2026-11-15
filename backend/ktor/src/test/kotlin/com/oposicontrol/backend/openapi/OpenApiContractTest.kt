@@ -120,6 +120,8 @@ class OpenApiContractTest {
         // FA47 (OposiQuizzes rapidos, 2026-11-09).
         "D2-67" to "GET /api/v1/app/practicas/disponibilidad",
         "D2-68" to "POST /api/v1/app/practicas",
+        // FA58 (F31c): version de contenido para el refresco automatico.
+        "D2-69" to "GET /api/v1/app/contenido/version",
         // FA11: noticias admin (D4-01..D4-11) y lecturas de wallet (D6-01, D6-02), TARGET.
         "D4-01" to "GET /api/v1/admin/noticias",
         "D4-02" to "GET /api/v1/admin/noticias/{noticiaId}",

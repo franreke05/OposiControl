@@ -63,7 +63,7 @@ object V1Db {
      * Pendientes posteriores cuyo PREFLIGHT exige el cuerpo de F20b (20261109100200) y de F28 (20261114400000..400200): un escenario que quita una de
      * esas (control negativo, o la regla historica de un reto que FA57 cambio) quita tambien estas.
      */
-    val dependientesRetoF28: Set<String> = setOf("20261115100100_v1_reto_todo_o_nada")
+    val dependientesRetoF28: Set<String> = setOf("20261115100100_v1_reto_todo_o_nada", "20261115100200_v1_contenido_version")  // FA58 needs servicios.visible/seccion
 
     val pendientes: List<String> by lazy {
         Slice0Db.leer(PENDING).lines().map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }

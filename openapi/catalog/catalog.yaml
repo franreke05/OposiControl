@@ -2004,7 +2004,91 @@ components:
           '409':
             $ref: '../common/errors.yaml#/components/responses/Conflict'
             description: 'IMPORT_EXAM_PUBLISHED_CONFIRMATION_REQUIRED, IMPORT_PENDING_REVIEW or ALREADY_IMPORTED.'
+    ContentVersion:
+      get:
+        operationId: getContentVersion
+        summary: 'Version tokens of the content the caller can see (auto refresh)'
+        tags: [catalog]
+        x-contract-id: D2-69
+        x-implementation: TARGET
+        x-slice: 2
+        x-roles: [USER]
+        x-pagination: NONE
+        x-idempotency: NONE
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'FA58 (owner 2026-11-15, F31c): one cheap read the app polls (foreground, pull to refresh) to know whether to reload a list. Each value is an OPAQUE token (compare for equality only, never parse) that changes whenever something visible to the caller changes in that area and stays the same otherwise: examenes = active exams published (now or earlier, DB clock) of the caller specialty (D2-01 / D2-13 lists); servicios = active and visible Market services and consumables (D6-39); noticias = app news of the caller specialty, published or scheduled with publicar_desde past (D4-18); paquetes = ticket packs on sale (D6-11). Built by the database in one read. ETag = the four tokens together: send it back in If-None-Match and the answer is 304 Not Modified (no body) while nothing changed. Rate limited per user (CATALOG_READ, the shared read limit). Cache private, no-cache (always revalidate).'
+        security:
+          - bearerAuth: []
+        parameters:
+          - name: If-None-Match
+            in: header
+            required: false
+            description: 'The ETag of a previous 200.'
+            schema:
+              type: string
+        responses:
+          '200':
+            description: 'The four version tokens.'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/PrivateNoCache'
+              ETag:
+                $ref: '#/components/headers/ContentVersionETag'
+            content:
+              application/json:
+                schema:
+                  $ref: '#/components/schemas/ContentVersion'
+          '304':
+            description: 'Nothing changed since the If-None-Match ETag (no body).'
+            headers:
+              Cache-Control:
+                $ref: '#/components/headers/PrivateNoCache'
+              ETag:
+                $ref: '#/components/headers/ContentVersionETag'
+          '400':
+            $ref: '../common/errors.yaml#/components/responses/BadRequest'
+          '401':
+            $ref: '../common/errors.yaml#/components/responses/Unauthenticated'
+          '403':
+            $ref: '../common/errors.yaml#/components/responses/Forbidden'
+          '429':
+            $ref: '../common/errors.yaml#/components/responses/RateLimited'
+          '503':
+            $ref: '../common/errors.yaml#/components/responses/UpstreamUnavailable'
+  headers:
+    PrivateNoCache:
+      description: 'private, no-cache'
+      required: true
+      schema:
+        type: string
+        enum: ['private, no-cache']
+    ContentVersionETag:
+      description: 'Strong ETag of the four tokens (quoted). Send it back in If-None-Match.'
+      required: true
+      schema:
+        type: string
   schemas:
+    ContentVersion:
+      type: object
+      required: [examenes, servicios, noticias, paquetes]
+      description: 'D2-69 body (FA58). Opaque version tokens: compare each with the previous value; a different value = reload that area.'
+      properties:
+        examenes:
+          type: string
+          minLength: 1
+          description: 'Exams the caller can see in D2-01 / D2-13.'
+        servicios:
+          type: string
+          minLength: 1
+          description: 'Market services and consumables (D6-39).'
+        noticias:
+          type: string
+          minLength: 1
+          description: 'App news (D4-18).'
+        paquetes:
+          type: string
+          minLength: 1
+          description: 'Ticket packs on sale (D6-11).'
     AppExamSummary:
       type: object
       required: [id, titulo, tipoExamen, tipoAcceso, especialidadId, totalPreguntas, accessState]

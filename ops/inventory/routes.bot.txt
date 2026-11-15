@@ -10,6 +10,7 @@ DELETE /api/v1/app/opositeca/guardados/{}/{}
 GET /api/v1/app/commercial/catalog
 GET /api/v1/app/commercial/purchases
 GET /api/v1/app/commercial/subscriptions
+GET /api/v1/app/contenido/version
 GET /api/v1/app/estadisticas
 GET /api/v1/app/estadisticas/debilidades
 GET /api/v1/app/estadisticas/dificultad/{}

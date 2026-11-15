@@ -6,6 +6,7 @@
 - Migracion PENDIENTE `20261115100000_v1_racha_calendario` (solo lectura, service_role). Manifiesto `ops/deploy/v1/main-migrations-2026-11-f31.manifest` (predecesora hotfix `20261115000000`); ensayo `docs/ledger/2026/11/rehearse-f31-2026-11.sh`; acta `docs/ledger/2026/11/2026-11-15-f31-racha-calendario.md`. ORDEN migracion -> imagen nueva.
 - Contrato FA56 aditivo; registro CONTRACT_FREEZE.md (repo OposiBot) PENDING_OWNER.
 - F31b (FA57, decision del propietario 2026-11-15, mismo branch): reto SUPERADO solo con todas bien; reintento de PAGO tras un fallo sin oportunidades (precio = mitad de lo que pagaria superar hoy, min 1 OT; cargo `gasto` con `metadatos.op = reintento_reto`; uno por pregunta; 409 INSUFFICIENT_BALANCE). Migracion PENDIENTE `20261115100100_v1_reto_todo_o_nada`; acta `docs/ledger/2026/11/2026-11-15-f31b-reto-todo-o-nada.md`.
+- F31c (FA58, mismo branch): D2-69 `GET /api/v1/app/contenido/version` -> `{examenes, servicios, noticias, paquetes}` tokens opacos con ETag/304 para el refresco automatico. Migracion PENDIENTE `20261115100200_v1_contenido_version` (solo lectura); acta `docs/ledger/2026/11/2026-11-15-f31c-contenido-version.md`. Las tres migraciones F31 van con UNA imagen Ktor nueva al final.
 
 ## Integracion servidor 1.3 — 2026-11-14 (rama local `integ/v1-3-server` desde develop `08ea7f0f`, sin push) — `PREPARADO`, NO desplegado, MAIN sin tocar
 
