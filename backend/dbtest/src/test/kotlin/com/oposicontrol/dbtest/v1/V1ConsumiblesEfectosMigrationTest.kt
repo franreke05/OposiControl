@@ -343,7 +343,7 @@ class V1ConsumiblesEfectosMigrationTest {
     }
 
     @Test
-    fun theVerifyBlockAndTheRollbackRestoreTheOldFunctions() = V1Db.escenario { c ->
+    fun theVerifyBlockAndTheRollbackRestoreTheOldFunctions() = V1Db.escenario(sin = V1Db.dependientesRetoF28) { c ->  // FA57 replaces this answer function
         val verify = Slice0Db.verifyDe("supabase/migrations/$migration.sql")
         val rows = c.filas(verify)
         assertEquals(10, rows.size, "VERIFY rows: $rows")

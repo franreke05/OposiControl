@@ -15,7 +15,7 @@ import kotlin.test.assertTrue
  */
 class V1ServiciosCanjeMigrationTest {
     private val migration = "20261114400100_v1_servicios_canje"
-    private val dependientes = V1Db.pendientes.filter { it > migration && it.startsWith("2026111440") }.toSet()
+    private val dependientes = V1Db.pendientes.filter { it > migration && it.startsWith("2026111440") }.toSet() + V1Db.dependientesRetoF28
     private val u = "a0000000-0000-0000-0000-0000000028a1"
     private val other = "a0000000-0000-0000-0000-0000000028b1"
 

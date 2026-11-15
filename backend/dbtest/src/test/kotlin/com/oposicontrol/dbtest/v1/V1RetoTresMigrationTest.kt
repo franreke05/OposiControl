@@ -19,6 +19,8 @@ import kotlin.test.assertTrue
  */
 class V1RetoTresMigrationTest {
     private val migration = "20261109100200_v1_reto_tres"
+    /** FA57 (20261115100100) changes the pass rule to all correct (V1RetoTodoONadaMigrationTest); the F20b rule (2 of 3) is proved without it. */
+    private val later = V1Db.dependientesRetoF28
     private val espA = "e1000000-0000-0000-0000-0000000021a1"
     private val espB = "e1000000-0000-0000-0000-0000000021b1"
     private val espC = "e1000000-0000-0000-0000-0000000021c1"
@@ -87,7 +89,7 @@ class V1RetoTresMigrationTest {
     }
 
     @Test
-    fun onlyRafagaGivesThreeDistinctRafagaQuestionsWonWithTwo() = V1Db.escenario { c ->
+    fun onlyRafagaGivesThreeDistinctRafagaQuestionsWonWithTwo() = V1Db.escenario(sin = later) { c ->
         c.ejecutar(users)
         c.onlyRafagaInA()
         val t = c.today(ua)
@@ -173,7 +175,7 @@ class V1RetoTresMigrationTest {
     }
 
     @Test
-    fun withoutTheMigrationOnlyRafagaGivesOneQuestion() = V1Db.escenario(sin = setOf(migration)) { c ->
+    fun withoutTheMigrationOnlyRafagaGivesOneQuestion() = V1Db.escenario(sin = setOf(migration) + later) { c ->
         c.ejecutar(users)
         c.onlyRafagaInA()
         assertEquals(1, c.slots(c.today(ua)).size)

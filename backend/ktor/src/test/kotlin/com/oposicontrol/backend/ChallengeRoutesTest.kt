@@ -151,7 +151,7 @@ class ChallengeRoutesTest {
         upstream.handler = { _, _ -> SupabaseRawResponse(200, held) }
         val first = client.putJson("/api/v1/app/retos/$reto/respuestas/$pregunta", """{"opcionSeleccionadaId":"$opcion","usarOportunidad":null,"admiteOportunidad":true}""")
         assertEquals(HttpStatusCode.OK, first.status, first.bodyAsText())
-        assertEquals(setOf("p_usuario", "p_reto", "p_pregunta", "p_opcion", "p_admite_oportunidad"), obj(upstream.rpcs.single().second).keys, "a client that supports it and made no decision: no p_usar_oportunidad (the offer may come)")
+        assertEquals(setOf("p_usuario", "p_reto", "p_pregunta", "p_opcion", "p_admite_oportunidad", "p_admite_reintento_pago"), obj(upstream.rpcs.single().second).keys, "a client that supports it and made no decision: no p_usar_oportunidad (the offer may come)")
         assertEquals("true", obj(upstream.rpcs.single().second)["p_admite_oportunidad"]!!.jsonPrimitive.content)
         assertEquals("1", obj(first.bodyAsText())["oportunidad"]!!.jsonObject["restantes"]!!.jsonPrimitive.content)
         assertTrue("opcionCorrectaId" !in obj(first.bodyAsText()), "no correction while held")
@@ -188,7 +188,7 @@ class ChallengeRoutesTest {
         assertEquals(HttpStatusCode.OK, ok.status, ok.bodyAsText())
         val (fn, args) = upstream.rpcs.single()
         assertEquals("app_answer_daily_challenge", fn)
-        assertEquals(setOf("p_usuario", "p_reto", "p_pregunta", "p_opcion", "p_admite_oportunidad"), obj(args).keys, "an old client (no admiteOportunidad): never held")
+        assertEquals(setOf("p_usuario", "p_reto", "p_pregunta", "p_opcion", "p_admite_oportunidad", "p_admite_reintento_pago"), obj(args).keys, "an old client (no admiteOportunidad): never held")
         assertEquals(reto, obj(args)["p_reto"]!!.jsonPrimitive.content)
         assertEquals(listOf(ChallengeOperation.WRITE), limited.toList())
         upstream.rpcs.clear()
@@ -348,5 +348,39 @@ class ChallengeRoutesTest {
         upstream.handler = { _, _ -> rpcError("WALLET_INVALID_USER") }
         assertEquals(HttpStatusCode.Forbidden, client.getAs("/api/v1/app/racha/calendario").status, "WALLET_INVALID_USER -> PROFILE_MISSING")
         assertEquals(HttpStatusCode.Unauthorized, client.getAs("/api/v1/app/racha/calendario", token = null).status)
+    }
+
+    /** FA57 (F31b): the paid retry decision travels only for a client that declares admiteReintentoPago; INSUFFICIENT_BALANCE = 409 with its details. */
+    @Test
+    fun thePaidRetryDecisionTravelsOnlyWhenTheClientSupportsItAndInsufficientBalanceIs409() = testApplication {
+        application { challengeModule() }
+        val client = createClient { }
+        val held = """{"esCorrecta":false,"estado":"EN_CURSO","aciertos":1,"respondidas":1,"reintentoPago":{"disponible":true,"precioTickets":30,"saldoTickets":12}}"""
+        upstream.handler = { _, _ -> SupabaseRawResponse(200, held) }
+        val first = client.putJson("/api/v1/app/retos/$reto/respuestas/$pregunta", """{"opcionSeleccionadaId":"$opcion","admiteOportunidad":true,"admiteReintentoPago":true}""")
+        assertEquals(HttpStatusCode.OK, first.status, first.bodyAsText())
+        val sent = obj(upstream.rpcs.single().second)
+        assertEquals("true", sent["p_admite_reintento_pago"]!!.jsonPrimitive.content)
+        assertTrue("p_pagar_reintento" !in sent, "no decision yet: the offer may come")
+        assertEquals("30", obj(first.bodyAsText())["reintentoPago"]!!.jsonObject["precioTickets"]!!.jsonPrimitive.content, "served verbatim")
+        for (choice in listOf(true, false)) {
+            upstream.rpcs.clear()
+            client.putJson("/api/v1/app/retos/$reto/respuestas/$pregunta", """{"opcionSeleccionadaId":"$opcion","admiteReintentoPago":true,"pagarReintento":$choice}""")
+            assertEquals(choice.toString(), obj(upstream.rpcs.single().second)["p_pagar_reintento"]!!.jsonPrimitive.content)
+        }
+        // an old client (no admiteReintentoPago): Ktor sends false and drops pagarReintento
+        upstream.rpcs.clear()
+        client.putJson("/api/v1/app/retos/$reto/respuestas/$pregunta", """{"opcionSeleccionadaId":"$opcion","pagarReintento":true}""")
+        val old = obj(upstream.rpcs.single().second)
+        assertEquals("false", old["p_admite_reintento_pago"]!!.jsonPrimitive.content)
+        assertTrue("p_pagar_reintento" !in old)
+        // not enough OT: 409 INSUFFICIENT_BALANCE with balance and price
+        upstream.handler = { _, _ -> SupabaseRawResponse(400, """{"code":"P0001","message":"INSUFFICIENT_BALANCE","details":"{\"balance\":12,\"price\":30}","hint":null}""") }
+        val poor = client.putJson("/api/v1/app/retos/$reto/respuestas/$pregunta", """{"opcionSeleccionadaId":"$opcion","admiteReintentoPago":true,"pagarReintento":true}""")
+        assertEquals(HttpStatusCode.Conflict, poor.status, poor.bodyAsText())
+        assertTrue(poor.bodyAsText().contains("INSUFFICIENT_BALANCE") && poor.bodyAsText().contains("30"), poor.bodyAsText())
+        upstream.rpcs.clear()
+        assertEquals(HttpStatusCode.BadRequest, client.putJson("/api/v1/app/retos/$reto/respuestas/$pregunta", """{"opcionSeleccionadaId":"$opcion","pagarReintento":"si"}""").status)
+        assertTrue(upstream.rpcs.isEmpty())
     }
 }

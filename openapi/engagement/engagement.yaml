@@ -2,7 +2,7 @@
 # One challenge ROW per user per Madrid day (the most specific segment eligible for the user, frozen the first time it is opened that day): 3 questions, first ONE per exam type (immersive, razonado, rafaga)
 # drawn from the published exams of the user specialty (FA46, owner 2026-11-09), then filled up to 3 from the other eligible questions of the specialty, so a tipoSlot can repeat (FA55, owner 2026-11-11);
 # fewer than 3 eligible questions = what exists. Picked by a daily job, the same for every user of the segment; won with necesarios
-# correct = ceil(2n/3) of n (3 -> 2, 2 -> 2, 1 -> 1). Everything is decided by the database on its own clock (no date, hour or "correct" flag ever travels from the client). Answers to
+# correct = n of n since FA57 (owner 2026-11-15: ALL questions correct; before, ceil(2n/3)). Everything is decided by the database on its own clock (no date, hour or "correct" flag ever travels from the client). Answers to
 # challenge questions never feed the exam statistics. The reward amount comes from the user's plan benefits (Control), is frozen when the challenge is passed and is paid ONLY through the claim endpoint,
 # once per user per Madrid day (idempotent through the ledger). The streak is the number of consecutive Madrid days with the challenge passed. FA56 (2026-11-15): D3-26 serves the month calendar of the streak (state of each day up to today).
 components:
@@ -19,7 +19,7 @@ components:
         x-pagination: NONE
         x-idempotency: NONE
         x-error-codes: [UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
-        description: 'Always 200 for an active account. estado is DISPONIBLE (not started), EN_CURSO, SUPERADO, FALLADO or NO_DISPONIBLE (no pool for the user segment today: nothing to show, the streak is NOT broken). The first open of the Madrid day stores the user row (the most specific eligible segment); later opens return the same row. The correct option is NEVER in this response: a question carries respuesta (with the correction) only after the user answered it. barraGlobal is an aggregate of the user type (no identities).'
+        description: 'Always 200 for an active account. estado is DISPONIBLE (not started), EN_CURSO, SUPERADO, FALLADO or NO_DISPONIBLE (no pool for the user segment today: nothing to show, the streak is NOT broken). The first open of the Madrid day stores the user row (the most specific eligible segment); later opens return the same row. The correct option is NEVER in this response: a question carries respuesta (with the correction) only after the user answered it. barraGlobal is an aggregate of the user type (no identities). FA57 (owner 2026-11-15): necesarios = the number of questions (all correct to pass); preguntas[].reintentoPagoPendiente while a wrong answer waits for the paid retry decision; reintentoPago {precioTickets, saldoTickets} while the reto is DISPONIBLE or EN_CURSO.'
         security:
           - bearerAuth: []
         responses:
@@ -51,8 +51,8 @@ components:
         x-roles: [USER]
         x-pagination: NONE
         x-idempotency: NATURAL
-        x-error-codes: [VALIDATION, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, NOT_FOUND, ANSWER_LOCKED, RETO_OUT_OF_WINDOW, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
-        description: 'An answer is FINAL. The same option re-sent answers 200 with the stored result (a retry never changes anything); a different option for an answered question is 409 ANSWER_LOCKED. The reto must be the row stored for the caller today and the question one of its positions, otherwise 404 NOT_FOUND (no oracle); outside the window 422 RETO_OUT_OF_WINDOW. The correction is returned with the answer. The answer to the last question of the reto (1 to 3, FA46) closes the challenge (SUPERADO with necesarios or more correct, FALLADO otherwise) and updates the streak, all in the same transaction. No reward is paid here: see the claim. FA52 (F28 consumables, they act by themselves): (1) doble/triple oportunidad: a WRONG answer while the user has retry uses is HELD: nothing is stored and NO correction is returned (opcionCorrectaId absent), the result carries oportunidad {disponible: true, restantes}. Then the same option without usarOportunidad repeats that offer; usarOportunidad false declines (the held answer becomes final, normal result); usarOportunidad true with ANOTHER option spends one use and answers it (wrong again with uses left = held again); anything else is 409 ANSWER_LOCKED. usarOportunidad false on a first answer = never offer. FA52b: only a request with admiteOportunidad true can be held or use usarOportunidad; without it the answer is never held (older clients). (2) when the last answer FAILS the reto: protector_racha keeps the streak (that day pays nothing), protector_tickets keeps the reward the reto would have paid (the streak breaks), protector_dual both; spent only when something would be lost (estado stays FALLADO; recompensa present when it pays). (3) potenciador: one per reto multiplies the BASE reward (never the streak bonus): recompensa.multiplicador and recompensa.extraPotenciador. consumiblesUsados lists the types this answer applied. FA52b (review 2026-11-14): what only pays at claim time (the potenciador, and a protector that keeps only the tickets) is RESERVED here and SPENT by the D3-18 claim; if the claim is refused (RETO_CLAIM_EXPIRED, EMAIL_UNVERIFIED, RETO_CLAIM_NOT_ELIGIBLE, OT_EARN_CAP_REACHED) nothing is spent, and an unclaimed reservation is freed after the last claim day (DailyChallenge.consumibles counts exclude live reservations).'
+        x-error-codes: [VALIDATION, UNAUTHENTICATED, ACCOUNT_BLOCKED, ACCOUNT_DELETION_PENDING, PROFILE_MISSING, NOT_FOUND, ANSWER_LOCKED, RETO_OUT_OF_WINDOW, INSUFFICIENT_BALANCE, RATE_LIMITED, UPSTREAM_UNAVAILABLE]
+        description: 'An answer is FINAL. The same option re-sent answers 200 with the stored result (a retry never changes anything); a different option for an answered question is 409 ANSWER_LOCKED. The reto must be the row stored for the caller today and the question one of its positions, otherwise 404 NOT_FOUND (no oracle); outside the window 422 RETO_OUT_OF_WINDOW. The correction is returned with the answer. The answer to the last question of the reto (1 to 3, FA46) closes the challenge (SUPERADO with necesarios or more correct, FALLADO otherwise) and updates the streak, all in the same transaction. No reward is paid here: see the claim. FA52 (F28 consumables, they act by themselves): (1) doble/triple oportunidad: a WRONG answer while the user has retry uses is HELD: nothing is stored and NO correction is returned (opcionCorrectaId absent), the result carries oportunidad {disponible: true, restantes}. Then the same option without usarOportunidad repeats that offer; usarOportunidad false declines (the held answer becomes final, normal result); usarOportunidad true with ANOTHER option spends one use and answers it (wrong again with uses left = held again); anything else is 409 ANSWER_LOCKED. usarOportunidad false on a first answer = never offer. FA52b: only a request with admiteOportunidad true can be held or use usarOportunidad; without it the answer is never held (older clients). (2) when the last answer FAILS the reto: protector_racha keeps the streak (that day pays nothing), protector_tickets keeps the reward the reto would have paid (the streak breaks), protector_dual both; spent only when something would be lost (estado stays FALLADO; recompensa present when it pays). (3) potenciador: one per reto multiplies the BASE reward (never the streak bonus): recompensa.multiplicador and recompensa.extraPotenciador. consumiblesUsados lists the types this answer applied. FA52b (review 2026-11-14): what only pays at claim time (the potenciador, and a protector that keeps only the tickets) is RESERVED here and SPENT by the D3-18 claim; if the claim is refused (RETO_CLAIM_EXPIRED, EMAIL_UNVERIFIED, RETO_CLAIM_NOT_ELIGIBLE, OT_EARN_CAP_REACHED) nothing is spent, and an unclaimed reservation is freed after the last claim day (DailyChallenge.consumibles counts exclude live reservations). FA57 (owner 2026-11-15): the reto is SUPERADO only with ALL its questions correct (necesarios = n), otherwise FALLADO (protectors as above). PAID RETRY: a WRONG answer of a request with admiteReintentoPago true when the caller has NO doble/triple oportunidad use left (consumables go first; declining an available one is final) is HELD (nothing stored, no correction) with reintentoPago {disponible: true, precioTickets, saldoTickets}; precioTickets = floor((base reward + streak bonus that passing today would pay) / 2), minimum 1, frozen with the held answer. Then the same option without pagarReintento repeats the offer; pagarReintento false declines (the held answer becomes final); pagarReintento true with ANOTHER option debits precioTickets from the wallet (one ledger movement, tipo gasto) and answers it: wrong again is final (ONE paid retry per question); not enough OT = 409 INSUFFICIENT_BALANCE with details balance and price, nothing changes and the offer stays; anything else is 409 ANSWER_LOCKED. pagarReintento false on a first answer = never offer. Without admiteReintentoPago the answer is never held for payment and pagarReintento is ignored (older clients). A client that shows the offer MUST send admiteReintentoPago true on EVERY D3-17 call.'
         security:
           - bearerAuth: []
         parameters:
@@ -94,7 +94,7 @@ components:
             $ref: '../common/errors.yaml#/components/responses/NotFound'
           '409':
             $ref: '../common/errors.yaml#/components/responses/Conflict'
-            description: 'ANSWER_LOCKED or RETO_OUT_OF_WINDOW (a state conflict, like RETO_NOT_PASSED; E2-V1-W01 aligned the contract to the code).'
+            description: 'ANSWER_LOCKED or RETO_OUT_OF_WINDOW (a state conflict, like RETO_NOT_PASSED; E2-V1-W01 aligned the contract to the code). FA57: INSUFFICIENT_BALANCE (details balance, price) when a paid retry cannot be paid.'
           '429':
             $ref: '../common/errors.yaml#/components/responses/RateLimited'
           '503':
@@ -343,6 +343,9 @@ components:
         oportunidadPendiente:
           type: boolean
           description: 'FA52: true while a wrong answer to this question is held waiting for the doble/triple oportunidad decision (respuesta absent). Absent = false.'
+        reintentoPagoPendiente:
+          type: boolean
+          description: 'FA57: true while a wrong answer to this question is held waiting for the paid retry decision (respuesta absent; price in DailyChallenge.reintentoPago). Absent = false.'
     ChallengeReward:
       type: object
       required: [base, bonusRacha, total, reclamada]
@@ -400,6 +403,31 @@ components:
         restantes:
           type: integer
           minimum: 0
+    ChallengePaidRetryOffer:
+      type: object
+      description: 'FA57: the held wrong answer can be answered again ONCE by paying precioTickets OT (D3-17 pagarReintento).'
+      required: [disponible, precioTickets, saldoTickets]
+      properties:
+        disponible:
+          type: boolean
+        precioTickets:
+          type: integer
+          minimum: 1
+        saldoTickets:
+          type: integer
+          minimum: 0
+          description: 'Caller OT balance now (precioTickets above it = the payment would be 409 INSUFFICIENT_BALANCE).'
+    ChallengePaidRetryPrice:
+      type: object
+      description: 'FA57 (D3-16): price of the paid retry while the reto is open: the frozen price of a held answer, otherwise what a wrong answer would cost now.'
+      required: [precioTickets, saldoTickets]
+      properties:
+        precioTickets:
+          type: integer
+          minimum: 1
+        saldoTickets:
+          type: integer
+          minimum: 0
     DailyChallenge:
       type: object
       required: [estado, necesarios, aciertos, preguntas]
@@ -415,7 +443,7 @@ components:
           $ref: '../common/identifiers.yaml#/components/schemas/Instant'
         necesarios:
           type: integer
-          description: 'Correct answers needed: ceil(2n/3) of the n questions of the reto (FA46: 3 -> 2, 2 -> 2, 1 -> 1).'
+          description: 'Correct answers needed. FA57 (owner 2026-11-15): ALL n questions of the reto (3 normally; before FA57 ceil(2n/3)).'
         aciertos:
           type: integer
           minimum: 0
@@ -433,6 +461,8 @@ components:
           description: 'FA52: type of the protector this reto spent (protector_racha, protector_tickets or protector_dual). Absent = none.'
         consumibles:
           $ref: '#/components/schemas/ChallengeConsumables'
+        reintentoPago:
+          $ref: '#/components/schemas/ChallengePaidRetryPrice'
         racha:
           $ref: '#/components/schemas/Streak'
         barraGlobal:
@@ -459,6 +489,12 @@ components:
         admiteOportunidad:
           type: [boolean, 'null']
           description: 'FA52b (review 2026-11-14): true = this client handles a HELD wrong answer (the oportunidad offer and usarOportunidad). Absent, null or false = a client that does not: the server never holds its answer (it behaves as usarOportunidad false: the wrong answer is final at once and a previously held one is declined) and ignores usarOportunidad, so an older client never leaves the reto stuck. A client that shows the offer MUST send admiteOportunidad true on EVERY D3-17 call.'
+        pagarReintento:
+          type: [boolean, 'null']
+          description: 'FA57: only after a HELD wrong answer with reintentoPago.disponible: true = pay reintentoPago.precioTickets and answer opcionSeleccionadaId (another option); false = decline (the held answer becomes final). On a first answer false = never offer. Absent/null = no decision. Honoured ONLY together with admiteReintentoPago true.'
+        admiteReintentoPago:
+          type: [boolean, 'null']
+          description: 'FA57: true = this client handles the paid retry offer. Absent, null or false = never held for payment (the wrong answer is final at once, a previously held one is declined) and pagarReintento is ignored. Send it on EVERY D3-17 call.'
     DailyChallengeAnswerResult:
       type: object
       required: [esCorrecta, estado, aciertos, respondidas]
@@ -467,7 +503,7 @@ components:
           type: boolean
         opcionCorrectaId:
           $ref: '../common/identifiers.yaml#/components/schemas/Uuid'
-          description: 'The correction. FA52: absent ONLY while the wrong answer is held (oportunidad present).'
+          description: 'The correction. FA52: absent ONLY while the wrong answer is held (oportunidad present; FA57: or reintentoPago present).'
         estado:
           type: string
           enum: [EN_CURSO, SUPERADO, FALLADO]
@@ -485,6 +521,8 @@ components:
             - type: 'null'
         oportunidad:
           $ref: '#/components/schemas/ChallengeRetryOffer'
+        reintentoPago:
+          $ref: '#/components/schemas/ChallengePaidRetryOffer'
         consumiblesUsados:
           type: array
           description: 'FA52: types of the consumables spent by this answer (doble_oportunidad, triple_oportunidad, protector_*, potenciador). Absent = none.'

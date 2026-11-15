@@ -56,3 +56,4 @@
 20261114400200_v1_consumibles_efectos
 20261114500000_v1_ranking_lotes_shape
 20261115100000_v1_racha_calendario
+20261115100100_v1_reto_todo_o_nada

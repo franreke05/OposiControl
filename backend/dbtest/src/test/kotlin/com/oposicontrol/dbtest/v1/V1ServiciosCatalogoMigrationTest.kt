@@ -14,7 +14,7 @@ import kotlin.test.assertTrue
  */
 class V1ServiciosCatalogoMigrationTest {
     private val migration = "20261114400000_v1_servicios_catalogo"
-    private val dependientes = V1Db.pendientes.filter { it > migration && it.startsWith("2026111440") }.toSet()
+    private val dependientes = V1Db.pendientes.filter { it > migration && it.startsWith("2026111440") }.toSet() + V1Db.dependientesRetoF28
 
     @Test
     fun existingRowsGetDerivedDefaultsAndTheSeedNeverOverwritesAControlRow() = V1Db.escenario(sin = setOf(migration) + dependientes) { c ->

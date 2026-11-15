@@ -21,7 +21,7 @@ class V1RetoPorTipoMigrationTest {
     private val migration = "20261109100000_v1_reto_por_tipo"
 
     /** The F20 body is tested on its own: 20261109100200 (F20b, always 3) replaces ensure_challenge_row and has its own test (V1RetoTresMigrationTest). */
-    private val later = setOf("20261109100200_v1_reto_tres")
+    private val later = setOf("20261109100200_v1_reto_tres") + V1Db.dependientesRetoF28  // FA57 (20261115100100) replaces the F20b body and the pass rule
     private val espA = "e1000000-0000-0000-0000-0000000020a1"
     private val espB = "e1000000-0000-0000-0000-0000000020b1"
     private val espC = "e1000000-0000-0000-0000-0000000020c1"

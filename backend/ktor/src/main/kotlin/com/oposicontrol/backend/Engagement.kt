@@ -49,6 +49,10 @@ internal data class DailyChallengeAnswerRequest(
      * retiene; una retenida previa queda rechazada) y `usarOportunidad` se ignora, para que un cliente viejo nunca deje el reto atascado.
      */
     val admiteOportunidad: Boolean? = null,
+    /** FA57 (F31b): tras un fallo RETENIDO con oferta de reintento de pago, `true` = pagar el precio y responder OTRA opcion; `false` = rechazarlo (la retenida queda definitiva; en la primera respuesta: no ofrecerlo). Ausente = sin decision. */
+    val pagarReintento: Boolean? = null,
+    /** FA57: `true` = este cliente sabe tratar la oferta de reintento de pago. Ausente / false / null = nunca se retiene (cliente viejo) y `pagarReintento` se ignora. */
+    val admiteReintentoPago: Boolean? = null,
 )
 
 internal class ChallengeRuntime(
@@ -167,6 +171,10 @@ internal class ChallengeService(
                 val admite = request.admiteOportunidad == true
                 put("p_admite_oportunidad", admite)
                 if (admite) request.usarOportunidad?.let { put("p_usar_oportunidad", it) }
+                // FA57: mismo patron para el reintento de pago (necesita la base con 20261115100100: la imagen va DESPUES)
+                val admitePago = request.admiteReintentoPago == true
+                put("p_admite_reintento_pago", admitePago)
+                if (admitePago) request.pagarReintento?.let { put("p_pagar_reintento", it) }
             }.toString(),
         )
     }
@@ -233,7 +241,7 @@ internal fun Route.challengeRoutes(runtime: ChallengeRuntime?) {
         put("/retos/{retoId}/respuestas/{preguntaId}") {
             val identity = call.challengeGate(runtime, ChallengeOperation.WRITE)
             requireOnlyKnownQueryParams(call.request.queryParameters, emptySet())
-            val request = call.receiveCanonicalCommand<DailyChallengeAnswerRequest>(nullableFields = setOf("usarOportunidad", "admiteOportunidad"))
+            val request = call.receiveCanonicalCommand<DailyChallengeAnswerRequest>(nullableFields = setOf("usarOportunidad", "admiteOportunidad", "pagarReintento", "admiteReintentoPago"))
             call.respond(
                 HttpStatusCode.OK,
                 runtime!!.service.answer(identity.userId, call.parameters["retoId"].orEmpty().trim(), call.parameters["preguntaId"].orEmpty().trim(), request),

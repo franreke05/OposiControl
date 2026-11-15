@@ -3,5 +3,7 @@
 # Acta y anexo al runbook: docs/ledger/2026/11/2026-11-15-f31-racha-calendario.md. Uso con el script de siempre:
 #   MANIFEST=ops/deploy/v1/main-migrations-2026-11-f31.manifest bash ops/deploy/v1/apply-main-migration.sh supabase/migrations/20261115100000_v1_racha_calendario.sql
 # version  blob(git hash-object, 12)  predecesora(debe estar en supabase_migrations antes de aplicar)  clase
+# F31b (FA57, reto todo o nada + reintento de pago, acta docs/ledger/2026/11/2026-11-15-f31b-reto-todo-o-nada.md) encadena tras el calendario.
 # Si cambia el blob, se rehacen este manifiesto y el ensayo (docs/ledger/2026/11/rehearse-f31-2026-11.sh).
 20261115100000 56ee248941c6 20261115000000 apply
+20261115100100 6931624001d8 20261115100000 apply

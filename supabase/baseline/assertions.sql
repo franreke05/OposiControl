@@ -1992,7 +1992,7 @@ begin
   assert not exists (select 1 from public.preguntas_reto_diario pr join public.retos_diarios r on r.id = pr.reto_id where r.comunidad_id is null and pr.pregunta_id = qreg), 'the national row never carries the regional question';
   -- ---- users: most specific row, frozen for the day
   j := public.app_get_daily_challenge(un);
-  assert j ->> 'estado' = 'DISPONIBLE' and jsonb_array_length(j -> 'preguntas') = 3 and (j ->> 'necesarios')::int = 2, 'national user: challenge available';
+  assert j ->> 'estado' = 'DISPONIBLE' and jsonb_array_length(j -> 'preguntas') = 3 and (j ->> 'necesarios')::int = 3, 'national user: challenge available (FA57: all 3 needed)';
   reto_n := (j ->> 'retoId')::uuid;
   assert (select comunidad_id from public.retos_diarios where id = reto_n) is null, 'no community: the national row';
   assert j::text !~ 'opcionCorrectaId' and j::text !~ 'respuesta', 'before answering, no correction is served';
@@ -2010,16 +2010,16 @@ begin
   perform pg_temp.expect_e(format($q$select public.app_answer_daily_challenge(%L, %L, %L, %L)$q$, un, reto_a, pid, ok), 'NOT_FOUND');   -- another segment's reto
   perform pg_temp.expect_e(format($q$select public.app_answer_daily_challenge(%L, %L, %L, %L)$q$, un, reto_n, gen_random_uuid(), ok), 'NOT_FOUND');   -- not a question of the reto
   perform pg_temp.expect_e(format($q$select public.app_answer_daily_challenge(%L, %L, %L, %L)$q$, un, reto_n, pid, gen_random_uuid()), 'OPTION_NOT_IN_QUESTION');
-  j := public.app_answer_daily_challenge(un, reto_n, pid, ko);
-  assert not (j ->> 'esCorrecta')::boolean and (j ->> 'opcionCorrectaId')::uuid = ok and j ->> 'estado' = 'EN_CURSO' and (j ->> 'respondidas')::int = 1, 'wrong answer: correction returned, in progress';
-  assert (public.app_answer_daily_challenge(un, reto_n, pid, ko)) = j, 'the same option again returns the stored result';
-  perform pg_temp.expect_e(format($q$select public.app_answer_daily_challenge(%L, %L, %L, %L)$q$, un, reto_n, pid, ok), 'ANSWER_LOCKED');
-  assert (select aciertos from public.registros_reto_diario where usuario_id = un and reto_id = reto_n) = 0 and (select fallos from public.registros_reto_diario where usuario_id = un and reto_id = reto_n) = 1, 'counters follow the stored answers only';
-  -- the user wins with 2 of 3: answer the other two correctly
+  j := public.app_answer_daily_challenge(un, reto_n, pid, ok);  -- FA57: one wrong answer would fail the reto, so finality is proven on a right answer
+  assert (j ->> 'esCorrecta')::boolean and (j ->> 'opcionCorrectaId')::uuid = ok and j ->> 'estado' = 'EN_CURSO' and (j ->> 'respondidas')::int = 1, 'right answer: correction returned, in progress';
+  assert (public.app_answer_daily_challenge(un, reto_n, pid, ok)) = j, 'the same option again returns the stored result';
+  perform pg_temp.expect_e(format($q$select public.app_answer_daily_challenge(%L, %L, %L, %L)$q$, un, reto_n, pid, ko), 'ANSWER_LOCKED');
+  assert (select aciertos from public.registros_reto_diario where usuario_id = un and reto_id = reto_n) = 1 and (select fallos from public.registros_reto_diario where usuario_id = un and reto_id = reto_n) = 0, 'counters follow the stored answers only';
+  -- FA57 (20261115100100): the user wins only with ALL 3 correct: answer the other two correctly
   for rid in select pr.pregunta_id from public.preguntas_reto_diario pr where pr.reto_id = reto_n and pr.pregunta_id <> pid order by pr.posicion loop
     j := public.app_answer_daily_challenge(un, reto_n, rid, ('0e800000-0000-0000-0000-000000000' || lpad(right(rid::text, 2), 2, '0') || '1')::uuid);
   end loop;
-  assert j ->> 'estado' = 'SUPERADO' and (j ->> 'aciertos')::int = 2 and (j -> 'recompensa' ->> 'base')::int = 5 and (j -> 'recompensa' ->> 'bonusRacha')::int = 0 and not (j -> 'recompensa' ->> 'reclamada')::boolean, 'passed with 2 of 3: free-plan reward frozen, not paid yet: ' || j::text;
+  assert j ->> 'estado' = 'SUPERADO' and (j ->> 'aciertos')::int = 3 and (j -> 'recompensa' ->> 'base')::int = 5 and (j -> 'recompensa' ->> 'bonusRacha')::int = 0 and not (j -> 'recompensa' ->> 'reclamada')::boolean, 'passed with 3 of 3: free-plan reward frozen, not paid yet: ' || j::text;
   assert (j -> 'racha' ->> 'actual')::int = 1 and (j -> 'racha' ->> 'maxima')::int = 1, 'streak starts at 1';
   -- ---- claim: only the own, passed row; gates; idempotent; ledger-first
   perform pg_temp.expect_e(format($q$select public.app_claim_daily_challenge(%L, %L)$q$, ua, reto_a), 'RETO_NOT_PASSED');
@@ -2217,7 +2217,7 @@ begin
   assert not exists (select 1 from public.retos_diarios d where d.especialidad_id = esp and d.termina_en <> private.reto_day_end(d.fecha)), 'no row keeps an inicio + 24 h end';
   -- ---- 20261109100000 (F20, owner 2026-11-09): one question per EXAM TYPE of the published exams of the specialty; empty types skipped; deterministic per day
   assert (select string_agg(pr.tipo_slot || '@' || pr.posicion, ',' order by pr.posicion) from public.preguntas_reto_diario pr where pr.reto_id = reto_n) = 'inmersiva_demo@1,razonada@2,rafaga@3'
-     and (select objetivo_preguntas || '/' || aciertos_necesarios from public.retos_diarios where id = reto_n) = '3/2', 'three types: one each, 2 of 3 to pass';
+     and (select objetivo_preguntas || '/' || aciertos_necesarios from public.retos_diarios where id = reto_n) = '3/3', 'three types: one each, all 3 to pass (FA57)';
   assert private.ensure_challenge_row('2026-12-24', 'e1000000-0000-0000-0000-0000000000f2', null), 'only rafaga: a challenge is created';
   -- 20261109100200 (F20b, owner 2026-11-11): always 3 when the segment has them; this specialty has only 2 eligible questions -> both, no repeats
   assert (select string_agg(pr.tipo_slot || '@' || pr.posicion, ',' order by pr.posicion) from public.preguntas_reto_diario pr join public.retos_diarios r on r.id = pr.reto_id
@@ -4827,7 +4827,7 @@ begin
   -- grants: the client roles can neither run the RPCs nor read the held answers
   assert not has_function_privilege('authenticated', 'public.app_redeem_service(uuid,text,text,integer)', 'execute')
      and not has_function_privilege('anon', 'public.app_market_catalog(uuid)', 'execute')
-     and not has_function_privilege('authenticated', 'public.app_answer_daily_challenge(uuid,uuid,uuid,uuid,boolean,boolean)', 'execute')
+     and not has_function_privilege('authenticated', 'public.app_answer_daily_challenge(uuid,uuid,uuid,uuid,boolean,boolean,boolean,boolean)', 'execute')
      and not has_table_privilege('authenticated', 'public.reto_oportunidades_pendientes', 'select'), 'F28: client grants';
   raise notice 'OK F28 consumables';
 end $f28$;
