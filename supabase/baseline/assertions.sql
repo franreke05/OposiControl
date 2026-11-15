@@ -4832,3 +4832,53 @@ begin
   raise notice 'OK F28 consumables';
 end $f28$;
 rollback;
+
+-- ============ 20261115000000 (HF1): Control saves Market services AS service_role (production 42501 on servicio_seccion_por_tipo) ============
+begin;
+-- MAIN: service_role has USAGE on private (20260928100000); the generated MAIN shape does not carry that schema grant. Rolled back at the end.
+grant usage on schema private to service_role;
+set local role service_role;
+do $hf1$
+begin
+  -- an older Control (no seccion / visible / posicion), Control's upsert with an explicit null seccion (insert and on-conflict update), an explicit seccion
+  insert into public.servicios (codigo, nombre, tipo_servicio, precio_tickets) values ('hf1g_a', 'A', 'modo_papel', 5);
+  insert into public.servicios (id, codigo, nombre, tipo_servicio, precio_tickets, seccion) values ('a1f00000-0000-0000-0000-0000000000b1', 'hf1g_b', 'B', 'potenciador', 10, null)
+    on conflict (id) do update set nombre = excluded.nombre, seccion = excluded.seccion;
+  insert into public.servicios (id, codigo, nombre, tipo_servicio, precio_tickets, seccion) values ('a1f00000-0000-0000-0000-0000000000b1', 'hf1g_b', 'B2', 'potenciador', 10, null)
+    on conflict (id) do update set nombre = excluded.nombre, seccion = excluded.seccion;
+  insert into public.servicios (codigo, nombre, tipo_servicio, precio_tickets, seccion) values ('hf1g_c', 'C', 'premium', 5, 'OPOSITICKETS');
+  update public.servicios set seccion = null where codigo = 'hf1g_c';
+  update public.servicios set precio_tickets = 7 where codigo = 'hf1g_a';
+  assert (select string_agg(codigo || ':' || seccion || ':' || visible || ':' || posicion, ',' order by codigo) from public.servicios where codigo like 'hf1g\_%')
+         = 'hf1g_a:SERVICIOS:true:0,hf1g_b:POTENCIADORES:true:0,hf1g_c:SERVICIOS:true:0', 'HF1: service_role writes servicios, seccion derived from the type';
+  -- same defect (sweep): Control > Configuracion rewrites a key as service_role; the bounds still apply
+  update public.configuracion_v1 set valor_integer = valor_integer where clave = (select min(clave) from public.configuracion_v1 where clave <> 'zona_horaria');
+  begin
+    update public.configuracion_v1 set valor_integer = -999999 where clave = (select min(clave) from public.configuracion_v1 where clave <> 'zona_horaria');
+    assert false, 'HF1: config bounds must still reject';
+  exception when check_violation then
+    assert sqlerrm = 'CONFIG_VALUE_OUT_OF_BOUNDS', 'HF1: config bounds, got ' || sqlerrm;
+  end;
+end $hf1$;
+reset role;
+do $hf1v$
+declare v text;
+begin
+  assert (select bool_and(prosecdef) from pg_proc where oid in ('private.tg_servicios_seccion()'::regprocedure, 'private.tg_configuracion_v1_bounds()'::regprocedure,
+            'private.tg_soluciones_markup()'::regprocedure, 'private.tg_staging_markup()'::regprocedure)), 'HF1: the four trigger functions are SECURITY DEFINER';
+  assert not has_function_privilege('anon', 'private.servicio_seccion_por_tipo(text)', 'execute')
+     and not has_function_privilege('authenticated', 'private.servicio_seccion_por_tipo(text)', 'execute')
+     and not has_function_privilege('authenticated', 'private.tg_servicios_seccion()', 'execute'), 'HF1: the helper stays closed to clients';
+  -- sweep (docs/ledger/2026/11/2026-11-15-hf1-servicios-seccion.md, simplified to qualified calls): no trigger on public.* runs, as invoker, a public/private
+  -- function service_role cannot execute
+  select string_agg(distinct t.tgname || ' -> ' || q.oid::regprocedure::text, ', ') into v
+    from pg_trigger t
+    join pg_proc p on p.oid = t.tgfoid and not p.prosecdef
+    join pg_class c on c.oid = t.tgrelid and c.relnamespace = 'public'::regnamespace
+    cross join lateral regexp_matches(p.prosrc, '\m(public|private)\.([a-z_][a-z0-9_]*)\s*\(', 'gi') m
+    join pg_proc q on q.pronamespace = lower(m[1])::regnamespace and q.proname = lower(m[2])
+   where not t.tgisinternal and not has_function_privilege('service_role', q.oid, 'execute');
+  assert v is null, 'HF1: invoker trigger calls a function service_role cannot execute: ' || v;
+  raise notice 'OK HF1 servicios as service_role';
+end $hf1v$;
+rollback;

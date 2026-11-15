@@ -14,6 +14,7 @@
 #   (g) N3-3 / tarea 4: el cerrojo por clave de tienda MOVIDO por debajo de la busqueda (el texto sigue, el VERIFY de 102900 pasa) en la reversion
 #       (mutA), el reembolso (mutA2) y el credito -> la carrera REAL de dos conexiones del paso 6 (R1 / R2 / R3-R4)
 #   (h) N3-1: reconcile vuelve a bloquear la fila antes que la clave (texto de 103000 intacto) -> 40P01 en la carrera D1 del paso 6
+#   (i) HF1: las cuatro funciones de disparador de 20261115000000 sin SECURITY DEFINER -> su VERIFY
 #   DEBT-156b (sin contenedor): una _security_ no V1 sin ROLLBACK / sin VERIFY / sin clase de dbtest; una V1 (20261022*) con _security_ fuera de PENDING;
 #     una V1 por V1_MIGRATIONS.txt (otro prefijo) con _security_ fuera de PENDING; una V1 _security_ ya en el historial de MAIN deja de ser pendiente
 set -uo pipefail
@@ -113,4 +114,9 @@ fresh
   sed -n '/^-- 5\. Subscriptions:/,$p' "$w/$r3"; } > "$w/$r3.mut" && mv "$w/$r3.mut" "$w/$r3"; mutated "$w/$r3"
 expect_fail "(h) N3-1: reconcile fila-antes-que-clave" "carreras de tienda con dos conexiones"
 race_semantic "(h) D1 40P01" "^  race D1\.[12] [abc]: ERROR: *deadlock detected" 'D1\.[12]'
+# (i) HF1: las cuatro funciones de disparador vuelven a SECURITY INVOKER (el 42501 de produccion como service_role) -> su VERIFY
+hf1=supabase/migrations/20261115000000_v1_servicios_seccion_permiso.sql
+fresh; sed -i '/^security definer$/d' "$w/$hf1"; mutated "$w/$hf1"
+expect_fail "(i) HF1: funciones de disparador sin SECURITY DEFINER" "20261115000000_v1_servicios_seccion_permiso: VERIFY con contadores distintos de 0"
+grep -q 'VERIFY hf1_trigger_function_not_security_definer = 4' "$tmp/out" || { echo "TEST FAIL: (i) sin el contador"; exit 1; }
 echo "db-pg17-gate.test OK ($n escenarios)"

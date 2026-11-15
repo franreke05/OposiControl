@@ -1,0 +1,7 @@
+# HOTFIX HF1 (hf/servicios-seccion, 2026-11-15): Control no puede guardar servicios del Market (42501 permission denied for function servicio_seccion_por_tipo) ni la configuracion V1 / razonados enriquecidos (mismo defecto).
+# Una migracion, solo base de datos (sin imagen Ktor nueva). Acta: docs/ledger/2026/11/2026-11-15-hf1-servicios-seccion.md. Uso con el script de siempre:
+#   MANIFEST=ops/deploy/v1/main-migrations-2026-11-hf1.manifest bash ops/deploy/v1/apply-main-migration.sh supabase/migrations/20261115000000_v1_servicios_seccion_permiso.sql
+# version  blob(git hash-object, 12)  predecesora(debe estar en supabase_migrations antes de aplicar)  clase
+# Predecesora: 20261114500000 (ultima de la ventana 1.3, ya en MAIN). Las migraciones siguientes (p. ej. 20261115100000/100100) deben encadenarse a 20261115000000.
+# Si cambia el blob, se rehacen este manifiesto y el ensayo (docs/ledger/2026/11/rehearse-hf1-2026-11.sh).
+20261115000000 7ca602cfccf0 20261114500000 apply
